@@ -302,12 +302,20 @@ func main(){
 	mux := http.NewServeMux()
 	handlerChain := apicfg.middlewareMeticsInc(http.FileServer(http.Dir("./")))
 	finalHanlder := http.StripPrefix("/app/",handlerChain)
-	mux.Handle("/app/",middleWareLog(finalHanlder))
 	assetChain := apicfg.middlewareMeticsInc(http.FileServer(http.Dir("./assets/")))
 	assetHandler := http.StripPrefix("/app/assets/",assetChain)
+	
+	//Main app route
+	mux.Handle("/app/",middleWareLog(finalHanlder))
+	//Asset route
 	mux.Handle("/app/assets/",middleWareLog(assetHandler))
+
+
+	//Get Route
 	mux.HandleFunc("GET /admin/metrics",apicfg.HitHandle)
 	mux.HandleFunc("GET /api/healthz",APIHandle)
+	
+	//POST route 
 	mux.HandleFunc("POST /admin/metrics/reset",apicfg.ResetHandle)
 	mux.HandleFunc("POST /api/chirps",apicfg.ChirpHandle)
 	mux.HandleFunc("POST /api/users",apicfg.UserHandle)
