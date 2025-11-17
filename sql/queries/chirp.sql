@@ -9,5 +9,12 @@ VALUES(
 )
 RETURNING *;
 
+-- name: GetAllRecord :many
+SELECT * FROM chirp;
+
+
+-- name: GetRecordByID :one
+SELECT * FROM chirp WHERE id = $1;
+
 -- name: DeleteRecords :exec
 DELETE FROM chirp;
