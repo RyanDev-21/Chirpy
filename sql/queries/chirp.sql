@@ -18,3 +18,6 @@ SELECT * FROM chirp WHERE id = $1;
 
 -- name: DeleteRecords :exec
 DELETE FROM chirp;
+
+-- name: DeleteRecordByID :exec
+DELETE FROM chirp WHERE id = $1;

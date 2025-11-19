@@ -41,6 +41,15 @@ func (q *Queries) CreateRecord(ctx context.Context, arg CreateRecordParams) (Chi
 	return i, err
 }
 
+const deleteRecordByID = `-- name: DeleteRecordByID :exec
+DELETE FROM chirp WHERE id = $1
+`
+
+func (q *Queries) DeleteRecordByID(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.ExecContext(ctx, deleteRecordByID, id)
+	return err
+}
+
 const deleteRecords = `-- name: DeleteRecords :exec
 DELETE FROM chirp
 `

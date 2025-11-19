@@ -7,6 +7,8 @@ package database
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 const createUser = `-- name: CreateUser :one
@@ -63,4 +65,35 @@ func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, e
 		&i.Password,
 	)
 	return i, err
+}
+
+const getUserInfoByID = `-- name: GetUserInfoByID :one
+SELECT id, created_at, updated_at, email, password FROM users WHERE id = $1
+`
+
+func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, error) {
+	row := q.db.QueryRowContext(ctx, getUserInfoByID, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Email,
+		&i.Password,
+	)
+	return i, err
+}
+
+const updatePassword = `-- name: UpdatePassword :exec
+UPDATE  users SET password = $1,updated_at = NOW() WHERE id = $2
+`
+
+type UpdatePasswordParams struct {
+	Password string
+	ID       uuid.UUID
+}
+
+func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error {
+	_, err := q.db.ExecContext(ctx, updatePassword, arg.Password, arg.ID)
+	return err
 }
