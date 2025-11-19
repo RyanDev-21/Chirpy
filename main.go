@@ -180,7 +180,7 @@ func (cfg *apiConfig)GetChirpHandle(w http.ResponseWriter,r *http.Request){
 				CreatedAt: chirp.CreatedAt,
 				UpdatedAt: chirp.UpdatedAt,
 				Body: chirp.Body,
-				UserID: chirp.ID,
+				UserID: chirp.UserID,
 			})	
 	}
 	respondWithJSON(w,200,items)
@@ -360,34 +360,11 @@ func (cfg *apiConfig)UserLoginHandle(w http.ResponseWriter,r *http.Request){
 		respondWithError(w,401,"Invalid ceredentials")
 		return
 	}
-	expireIn := 60*time.Minute
-
-	accessToken ,err:= auth.MakeJWT(userPayload.ID,cfg.secret,expireIn)
+	accessToken,refreshToken,err:= GetAccessTokenAndRefreshToken(r,userPayload.ID,cfg)
 	if err !=nil{
-		log.Printf("failed to make accessToken %s",err)
-		respondWithError(w,500,"Something went wrong")
+		respondWithError(w,500,"Something went wrong")	
 		return
 	}
-
-	refreshToken, err:= auth.MakeRefreshToken()
-	if err !=nil{
-		log.Printf("failed to make a refreshToken %s",err)
-		respondWithError(w,500,"Something went wrong")
-		return
-	}
-	refreshTokenExpireDate := 30*(24*time.Hour)
-	_,err= cfg.queries.CreateARefreshToken(r.Context(),database.CreateARefreshTokenParams{
-		Token: refreshToken,
-		UserID:userPayload.ID,
-		ExpireAt:time.Now().Add(refreshTokenExpireDate) ,
-	})
-	if err!=nil{
-		log.Printf("failed to insert into db #%s#",err)
-		respondWithError(w,500,"Soemthing went wrong")
-		return	
-	}
-
-
 	respondWithJSON(w,200,AuthUser{
 		User : User{
 			ID: userPayload.ID,
@@ -400,6 +377,8 @@ func (cfg *apiConfig)UserLoginHandle(w http.ResponseWriter,r *http.Request){
 	})
 }
 
+
+//take user Info by refresToken and revoke and create new and give back accessToken
 func (cfg *apiConfig) RefreshHandle(w http.ResponseWriter,r *http.Request){
 	token ,err:= auth.GetBearerToken(r.Header)
 	if err!=nil{
@@ -426,33 +405,13 @@ func (cfg *apiConfig) RefreshHandle(w http.ResponseWriter,r *http.Request){
 		respondWithError(w,500,"Something went wrong")
 		return
 	}
-	expireIn := 60*time.Minute
-
-	accessToken ,err:= auth.MakeJWT(response.UserID,cfg.secret,expireIn)
+	accessToken,_,err:= GetAccessTokenAndRefreshToken(r,response.UserID,cfg)
 	if err !=nil{
-		log.Printf("failed to make accessToken %s",err)
 		respondWithError(w,500,"Something went wrong")
 		return
 	}
 
-	refreshToken, err:= auth.MakeRefreshToken()
-	if err !=nil{
-		log.Printf("failed to make a refreshToken %s",err)
-		respondWithError(w,500,"Something went wrong")
-		return
-	}
-	refreshTokenExpireDate := 30*(24*time.Hour)
-	_,err= cfg.queries.CreateARefreshToken(r.Context(),database.CreateARefreshTokenParams{
-		Token: refreshToken,
-		UserID:response.UserID,
-		ExpireAt:time.Now().Add(refreshTokenExpireDate) ,
-	})
-	if err!=nil{
-		log.Printf("failed to insert into db #%s#",err)
-		respondWithError(w,500,"Soemthing went wrong")
-		return	
-	}
-	respondStruct := struct{
+		respondStruct := struct{
 		Token string `json:"Token"`
 	}{
 		Token: accessToken,
@@ -460,9 +419,52 @@ func (cfg *apiConfig) RefreshHandle(w http.ResponseWriter,r *http.Request){
 	respondWithJSON(w,200,respondStruct)
 }
 
-//Same thing as above really need to refactor both three fucntions too many repeated code
-//don't like where i am going
+func GetAccessTokenAndRefreshToken(r *http.Request,userID uuid.UUID,cfg  *apiConfig)(string,string,error){
+	expireIn := 60*time.Minute
+	accessToken ,err:= auth.MakeJWT(userID,cfg.secret,expireIn)
+	if err !=nil{
+		log.Printf("failed to make accessToken %s",err)
+		return 	"","",err
+	}
+	refreshToken, err:= auth.MakeRefreshToken()
+	if err !=nil{
+		log.Printf("failed to make a refreshToken %s",err)
+		return "","",err	
+	}
+	refreshTokenExpireDate := 30*(24*time.Hour)
+	_,err= cfg.queries.CreateARefreshToken(r.Context(),database.CreateARefreshTokenParams{
+		Token: refreshToken,
+		UserID:userID,
+		ExpireAt:time.Now().Add(refreshTokenExpireDate) ,
+	})
+	if err!=nil{
+		log.Printf("failed to insert into db #%s#",err)
+		return "","",err	
+	}
+
+	return accessToken,refreshToken,nil
+
+}
+
+//did refactor the repeated code but still doens't feel like it
+//don't like where i am going but anyway
 func (cfg *apiConfig)RevokeHandle(w http.ResponseWriter,r *http.Request){
+	token, err:= auth.GetBearerToken(r.Header)
+	if err!=nil{
+		respondWithError(w,400,"Bad request")
+		return
+	}
+	err= cfg.queries.RevokeRefreshToken(r.Context(),token)
+	if err !=nil{
+		if err == sql.ErrNoRows{
+			respondWithError(w,401,"Unauthorized")
+			return
+		}
+		log.Printf("failed to revoke the refresh tokne #%s#",err)
+		respondWithError(w,500,"Something went wrong")
+		return
+	}
+	 w.WriteHeader(204)
 
 }
 
@@ -486,6 +488,116 @@ func (cfg *apiConfig) GetChirpWithIDHandle(w http.ResponseWriter,r *http.Request
 	}
 	respondWithJSON(w,200,chirp)
 
+}
+
+func (cfg *apiConfig)ChirpDeleteHandle(w http.ResponseWriter,r *http.Request){
+	stringIDParam := r.PathValue("chirpID")
+	uuidChirp,err:= uuid.Parse(stringIDParam)
+	if err!=nil{
+		respondWithError(w,400,"invalid id")
+		return
+	}
+	accessToken,err:= auth.GetBearerToken(r.Header)
+	if err!=nil{
+		respondWithError(w,401,"Invalid token")
+		return
+	}
+
+	userID,err:= auth.ValidateJWT(accessToken,cfg.secret)		
+	if err!=nil{
+		respondWithError(w,401,"Invalid token")
+		return
+	}
+
+	chirp ,err:=cfg.queries.GetRecordByID(r.Context(),uuidChirp)
+	if err!=nil{
+		if err==sql.ErrNoRows{
+			respondWithError(w,404,"Cannot find the matching chirp")
+			return
+		}
+		log.Printf("failed to get the record from chirp #%s#",err)
+		respondWithError(w,500,"Something went wrong")
+		return
+	}
+	if userID != chirp.UserID{
+		respondWithError(w,403,"Forbidden")	
+		return
+	}
+	err=cfg.queries.DeleteRecordByID(r.Context(),uuidChirp)
+	if err!=nil{
+		log.Printf("failed to delete the chirp #%s#",err)
+		respondWithError(w,500,"Something went wrong")
+		return	
+	}
+	w.WriteHeader(204)
+}
+
+func (cfg *apiConfig)UserPutHandle(w http.ResponseWriter,r *http.Request){
+	type parameters struct{
+		Email string `json:"email"`
+		Password string `json:"password"`
+	}		
+	decoder := json.NewDecoder(r.Body)
+	params := &parameters{}
+	err:= decoder.Decode(params)
+	if err!=nil{
+		respondWithError(w,400,"Invalid parameters")
+		return
+	}
+
+	accessToken ,err:= auth.GetBearerToken(r.Header)
+	if err !=nil{
+		respondWithError(w,401,"Invalid token")
+		return
+	}
+	userID,err:= auth.ValidateJWT(accessToken,cfg.secret)
+	if err!=nil{
+		log.Printf("failed to validate jwt #%s#",err)
+		respondWithError(w,401,"Invalid token")
+		return
+
+	}
+	userInfo,err:= cfg.queries.GetUserInfoByID(r.Context(),userID)
+	if err!=nil{
+		if err == sql.ErrNoRows{
+			respondWithError(w,404,"User not found")
+			return
+		}
+		respondWithError(w,500,"Something went wrong")
+		return
+	}
+	if userInfo.Email != params.Email{
+		respondWithError(w,401,"Unauthorized")
+		return
+	}
+	hashPassword,err:= auth.HashPassword(params.Password)
+	if err!=nil{
+		log.Printf("hashPassword function doesn't work #%s#",err)
+		respondWithError(w,500,"Something went wrong")
+		return
+	}	
+	err=cfg.queries.UpdatePassword(r.Context(),database.UpdatePasswordParams{
+		Password: hashPassword,
+		ID: userID,
+	})
+	if err !=nil{
+		log.Printf("failed to update the password #%s#",err)
+		respondWithError(w,500,"Something went wrong")
+		return
+	}
+
+	user,err:= cfg.queries.GetUserInfoByID(r.Context(),userID)
+	if err!=nil{
+		log.Printf("the GetUserInfoByID funciton isn't working #%s#",err)
+		respondWithError(w,500,"Something went wrong")
+		return
+	}
+	respondWithJSON(w,200,User{
+		ID: user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email: user.Email,
+	})
 }
 
 
@@ -533,7 +645,14 @@ func main(){
 	mux.HandleFunc("POST /admin/reset",apicfg.UserResetHandle)
 	mux.HandleFunc("POST /api/login",apicfg.UserLoginHandle)
 	mux.HandleFunc("POST /api/refresh",apicfg.RefreshHandle)
-	mux.HandleFunc("POST /api/revokea",apicfg.RevokeHandle)
+	mux.HandleFunc("POST /api/revoke",apicfg.RevokeHandle)
+
+
+	//PUT route
+	mux.HandleFunc("PUT /api/users",apicfg.UserPutHandle)
+
+	//DELETE route
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}",apicfg.ChirpDeleteHandle)
 
 	server := http.Server{
 		Addr: Port,
