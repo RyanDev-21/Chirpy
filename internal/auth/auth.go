@@ -14,6 +14,18 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
+//For extracting apiKey from authorization
+func GetAPIKEY(headers http.Header)(string,error){
+	headerString := headers.Get("Authorization")
+	if headerString == ""{
+		return "",errors.New("invalid apiKey")
+	}
+	key := strings.TrimPrefix(headerString,"ApiKey ")
+	
+	return key,nil
+}
+
+
 
 //For hashing and checking
 func HashPassword(password string)(string,error){

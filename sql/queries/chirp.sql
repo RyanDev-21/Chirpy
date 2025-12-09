@@ -12,6 +12,8 @@ RETURNING *;
 -- name: GetAllRecord :many
 SELECT * FROM chirp;
 
+-- name: GetRecordByUserID :one
+SELECT * FROM chirp WHERE user_id = $1;
 
 -- name: GetRecordByID :one
 SELECT * FROM chirp WHERE id = $1;

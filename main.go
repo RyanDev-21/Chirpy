@@ -28,6 +28,7 @@ type apiConfig struct{
 	queries *database.Queries
 	platform string	
 	secret string
+	polkaKey string
 }
 
 type User struct{
@@ -35,6 +36,7 @@ type User struct{
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email string `json:"email"`
+	IsRED bool `json:"is_chirpy_red"`
 }
 
 type Chirp struct{
@@ -167,12 +169,36 @@ func respondWithJSON(w http.ResponseWriter,code int,payload any){
 
 func (cfg *apiConfig)GetChirpHandle(w http.ResponseWriter,r *http.Request){
 	items := []Chirp{}
-	chirps,err:= cfg.queries.GetAllRecord(r.Context())
-	if err !=nil{
-		log.Printf("failed to get the record from chrip table %s",err)
-		respondWithError(w,500,"Something went wrong")
-		return	
+	var chirps []database.Chirp
+	s:= r.URL.Query().Get("author_id")
+	if s != ""{
+		uuid, err := uuid.Parse(s)
+		if err !=nil{
+			respondWithError(w,400,"invalid author id")
+			return
+		}
+		singleChirp,err := cfg.queries.GetRecordByUserID(r.Context(),uuid)	
+		if err !=nil{
+			if err == sql.ErrNoRows{
+				respondWithError(w,400,"no author found")
+				return
+			}
+			respondWithError(w,500,"Internal server error")
+			return
+		}
+		chirps = []database.Chirp{singleChirp}	
+
+	}else{
+		chirpsList,err:= cfg.queries.GetAllRecord(r.Context())
+		if err !=nil{
+			log.Printf("failed to get the record from chrip table %s",err)
+			respondWithError(w,500,"Something went wrong")
+			return	
+		}
+		chirps = chirpsList	
+
 	}
+	
 	for _,chirp:= range chirps{
 		items = append(items, 
 			Chirp{
@@ -254,6 +280,7 @@ func(cfg *apiConfig) UserHandle(w http.ResponseWriter,r *http.Request){
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email: user.Email,
+		IsRED: user.IsChirpyRed.Bool,
 	}	
 
 	respondWithJSON(w,200,respondUser)	 
@@ -371,6 +398,7 @@ func (cfg *apiConfig)UserLoginHandle(w http.ResponseWriter,r *http.Request){
 			CreatedAt: userPayload.CreatedAt,
 			UpdatedAt: userPayload.UpdatedAt,
 			Email: userPayload.Email,
+			IsRED: userPayload.IsChirpyRed.Bool,
 		},
 		Token: accessToken,
 		RefreshToken: refreshToken,
@@ -596,9 +624,65 @@ func (cfg *apiConfig)UserPutHandle(w http.ResponseWriter,r *http.Request){
 		ID: user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
+
 		Email: user.Email,
+		IsRED: user.IsChirpyRed.Bool,
 	})
 }
+
+
+
+func(cfg *apiConfig)WebHookHandle(w http.ResponseWriter,r *http.Request){
+	type parameters struct{
+		Event string `json:"event"`
+		Data struct{
+			UserID string `json:"user_id"`
+		}`json:"data"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := &parameters{}
+	err := decoder.Decode(params)
+	if err !=nil{
+		respondWithError(w,400,"Invalid body")
+		return
+	}
+	if params.Event != "user.upgraded"{
+		w.WriteHeader(204)
+		return
+	}
+	userUUID,err := uuid.Parse(params.Data.UserID)
+	if err !=nil{
+		respondWithError(w,400,"Invalid user id")
+		return
+	}
+
+	key,err:= auth.GetAPIKEY(r.Header)
+	if err !=nil{
+		respondWithError(w,401,"Invalid apiKey")
+		return
+	}
+	if key != cfg.polkaKey{
+		respondWithError(w,401,"ApiKey doesn't match")
+		return
+	}
+
+	result,err :=cfg.queries.UpdateIsRedById(r.Context(),userUUID) 
+	if err !=nil{
+		log.Printf("failed to update the user is_red #%s#",err)
+		respondWithError(w,500,"Internal server error")
+		return
+	}	
+	if rows,_:= result.RowsAffected(); rows==0{
+		respondWithError(w,404,"Not found user")
+		return 	
+	}
+	w.WriteHeader(204)
+	
+}		
+
+
+
 
 
 func main(){
@@ -610,6 +694,7 @@ func main(){
 	dURL := os.Getenv("DB_URL")
 	platform := os.Getenv("PLATFORM")
 	secret := os.Getenv("SECRET")
+	polkaKey := os.Getenv("POLKA_KEY")	
 	db,err := sql.Open("postgres",dURL)
 
 	if err !=nil{
@@ -617,7 +702,7 @@ func main(){
 		
 	}
 	dbQueries := database.New(db)
-	apicfg := apiConfig{queries: dbQueries,platform: platform,secret:secret}
+	apicfg := apiConfig{queries: dbQueries,platform: platform,secret:secret,polkaKey: polkaKey}
 	mux := http.NewServeMux()
 	handlerChain := apicfg.middlewareMeticsInc(http.FileServer(http.Dir("./")))
 	finalHanlder := http.StripPrefix("/app/",handlerChain)
@@ -647,6 +732,14 @@ func main(){
 	mux.HandleFunc("POST /api/refresh",apicfg.RefreshHandle)
 	mux.HandleFunc("POST /api/revoke",apicfg.RevokeHandle)
 
+	//NOTE FOR webhooks
+	/*"Client must request with json of '{
+						  "event": "user.upgraded",
+						  "data": {
+							"user_id": "3311741c-680c-4546-99f3-fc9efac2036c"
+						  }
+	}'"*/
+	mux.HandleFunc("POST /api/polka/webhooks",apicfg.WebHookHandle)
 
 	//PUT route
 	mux.HandleFunc("PUT /api/users",apicfg.UserPutHandle)

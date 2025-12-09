@@ -20,3 +20,6 @@ UPDATE  users SET password = $1,updated_at = NOW() WHERE id = $2;
 
 -- name: GetUserInfoByID :one
 SELECT * FROM users WHERE id = $1;
+
+-- name: UpdateIsRedById :execresult
+UPDATE users SET  is_chirpy_red = true ,updated_at = NOW() WHERE id = $1;
