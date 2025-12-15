@@ -1,4 +1,6 @@
 package auth
+ 
+
 
 import (
 	"crypto/rand"
@@ -9,11 +11,19 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
 	"github.com/alexedwards/argon2id"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
+type responseType struct {
+          ID           uuid.UUID `json:"id"`
+          CreatedAt    string    `json:"created_at"`
+          UpdatedAt    string    `json:"updated_at"`
+          Email        string    `json:"email"`
+          IsChirpyRed  bool      `json:"is_chirpy_red"`
+          Token        string    `json:"token"`
+          RefreshToken string    `json:"refresh_token"`
+}
 //For extracting apiKey from authorization
 func GetAPIKEY(headers http.Header)(string,error){
 	headerString := headers.Get("Authorization")
@@ -21,7 +31,7 @@ func GetAPIKEY(headers http.Header)(string,error){
 		return "",errors.New("invalid apiKey")
 	}
 	key := strings.TrimPrefix(headerString,"ApiKey ")
-	
+
 	return key,nil
 }
 
@@ -62,7 +72,7 @@ func MakeJWT(userID uuid.UUID,tokenSecret string,expiresIn time.Duration)(string
 func ValidateJWT(tokenString,tokenSecret string) (uuid.UUID,error){
 	registerdClaims := &jwt.RegisteredClaims{}
 	token,err := jwt.ParseWithClaims(tokenString,registerdClaims,func(t *jwt.Token) (any, error) {
-	
+
 		return []byte(tokenSecret),nil
 	})
 	if err!=nil{
@@ -81,7 +91,7 @@ func ValidateJWT(tokenString,tokenSecret string) (uuid.UUID,error){
 	if err !=nil{
 		return uuid.Nil,errors.New("jwt subject field is mssing")
 	}
- 
+
 	userID ,err:=uuid.Parse(userIDstring)
 	if err !=nil{
 		return uuid.Nil,err
@@ -96,7 +106,7 @@ func GetBearerToken(headers http.Header)(string,error){
 
    tokenHeader :=headers.Get("Authorization")	
 	if tokenHeader == ""{
-	
+
 		log.Printf("token header not set")
 		return "",errors.New("invalid token header")
 	}
@@ -113,5 +123,5 @@ func MakeRefreshToken()(string,error){
 	}
 	hexString := hex.EncodeToString(key)
 	return hexString,nil
-	
+
 }

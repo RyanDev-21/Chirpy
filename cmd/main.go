@@ -13,6 +13,7 @@ import (
 
 	"RyanDev-21.com/Chirpy/internal/auth"
 	"RyanDev-21.com/Chirpy/internal/database"
+	"RyanDev-21.com/Chirpy/internal/users"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -177,7 +178,7 @@ func (cfg *apiConfig)GetChirpHandle(w http.ResponseWriter,r *http.Request){
 			respondWithError(w,400,"invalid author id")
 			return
 		}
-		singleChirp,err := cfg.queries.GetRecordByUserID(r.Context(),uuid)	
+		singleChirp,err := cfg.queries.GetRecordByID(r.Context(),uuid)	
 		if err !=nil{
 			if err == sql.ErrNoRows{
 				respondWithError(w,400,"no author found")
@@ -334,7 +335,7 @@ func (cfg *apiConfig)ChirpHandle(w http.ResponseWriter,r *http.Request){
 	}
 
 	payload := struct{
-		Body string `json:main"body"`
+		Body string `json:"body"`
 		UserID uuid.UUID `json:"user_id"`
 	}{
 		Body:params.Body,
@@ -681,13 +682,20 @@ func(cfg *apiConfig)WebHookHandle(w http.ResponseWriter,r *http.Request){
 	
 }		
 
-
+func (cfg *apiConfig)SwitchProtocol(w http.ResponseWriter,r *http.Request){
+	chatID := r.URL.Query().Get("chatID")	
+	if chatID == ""{
+		respondWithError(w,400,"invalid chatID")
+		return
+	}
+	
+}
 
 
 
 func main(){
 
-	err:=godotenv.Load()
+	err:=godotenv.Load("../.env")
 	if err !=nil{
 		log.Fatal("failed to load the env")
 	}
@@ -708,7 +716,20 @@ func main(){
 	finalHanlder := http.StripPrefix("/app/",handlerChain)
 	assetChain := apicfg.middlewareMeticsInc(http.FileServer(http.Dir("./assets/")))
 	assetHandler := http.StripPrefix("/app/assets/",assetChain)
-	
+
+
+	//Create Repositories 
+	userRepo := users.NewUserRepo(dbQueries)
+
+	//Create Services
+	userService := users.NewUserService(userRepo)
+	authService := auth.NewAuthService(userRepo,apicfg.secret,dbQueries)
+
+	//Create Hanlders
+	userHandler := users.NewUserHanlder(userService)
+	authHandler := auth.NewAuthHandler(authService)
+
+
 	//Main app route
 	mux.Handle("/app/",middleWareLog(finalHanlder))
 	//Asset route
@@ -726,9 +747,9 @@ func main(){
 	//POST route 
 	mux.HandleFunc("POST /admin/metrics/reset",apicfg.ResetHandle)
 	mux.HandleFunc("POST /api/chirps",apicfg.ChirpHandle)
-	mux.HandleFunc("POST /api/users",apicfg.UserHandle)
+	mux.HandleFunc("POST /api/users",userHandler.Register)
 	mux.HandleFunc("POST /admin/reset",apicfg.UserResetHandle)
-	mux.HandleFunc("POST /api/login",apicfg.UserLoginHandle)
+	mux.HandleFunc("POST /api/login",authHandler.Login)
 	mux.HandleFunc("POST /api/refresh",apicfg.RefreshHandle)
 	mux.HandleFunc("POST /api/revoke",apicfg.RevokeHandle)
 
@@ -746,6 +767,10 @@ func main(){
 
 	//DELETE route
 	mux.HandleFunc("DELETE /api/chirps/{chirpID}",apicfg.ChirpDeleteHandle)
+
+	
+	//Maybe endpoint for chat
+	mux.HandleFunc("GET /api/chats",apicfg.SwitchProtocol)	
 
 	server := http.Server{
 		Addr: Port,

@@ -122,6 +122,6 @@ func (q *Queries) GetRecordByUserID(ctx context.Context, userID uuid.UUID) (Chir
 		&i.UpdatedAt,
 		&i.Body,
 		&i.UserID,
-	)
+		)
 	return i, err
 }
