@@ -14,6 +14,7 @@ import (
 	"RyanDev-21.com/Chirpy/internal/auth"
 	"RyanDev-21.com/Chirpy/internal/database"
 	"RyanDev-21.com/Chirpy/internal/users"
+	"RyanDev-21.com/Chirpy/pkg/middleware"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -726,7 +727,7 @@ func main(){
 	authService := auth.NewAuthService(userRepo,apicfg.secret,dbQueries)
 
 	//Create Hanlders
-	userHandler := users.NewUserHanlder(userService)
+	userHandler := users.NewUserHandler(userService)
 	authHandler := auth.NewAuthHandler(authService)
 
 
@@ -764,6 +765,10 @@ func main(){
 
 	//PUT route
 	mux.HandleFunc("PUT /api/users",apicfg.UserPutHandle)
+
+	//UpdatePassword route
+	//uses middleware to parse the userID
+	mux.Handle("POST /api/users/password",middleware.AuthMiddleWare(userHandler.UpdatePassword,apicfg.secret))
 
 	//DELETE route
 	mux.HandleFunc("DELETE /api/chirps/{chirpID}",apicfg.ChirpDeleteHandle)
