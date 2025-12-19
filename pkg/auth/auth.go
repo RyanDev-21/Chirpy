@@ -17,6 +17,9 @@ import (
 	"github.com/google/uuid"
 )
 
+var ErrPassNotMatch = errors.New("password incorrect")
+
+
 //For extracting apiKey from authorization
 func GetAPIKEY(headers http.Header)(string,error){
 	headerString := headers.Get("Authorization")
