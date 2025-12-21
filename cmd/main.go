@@ -11,7 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"RyanDev-21.com/Chirpy/internal/auth"
+	"RyanDev-21.com/Chirpy/pkg/auth"
+	authClient "RyanDev-21.com/Chirpy/internal/auth"
 	"RyanDev-21.com/Chirpy/internal/database"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
@@ -721,14 +722,15 @@ func main(){
 
 	//Create Repositories 
 	userRepo := users.NewUserRepo(dbQueries)
+	authRepo := authClient.NewAuthRepo(dbQueries)
 
 	//Create Services
 	userService := users.NewUserService(userRepo)
-	authService := auth.NewAuthService(userRepo,apicfg.secret,dbQueries)
+	authService := authClient.NewAuthService(userRepo,authRepo,apicfg.secret)
 
 	//Create Hanlders
 	userHandler := users.NewUserHandler(userService)
-	authHandler := auth.NewAuthHandler(authService)
+	authHandler := authClient.NewAuthHandler(authService)
 
 
 	//Main app route
@@ -751,8 +753,8 @@ func main(){
 	mux.HandleFunc("POST /api/users",userHandler.Register)
 	mux.HandleFunc("POST /admin/reset",apicfg.UserResetHandle)
 	mux.HandleFunc("POST /api/login",authHandler.Login)
-	mux.HandleFunc("POST /api/refresh",apicfg.RefreshHandle)
-	mux.HandleFunc("POST /api/revoke",apicfg.RevokeHandle)
+	mux.HandleFunc("POST /api/refresh",authHandler.RefreshToken)
+	mux.HandleFunc("POST /api/revoke",authHandler.Revoke)
 
 	//NOTE FOR webhooks
 	/*"Client must request with json of '{
