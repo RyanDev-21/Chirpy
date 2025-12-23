@@ -11,10 +11,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"RyanDev-21.com/Chirpy/pkg/auth"
 	authClient "RyanDev-21.com/Chirpy/internal/auth"
+	"RyanDev-21.com/Chirpy/internal/chat"
 	"RyanDev-21.com/Chirpy/internal/database"
 	"RyanDev-21.com/Chirpy/internal/users"
+	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -362,93 +363,95 @@ func (cfg *apiConfig)ChirpHandle(w http.ResponseWriter,r *http.Request){
 	
 
 }
-//ToDo-abstract the refreshToken and accessToken make
-func (cfg *apiConfig)UserLoginHandle(w http.ResponseWriter,r *http.Request){
-	type parameters struct{
-		Email string `json:"email"`
-		Password string `json:"password"`
-	}
-	decoder := json.NewDecoder(r.Body)
-	params := &parameters{}
-	err:= decoder.Decode(params)
-	if err !=nil{
-		respondWithError(w,400,"Invalid parameters")
-		return
-	}
 
-	userPayload,err := cfg.queries.GetUserInfoByEmail(r.Context(),params.Email)
-	if err!=nil{
-		if err == sql.ErrNoRows{
-			respondWithError(w,404,"Can't find the user")
-			return
-		}
-		log.Printf("failed to get the user from database %s",err)
-		respondWithError(w,500,"Something went wrong")
-		return
-	}
-	if valid,_:=auth.CheckPassword(params.Password,userPayload.Password); !valid{
-		respondWithError(w,401,"Invalid ceredentials")
-		return
-	}
-	accessToken,refreshToken,err:= GetAccessTokenAndRefreshToken(r,userPayload.ID,cfg)
-	if err !=nil{
-		respondWithError(w,500,"Something went wrong")	
-		return
-	}
-	respondWithJSON(w,200,AuthUser{
-		User : User{
-			ID: userPayload.ID,
-			CreatedAt: userPayload.CreatedAt,
-			UpdatedAt: userPayload.UpdatedAt,
-			Email: userPayload.Email,
-			IsRED: userPayload.IsChirpyRed.Bool,
-		},
-		Token: accessToken,
-		RefreshToken: refreshToken,
-	})
-}
+//refactored and move this guy to auth service
+// func (cfg *apiConfig)UserLoginHandle(w http.ResponseWriter,r *http.Request){
+// 	type parameters struct{
+// 		Email string `json:"email"`
+// 		Password string `json:"password"`
+// 	}
+// 	decoder := json.NewDecoder(r.Body)
+// 	params := &parameters{}
+// 	err:= decoder.Decode(params)
+// 	if err !=nil{
+// 		respondWithError(w,400,"Invalid parameters")
+// 		return
+// 	}
+//
+// 	userPayload,err := cfg.queries.GetUserInfoByEmail(r.Context(),params.Email)
+// 	if err!=nil{
+// 		if err == sql.ErrNoRows{
+// 			respondWithError(w,404,"Can't find the user")
+// 			return
+// 		}
+// 		log.Printf("failed to get the user from database %s",err)
+// 		respondWithError(w,500,"Something went wrong")
+// 		return
+// 	}
+// 	if valid,_:=auth.CheckPassword(params.Password,userPayload.Password); !valid{
+// 		respondWithError(w,401,"Invalid ceredentials")
+// 		return
+// 	}
+// 	accessToken,refreshToken,err:= GetAccessTokenAndRefreshToken(r,userPayload.ID,cfg)
+// 	if err !=nil{
+// 		respondWithError(w,500,"Something went wrong")	
+// 		return
+// 	}
+// 	respondWithJSON(w,200,AuthUser{
+// 		User : User{
+// 			ID: userPayload.ID,
+// 			CreatedAt: userPayload.CreatedAt,
+// 			UpdatedAt: userPayload.UpdatedAt,
+// 			Email: userPayload.Email,
+// 			IsRED: userPayload.IsChirpyRed.Bool,
+// 		},
+// 		Token: accessToken,
+// 		RefreshToken: refreshToken,
+// 	})
+// }
+//
 
 
-//take user Info by refresToken and revoke and create new and give back accessToken
-func (cfg *apiConfig) RefreshHandle(w http.ResponseWriter,r *http.Request){
-	token ,err:= auth.GetBearerToken(r.Header)
-	if err!=nil{
-		respondWithError(w,400,"Invalid token")
-		return
-	}
-	response,err:= cfg.queries.GetRefreshToken(r.Context(),token)
-	if err !=nil{
-		if err == sql.ErrNoRows{
-			respondWithError(w,401,"Unauthorized")
-			return
-		}
-		log.Printf("failed to get the refreshToken #%s#",err)
-		respondWithError(w,500,"Something went wrong")
-		return
-	}	
-	if time.Now().After(response.ExpireAt){
-		respondWithError(w,401,"Token expired")	
-		return
-	}	
-	err=cfg.queries.RevokeRefreshToken(r.Context(),token)		
-	if err !=nil{
-		log.Printf("failed to revoke the refreshToken #%s#",err)
-		respondWithError(w,500,"Something went wrong")
-		return
-	}
-	accessToken,_,err:= GetAccessTokenAndRefreshToken(r,response.UserID,cfg)
-	if err !=nil{
-		respondWithError(w,500,"Something went wrong")
-		return
-	}
-
-		respondStruct := struct{
-		Token string `json:"Token"`
-	}{
-		Token: accessToken,
-	}
-	respondWithJSON(w,200,respondStruct)
-}
+//this func is now belongs to auth service now
+// func (cfg *apiConfig) RefreshHandle(w http.ResponseWriter,r *http.Request){
+// 	token ,err:= auth.GetBearerToken(r.Header)
+// 	if err!=nil{
+// 		respondWithError(w,400,"Invalid token")
+// 		return
+// 	}
+// 	response,err:= cfg.queries.GetRefreshToken(r.Context(),token)
+// 	if err !=nil{
+// 		if err == sql.ErrNoRows{
+// 			respondWithError(w,401,"Unauthorized")
+// 			return
+// 		}
+// 		log.Printf("failed to get the refreshToken #%s#",err)
+// 		respondWithError(w,500,"Something went wrong")
+// 		return
+// 	}	
+// 	if time.Now().After(response.ExpireAt){
+// 		respondWithError(w,401,"Token expired")	
+// 		return
+// 	}	
+// 	err=cfg.queries.RevokeRefreshToken(r.Context(),token)		
+// 	if err !=nil{
+// 		log.Printf("failed to revoke the refreshToken #%s#",err)
+// 		respondWithError(w,500,"Something went wrong")
+// 		return
+// 	}
+// 	accessToken,_,err:= GetAccessTokenAndRefreshToken(r,response.UserID,cfg)
+// 	if err !=nil{
+// 		respondWithError(w,500,"Something went wrong")
+// 		return
+// 	}
+//
+// 		respondStruct := struct{
+// 		Token string `json:"Token"`
+// 	}{
+// 		Token: accessToken,
+// 	}
+// 	respondWithJSON(w,200,respondStruct)
+// }
 
 func GetAccessTokenAndRefreshToken(r *http.Request,userID uuid.UUID,cfg  *apiConfig)(string,string,error){
 	expireIn := 60*time.Minute
@@ -477,27 +480,27 @@ func GetAccessTokenAndRefreshToken(r *http.Request,userID uuid.UUID,cfg  *apiCon
 
 }
 
-//did refactor the repeated code but still doens't feel like it
+//this business login belongs to the auth service now
 //don't like where i am going but anyway
-func (cfg *apiConfig)RevokeHandle(w http.ResponseWriter,r *http.Request){
-	token, err:= auth.GetBearerToken(r.Header)
-	if err!=nil{
-		respondWithError(w,400,"Bad request")
-		return
-	}
-	err= cfg.queries.RevokeRefreshToken(r.Context(),token)
-	if err !=nil{
-		if err == sql.ErrNoRows{
-			respondWithError(w,401,"Unauthorized")
-			return
-		}
-		log.Printf("failed to revoke the refresh tokne #%s#",err)
-		respondWithError(w,500,"Something went wrong")
-		return
-	}
-	 w.WriteHeader(204)
-
-}
+// func (cfg *apiConfig)RevokeHandle(w http.ResponseWriter,r *http.Request){
+// 	token, err:= auth.GetBearerToken(r.Header)
+// 	if err!=nil{
+// 		respondWithError(w,400,"Bad request")
+// 		return
+// 	}
+// 	err= cfg.queries.RevokeRefreshToken(r.Context(),token)
+// 	if err !=nil{
+// 		if err == sql.ErrNoRows{
+// 			respondWithError(w,401,"Unauthorized")
+// 			return
+// 		}
+// 		log.Printf("failed to revoke the refresh tokne #%s#",err)
+// 		respondWithError(w,500,"Something went wrong")
+// 		return
+// 	}
+// 	 w.WriteHeader(204)
+//
+// }
 
 func (cfg *apiConfig) GetChirpWithIDHandle(w http.ResponseWriter,r *http.Request){
 	stringIDParam := r.PathValue("chirp_id")
@@ -723,15 +726,18 @@ func main(){
 	//Create Repositories 
 	userRepo := users.NewUserRepo(dbQueries)
 	authRepo := authClient.NewAuthRepo(dbQueries)
+	chatRepo := chat.NewChatRepo(dbQueries)
 
 	//Create Services
 	userService := users.NewUserService(userRepo)
 	authService := authClient.NewAuthService(userRepo,authRepo,apicfg.secret)
+	chatService := chat.NewChatService(chatRepo)
+
 
 	//Create Hanlders
 	userHandler := users.NewUserHandler(userService)
 	authHandler := authClient.NewAuthHandler(authService)
-
+	chatHandler := chat.NewChatHandler(chatService)
 
 	//Main app route
 	mux.Handle("/app/",middleWareLog(finalHanlder))
@@ -777,7 +783,7 @@ func main(){
 
 	
 	//Maybe endpoint for chat
-	mux.HandleFunc("GET /api/chats",apicfg.SwitchProtocol)	
+	mux.HandleFunc("GET /api/chats",chatHandler.ServeWs)	
 
 	server := http.Server{
 		Addr: Port,

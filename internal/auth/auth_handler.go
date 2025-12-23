@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"time"
-
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/response"
@@ -83,7 +82,7 @@ func (h *authHandler)RefreshToken(w http.ResponseWriter,r *http.Request){
 		response.Error(w,401,"unauthorized")
 		return
 	}
-	accessToken ,err := h.authService.Refresh(r.Context(),token)
+	accessToken,refreshToken,err := h.authService.Refresh(r.Context(),token)
 	if err !=nil{
 		if err == ErrNotAuthorized{
 			response.Error(w,401,"unauthorized")
@@ -94,6 +93,7 @@ func (h *authHandler)RefreshToken(w http.ResponseWriter,r *http.Request){
 		return
 	}
 	response.JSON(w,200,refreshResponse{
-		Token: accessToken,
+		AccessToken: accessToken,
+		RefreshToken: refreshToken,
 	})
 }
