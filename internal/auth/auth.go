@@ -27,7 +27,8 @@ type responseType struct {
 
 
 type refreshResponse struct{
-	Token string `json:"access_token"`		
+	AccessToken string `json:"access_token"`		
+	RefreshToken string `json:"refresh_token"`	
 }
 
 type PayloadForRefresh struct{
