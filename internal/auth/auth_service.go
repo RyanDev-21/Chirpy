@@ -16,7 +16,7 @@ var InvalidCredentailErr = errors.New("invalid credentials")
 type AuthService interface{
 	Login(ctx context.Context,email,password string)(accessToken,refreshToken string,user *users.User,err error)	
 	Revoke(ctx context.Context,token string) error
-	Refresh(ctx context.Context,token string)(string,error)
+	Refresh(ctx context.Context,token string)(string,string,error)
 }
 
 
@@ -65,25 +65,25 @@ func (s *authService)Revoke(ctx context.Context,token string)error{
 
 
 //need to add the logic to check whether the token has already revoked or not 
-func (s *authService)Refresh(ctx context.Context,token string)(string,error){
+func (s *authService)Refresh(ctx context.Context,token string)(string,string,error){
 	response ,err := s.authRepo.GetRefreshToken(ctx,token)
 	if err !=nil{
-		return "",err
+		return "","",err
 	}
 	if time.Now().After(response.ExpiresAt){
-		return "",ErrTokenExpired
+		return "","",ErrTokenExpired
 	}
 	err = s.authRepo.RevokeToken(ctx,token)	
 	if err !=nil{
-		return "",err
+		return "","",err
 	}
 
 	//returns both tokens alongside the error(if exists)
-	accessToken,_,err :=s.generateTokens(ctx,response.UserID)
+	accessToken,refreshToken,err :=s.generateTokens(ctx,response.UserID)
 	if err !=nil{
-		return "",err
+		return "","",err
 	}
-	return accessToken,nil
+	return accessToken,refreshToken,nil
 }
 
 //uses auth pkg simply to create the tokens with specific expire date
