@@ -4,7 +4,9 @@ import (
 	"log"
 	"net/http"
 
+	"RyanDev-21.com/Chirpy/pkg/middleware"
 	"RyanDev-21.com/Chirpy/pkg/response"
+	"github.com/google/uuid"
 )
 
 
@@ -22,6 +24,12 @@ func NewChatHandler(chatService ChatService)*chatHandler{
 
 
 func (h *chatHandler)ServeWs(w http.ResponseWriter,r *http.Request){
+	userID ,ok:= r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
+	if !ok{
+		response.Error(w,401,"unauthorized")
+		return
+	}
+		
 	conn, err:=h.chatService.upgradeWebsocket(w,r)
 	if err !=nil{
 		log.Printf("WebSocket upgrade failed: %v", err)
@@ -29,6 +37,6 @@ func (h *chatHandler)ServeWs(w http.ResponseWriter,r *http.Request){
 		return
 	}
 
-	h.chatService.initWs(conn)
+	h.chatService.initWs(conn,userID)
 
 }
