@@ -1,15 +1,15 @@
 package chatmodel
 
 import (
-	"bytes"
+//	"bytes"
 	"log"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
 
-type chatID string
 
 //this is standard way of doing this i guess
 const (
@@ -28,13 +28,22 @@ type Client struct{
 	Hub *Hub
 	Conn *websocket.Conn
 	Send chan []byte
+	UserID uuid.UUID
 }
 
-func NewClient(Hub *Hub,Conn *websocket.Conn,Send chan []byte)*Client{
+type Message struct{
+	Content string `json:"msg"`
+	ToID string `json:"toID"`
+	Type string `json:"type"`
+}
+
+
+func NewClient(hub *Hub,conn *websocket.Conn,send chan []byte,userID uuid.UUID)*Client{
 	return &Client{
-		Hub: Hub,
-		Conn: Conn,
-		Send: Send,
+		Hub: hub,
+		Conn: conn,
+		Send: send,
+		UserID: userID,
 	}
 }
 
@@ -54,10 +63,14 @@ func (c *Client)ReadPump(){
 
 	c.Conn.SetReadLimit(maxMessageSize)
 	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	//when it recieve pong message from the connection will add more sec to deadline	
 	c.Conn.SetPongHandler(func(string)error{c.Conn.SetReadDeadline(time.Now().Add(pongWait));return nil})
+	
+	var msg Message
 
 	for {
-		_,message,err:= c.Conn.ReadMessage()
+
+		err:= c.Conn.ReadJSON(&msg)
 		if err !=nil{
 			if websocket.IsUnexpectedCloseError(err,websocket.CloseGoingAway,websocket.CloseAbnormalClosure){
 				log.Printf("error :%v",err)
@@ -65,8 +78,11 @@ func (c *Client)ReadPump(){
 			}	
 			break
 		}
-		message = bytes.TrimSpace(bytes.Replace(message,newline,space,-1))
-		c.Hub.Broadcast <- message
+		//the last parameters takes how many you wanna replace if <0 there is no limit
+		//as we don't read the message type anymore 	
+		//msg= bytes.TrimSpace(bytes.Replace(message,newline,space,-1))
+			
+		c.Hub.Broadcast <- msg
 	
 	}
 }

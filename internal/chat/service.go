@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chat/chatModel"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 var upgrader = websocket.Upgrader{
@@ -12,7 +13,8 @@ var upgrader = websocket.Upgrader{
 }
 type ChatService interface{
 	upgradeWebsocket(w http.ResponseWriter,r *http.Request)(*websocket.Conn,error)
-	initWs(conn *websocket.Conn)
+	initWs(conn *websocket.Conn,userID uuid.UUID)
+//	createGroup(userID uuid.UUID)
 }
 
 
@@ -34,8 +36,8 @@ func NewChatService(chatRepo ChatRepo)ChatService{
 
 
 
-func (s *chatService)initWs(conn *websocket.Conn){
-	client := chatmodel.NewClient(s.hub,conn,make(chan []byte,256))
+func (s *chatService)initWs(conn *websocket.Conn,userID uuid.UUID){
+	client := chatmodel.NewClient(s.hub,conn,make(chan []byte,256),userID)
 	client.Hub.Register <- client
 
 	go client.WritePump()

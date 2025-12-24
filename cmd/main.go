@@ -783,7 +783,10 @@ func main(){
 
 	
 	//Maybe endpoint for chat
-	mux.HandleFunc("GET /api/chats",chatHandler.ServeWs)	
+	mux.Handle("GET /api/chats",middleware.AuthMiddleWare(chatHandler.ServeWs,apicfg.secret))	
+
+	//create a group
+	mux.HandleFunc("POST /api/chats/groups",apicfg.ChirpDeleteHandle)
 
 	server := http.Server{
 		Addr: Port,
