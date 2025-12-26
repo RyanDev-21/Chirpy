@@ -13,7 +13,9 @@ import (
 
 	authClient "RyanDev-21.com/Chirpy/internal/auth"
 	"RyanDev-21.com/Chirpy/internal/chat"
+	chatmodel "RyanDev-21.com/Chirpy/internal/chat/chatModel"
 	"RyanDev-21.com/Chirpy/internal/database"
+	"RyanDev-21.com/Chirpy/internal/groups"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
@@ -721,23 +723,29 @@ func main(){
 	finalHanlder := http.StripPrefix("/app/",handlerChain)
 	assetChain := apicfg.middlewareMeticsInc(http.FileServer(http.Dir("./assets/")))
 	assetHandler := http.StripPrefix("/app/assets/",assetChain)
+	
 
-
-	//Create Repositories 
+	//init hub
+	hub := chatmodel.NewHub()
+	go hub.Run()	
+	//Create Repositories
 	userRepo := users.NewUserRepo(dbQueries)
 	authRepo := authClient.NewAuthRepo(dbQueries)
 	chatRepo := chat.NewChatRepo(dbQueries)
+	groupRepo := groups.NewGroupRepo(dbQueries)	
 
 	//Create Services
 	userService := users.NewUserService(userRepo)
 	authService := authClient.NewAuthService(userRepo,authRepo,apicfg.secret)
-	chatService := chat.NewChatService(chatRepo)
-
+	chatService := chat.NewChatService(chatRepo,hub)
+	groupService := groups.NewGroupService(groupRepo,hub)
 
 	//Create Hanlders
 	userHandler := users.NewUserHandler(userService)
 	authHandler := authClient.NewAuthHandler(authService)
 	chatHandler := chat.NewChatHandler(chatService)
+	groupHandler := groups.NewGroupHandler(groupService)
+
 
 	//Main app route
 	mux.Handle("/app/",middleWareLog(finalHanlder))
@@ -786,7 +794,17 @@ func main(){
 	mux.Handle("GET /api/chats",middleware.AuthMiddleWare(chatHandler.ServeWs,apicfg.secret))	
 
 	//create a group
-	mux.HandleFunc("POST /api/chats/groups",apicfg.ChirpDeleteHandle)
+	mux.Handle("POST /api/chats/groups",middleware.AuthMiddleWare(groupHandler.CreateGroup,apicfg.secret))
+
+	//need to update these dummy function
+	//join group
+	mux.Handle("POST /api/chats/groups/{group_id}/memebers",middleware.AuthMiddleWare(groupHandler.JoinGroup,apicfg.secret))
+	//leave group
+	mux.HandleFunc("DELETE /api/chats/groups/{group_id}/members",groupHandler.CreateGroup)
+	//kick or add the user from or to the group
+	mux.HandleFunc("PATCH /api/chats/groups/{group_id}/members",groupHandler.CreateGroup)
+	//change group setting or anything
+	mux.HandleFunc("PATCH /api/chats/groups/{group_id}",groupHandler.CreateGroup)
 
 	server := http.Server{
 		Addr: Port,
