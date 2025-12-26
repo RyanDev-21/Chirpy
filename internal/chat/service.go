@@ -24,9 +24,7 @@ type chatService struct{
 }
 
 
-func NewChatService(chatRepo ChatRepo)ChatService{
-	hub := chatmodel.NewHub()
-	go hub.Run()
+func NewChatService(chatRepo ChatRepo,hub *chatmodel.Hub)ChatService{
 
 	return &chatService{
 		chatRepo: chatRepo,	

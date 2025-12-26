@@ -1,11 +1,23 @@
 package chatmodel
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+
+	"github.com/google/uuid"
+)
 
 //import "strings"
 
-//might take chat_id and then stores the client from as its value
-//i don't know might fix it later
+
+type GroupActionInfo struct{
+	UserID uuid.UUID
+	GroupID uuid.UUID
+}
+
+
+
+
 type Hub struct{
 	//contains all the chatId whcih the user register
 	UsertoChat map[string]map[string]bool
@@ -16,6 +28,8 @@ type Hub struct{
 	Register chan *Client
 	Unregister chan *Client
 	Broadcast chan Message
+	JoinChan chan GroupActionInfo
+	LeaveChan chan GroupActionInfo
 }
 
 
@@ -27,10 +41,14 @@ func NewHub()*Hub{
 		Register: make(chan *Client),
 		Unregister: make(chan *Client),
 		Clients: make(map[string]*Client),
+		JoinChan: make(chan GroupActionInfo,256),
+		LeaveChan: make(chan GroupActionInfo, 256),
 	}
 }
 
 
+
+//this is getting bloated need to refactor later
 func (h *Hub)Run(){
 	for {
 		select{
@@ -41,6 +59,37 @@ func (h *Hub)Run(){
 		//and search user's chatidlist
 		// and delete the userId in that each of chattouser's chatidlist
 		//and then finally delete the userid from the usertochat
+
+		//when join update the user relation with the chat in both 
+		//userToChat && chatToUser
+		case client := <-h.JoinChan:
+			userID := client.UserID.String()
+			groupID := client.GroupID.String()
+			if h.UsertoChat[userID] == nil{
+				h.UsertoChat[userID] = make(map[string]bool)
+			}
+			h.UsertoChat[userID][groupID] = true
+			if h.ChatToUser[groupID] == nil{
+				h.ChatToUser[groupID] = make(map[string]bool)
+			}
+			h.ChatToUser[groupID][userID] = true
+		//same thing just the opposite of the join
+		case client := <- h.LeaveChan:
+			groupID := client.GroupID.String()
+			userID := client.UserID.String()
+			if usersIDList,ok := h.ChatToUser[groupID]; ok{
+				delete(usersIDList,userID)
+				if len(usersIDList)==0{
+					delete(h.ChatToUser,groupID)
+				}
+			}	
+			if chatsIDList,ok := h.UsertoChat[userID];ok{
+				delete(chatsIDList,groupID)
+				if len(chatsIDList)==0{
+					delete(h.UsertoChat,userID)
+				}	
+			}
+			
 		case client := <-h.Unregister:
 			if _,ok:= h.Clients[client.UserID.String()];ok{
 				delete(h.Clients,client.UserID.String())
@@ -69,8 +118,9 @@ func (h *Hub)Run(){
 			case "private":
 				targetIds = append(targetIds, message.ToID)
 			case "public":
-				if userInChat ,ok:= h.ChatToUser[message.ToID];ok{
-					for userID := range userInChat{
+				log.Printf("userIds list and its chats #%v#",h.ChatToUser[message.ToID])
+				if userIdsInChat ,ok:= h.ChatToUser[message.ToID];ok{
+					for userID := range userIdsInChat{
 						targetIds = append(targetIds, userID)
 					}
 
@@ -93,5 +143,5 @@ func (h *Hub)Run(){
 		}
 
 				}
-	}
+}
 
