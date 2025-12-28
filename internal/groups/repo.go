@@ -9,7 +9,7 @@ import (
 )
 
 type GroupRepo interface {
-	createChatRecord(ctx context.Context,chatID uuid.UUID,memberIDs []uuid.UUID)error
+	createChatRecord(ctx context.Context,chatID uuid.UUID,groupInfo *createGroupRequest)error
 }
 
 type groupRepo struct {
@@ -23,7 +23,7 @@ func NewGroupRepo(queries *database.Queries)GroupRepo{
 }
 
 
-func (r *groupRepo)createChatRecord(ctx context.Context,chatID uuid.UUID,memberIDs []uuid.UUID)error{
+func (r *groupRepo)createChatRecord(ctx context.Context,chatID uuid.UUID,groupInfo *createGroupRequest)error{
 	fmt.Println("saved into db")
 	return nil
 }
