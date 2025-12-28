@@ -799,10 +799,15 @@ func main(){
 	//need to update these dummy function
 	//join group
 	mux.Handle("POST /api/chats/groups/{group_id}/memebers",middleware.AuthMiddleWare(groupHandler.JoinGroup,apicfg.secret))
+
 	//leave group
-	mux.HandleFunc("DELETE /api/chats/groups/{group_id}/members",groupHandler.CreateGroup)
+	mux.Handle("DELETE /api/chats/groups/{group_id}/members",middleware.AuthMiddleWare(groupHandler.LeaveGroup,apicfg.secret))
+
+	//TODO::still have to write this one
 	//kick or add the user from or to the group
 	mux.HandleFunc("PATCH /api/chats/groups/{group_id}/members",groupHandler.CreateGroup)
+	
+	//TODO:and this one
 	//change group setting or anything
 	mux.HandleFunc("PATCH /api/chats/groups/{group_id}",groupHandler.CreateGroup)
 

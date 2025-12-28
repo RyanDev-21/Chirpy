@@ -79,3 +79,32 @@ func (h *groupHandler)JoinGroup(w http.ResponseWriter, r *http.Request){
 	w.WriteHeader(201)	
 }
 
+func (h *groupHandler)LeaveGroup(w http.ResponseWriter, r *http.Request){
+	stringGroupID := r.PathValue("group_id")
+	if stringGroupID == ""{
+		response.Error(w,400,"invalid request")
+		return
+	}
+	groupID,err := uuid.Parse(stringGroupID)
+	if err !=nil{
+		response.Error(w,400,"invalid request")
+		return
+	}
+
+
+	userID, ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
+	if !ok{
+		response.Error(w,401,"not authorized")
+		return
+	}
+
+	err = h.groupService.leaveGroup(r.Context(),groupID,userID)
+	if err !=nil{
+		response.Error(w,500,"something went wrong")
+		return
+	}
+	
+	w.WriteHeader(201)	
+}
+
+
