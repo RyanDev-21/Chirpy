@@ -13,6 +13,11 @@ type GroupInfo struct{
 	ChatID uuid.UUID `json:"chat_id"`
 }
 
+type GroupPublish struct{
+	GroupID GroupInfo `json:"chat_id"`	
+	GroupInfo createGroupRequest `json:"group_info"`	
+}
+
 
 
 
