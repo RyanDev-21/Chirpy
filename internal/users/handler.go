@@ -1,6 +1,7 @@
 package users
 
 import (
+	"fmt"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -40,6 +41,7 @@ func (h *UserHandler)Register(w http.ResponseWriter,r *http.Request){
 		response.Error(w,500,"something went wrong")
 		return
 	}
+	fmt.Println("created the user now returning")
 	response.JSON(w,200,user)
 }
 

@@ -2,10 +2,12 @@ package groups
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chat/chatModel"
+	rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"github.com/google/uuid"
 )
 
@@ -20,13 +22,16 @@ type GroupService interface{
 type groupService struct{
 	groupRepo GroupRepo
 	hub *chatmodel.Hub
+	rabbitmq *rabbitmq.RabbitMQ
 }
 
 
-func NewGroupService(groupRepo GroupRepo,hub *chatmodel.Hub)GroupService{
+
+func NewGroupService(groupRepo GroupRepo,hub *chatmodel.Hub,rabbitmq *rabbitmq.RabbitMQ)GroupService{
 	return &groupService{
 		groupRepo: groupRepo,
 		hub : hub,
+		rabbitmq: rabbitmq,
 	}
 }
 
@@ -37,10 +42,15 @@ func (s *groupService)createGroup(ctx context.Context,createrID uuid.UUID,groupI
 		return nil,err
 	}
 	//store newly created groupID and its member list
-	err = s.groupRepo.createChatRecord(ctx,chatID,groupInfo)
+	//before saving into the db we first publish it into the queue stack
+	payload , err := json.Marshal(GroupPublish{
+		GroupID: GroupInfo{chatID},
+		GroupInfo: *groupInfo,
+	})
 	if err !=nil{
 		return nil,err
 	}
+	s.rabbitmq.PublishToQueue(payload,"Group_creation")
 	return &GroupInfo{
 		ChatID: chatID,
 	},nil
@@ -96,4 +106,8 @@ func (s *groupService)leaveGroup(ctx context.Context,groupID uuid.UUID,userID uu
 
 
 }
+
+// func (s *groupService)startCreateGroupWorker()error{
+//
+// }
 

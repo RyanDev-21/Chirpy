@@ -16,6 +16,7 @@ import (
 	chatmodel "RyanDev-21.com/Chirpy/internal/chat/chatModel"
 	"RyanDev-21.com/Chirpy/internal/database"
 	"RyanDev-21.com/Chirpy/internal/groups"
+	rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
@@ -724,6 +725,8 @@ func main(){
 	assetChain := apicfg.middlewareMeticsInc(http.FileServer(http.Dir("./assets/")))
 	assetHandler := http.StripPrefix("/app/assets/",assetChain)
 	
+	//init rabbitmq queue
+	rabbitmq:=rabbitmq.NewRabbitMQ();
 
 	//init hub
 	hub := chatmodel.NewHub()
@@ -737,8 +740,8 @@ func main(){
 	//Create Services
 	userService := users.NewUserService(userRepo)
 	authService := authClient.NewAuthService(userRepo,authRepo,apicfg.secret)
-	chatService := chat.NewChatService(chatRepo,hub)
-	groupService := groups.NewGroupService(groupRepo,hub)
+	chatService := chat.NewChatService(chatRepo,hub,rabbitmq)
+	groupService := groups.NewGroupService(groupRepo,hub,rabbitmq)
 
 	//Create Hanlders
 	userHandler := users.NewUserHandler(userService)
@@ -810,7 +813,8 @@ func main(){
 	//TODO:and this one
 	//change group setting or anything
 	mux.HandleFunc("PATCH /api/chats/groups/{group_id}",groupHandler.CreateGroup)
-
+	
+	//NOTE:: i should really consider making the server as my own config and graceful shutdown
 	server := http.Server{
 		Addr: Port,
 		Handler: mux,
