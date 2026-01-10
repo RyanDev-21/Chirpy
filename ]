@@ -1,9 +1,0 @@
-/000 ../
-/015 auth/
-/016 chat/
-/018 chirps/
-/014 database/
-/019 groups/
-/020 rabbitMq/
-/017 users/
-customMq/
