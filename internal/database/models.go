@@ -11,12 +11,51 @@ import (
 	"github.com/google/uuid"
 )
 
+type ChatGroup struct {
+	ID          uuid.UUID
+	Name        string
+	Description string
+	MaxMember   int16
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type Chirp struct {
 	ID        uuid.UUID
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	Body      string
 	UserID    uuid.UUID
+}
+
+type Groupmessage struct {
+	ID        uuid.UUID
+	Content   sql.NullString
+	GroupID   uuid.NullUUID
+	FromID    uuid.NullUUID
+	ParentID  uuid.NullUUID
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt sql.NullTime
+}
+
+type MemberTable struct {
+	ID       uuid.UUID
+	GroupID  uuid.NullUUID
+	MemberID uuid.NullUUID
+	JoinedAt time.Time
+	Role     sql.NullString
+}
+
+type Message struct {
+	ID        uuid.UUID
+	Content   sql.NullString
+	Parentid  uuid.NullUUID
+	FromID    uuid.NullUUID
+	ToID      uuid.NullUUID
+	DeletedAt sql.NullTime
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type RefreshToken struct {

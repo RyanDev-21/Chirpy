@@ -19,4 +19,6 @@ func NewChatRepo(queries *database.Queries)ChatRepo{
 	}
 }
 
+//func (r *chatRepo)
+
 

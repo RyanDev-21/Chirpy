@@ -7,7 +7,8 @@ import (
 	"log"
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chat/chatModel"
-	rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
+	mq "RyanDev-21.com/Chirpy/internal/customMq"
+	//rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"github.com/google/uuid"
 )
 
@@ -15,6 +16,7 @@ type GroupService interface{
 	createGroup(ctx context.Context,createrID uuid.UUID,groupMembers *createGroupRequest)(*GroupInfo,error)
 	joinGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error
 	leaveGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error
+	 StartWorkerForCreateGroup(channel chan *mq.Channel)
 }
 
 
@@ -22,16 +24,16 @@ type GroupService interface{
 type groupService struct{
 	groupRepo GroupRepo
 	hub *chatmodel.Hub
-	rabbitmq *rabbitmq.RabbitMQ
+	mq *mq.MainMQ
 }
 
 
 
-func NewGroupService(groupRepo GroupRepo,hub *chatmodel.Hub,rabbitmq *rabbitmq.RabbitMQ)GroupService{
+func NewGroupService(groupRepo GroupRepo,hub *chatmodel.Hub,mq *mq.MainMQ)GroupService{
 	return &groupService{
 		groupRepo: groupRepo,
 		hub : hub,
-		rabbitmq: rabbitmq,
+		mq: mq,
 	}
 }
 
@@ -50,12 +52,52 @@ func (s *groupService)createGroup(ctx context.Context,createrID uuid.UUID,groupI
 	if err !=nil{
 		return nil,err
 	}
-	s.rabbitmq.PublishToQueue(payload,"Group_creation")
+	log.Printf("okay now publishing the payload")
+	s.mq.Publish("createGroup",payload)
+
+
 	return &GroupInfo{
 		ChatID: chatID,
 	},nil
 }
 
+//NOTE::you really need centralized encoder and decoder
+//there is a code duplication in this fucntion
+func (s *groupService)StartWorkerForCreateGroup(channel chan *mq.Channel){
+	var retriesCount = make(map[int]int) 
+	for chen := range channel{
+		//if this is not the valid type then the pipeline will break
+		jsonBytes := chen.Msg.([]byte)
+		var msg GroupPublish
+		 err := json.Unmarshal(jsonBytes,&msg)
+		if err !=nil{
+			if _,ok := retriesCount[chen.LocalTag];!ok{
+				retriesCount[chen.LocalTag] =0	
+			}
+			retriesCount[chen.LocalTag] ++
+		 s.mq.Republish(chen,retriesCount[chen.LocalTag])		
+
+		}
+		
+		groupID := msg.GroupID.ChatID
+		groupInfo := msg.GroupInfo
+		err = s.groupRepo.createGroup(groupID,createGroupRequest{
+			GroupName: groupInfo.GroupName,
+			Description: groupInfo.Description,
+			MaxMems: groupInfo.MaxMems ,
+		})
+
+		if err !=nil{
+		 if _,ok := retriesCount[chen.LocalTag];!ok{
+				retriesCount[chen.LocalTag] =0	
+			}
+			retriesCount[chen.LocalTag] ++
+		 s.mq.Republish(chen,retriesCount[chen.LocalTag])		
+		}
+		log.Printf("Successfully created the group")
+	}	
+
+}
 
 
 //might have to refactor these two service into one service which operate based on the type of the service

@@ -53,7 +53,7 @@ var (
 	space = []byte{' '}
 )
 
-//read message fromt the connection
+//read message from the connection
 //and Send the msg to the Broadcast channel
 func (c *Client)ReadPump(){
 	defer func(){

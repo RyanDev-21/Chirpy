@@ -4,7 +4,8 @@ import (
 	"net/http"
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chat/chatModel"
-	rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
+	mq "RyanDev-21.com/Chirpy/internal/customMq"
+	//rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
@@ -22,17 +23,17 @@ type ChatService interface{
 type chatService struct{
 	chatRepo ChatRepo
 	hub *chatmodel.Hub
-	rabbitmq *rabbitmq.RabbitMQ
+	mq *mq.MainMQ
 }
 
 
-func NewChatService(chatRepo ChatRepo,hub *chatmodel.Hub,rabbitmq *rabbitmq.RabbitMQ)ChatService{
+func NewChatService(chatRepo ChatRepo,hub *chatmodel.Hub,mq *mq.MainMQ)ChatService{
 
 	return &chatService{
 		chatRepo: chatRepo,	
 		hub: hub,
-		rabbitmq : rabbitmq,
-		}
+		mq:mq,
+	}
 	}
 
 

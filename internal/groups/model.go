@@ -5,8 +5,9 @@ import "github.com/google/uuid"
 
 type createGroupRequest struct{
 	GroupName string  `json:"group_name"`
-	Members []uuid.UUID `json:"member_ids"`	
-	MaxMems uint16 `json:"max_mems"`
+	Members []uuid.UUID `json:"member_ids"`
+	Description string `json:"description"`
+	MaxMems int16 `json:"max_mems"`
 }
 
 type GroupInfo struct{
