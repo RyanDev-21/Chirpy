@@ -19,23 +19,34 @@ type GroupActionInfo struct{
 
 
 type Hub struct{
-	//contains all the chatId whcih the user register
-	UsertoChat map[string]map[string]bool
+	//contains all the chatId which the user register
+	UsertoChannel map[string]map[string]bool
 
 	//contains all the users id of the specific chat
 	ChatToUser map[string]map[string]bool
 	Clients map[string]*Client
+	//register and unregister are for the connection	
 	Register chan *Client
 	Unregister chan *Client
+
+	//the client use this channel to broadcast the message onto the hub
 	Broadcast chan Message
+
+	//group sepcific channel
 	JoinChan chan GroupActionInfo
 	LeaveChan chan GroupActionInfo
 }
 
 
+type JoinStruct struct{
+	userID uuid.UUID
+	groupID uuid.UUID
+	role string
+}
+
 func NewHub()*Hub{
 	return &Hub{
-		UsertoChat:make(map[string]map[string]bool) ,
+		UsertoChannel:make(map[string]map[string]bool) ,
 		ChatToUser: make(map[string]map[string]bool),
 		Broadcast: make(chan Message),
 		Register: make(chan *Client),
@@ -65,14 +76,15 @@ func (h *Hub)Run(){
 		case client := <-h.JoinChan:
 			userID := client.UserID.String()
 			groupID := client.GroupID.String()
-			if h.UsertoChat[userID] == nil{
-				h.UsertoChat[userID] = make(map[string]bool)
+			if h.UsertoChannel[userID] == nil{
+				h.UsertoChannel[userID] = make(map[string]bool)
 			}
-			h.UsertoChat[userID][groupID] = true
+			h.UsertoChannel[userID][groupID] = true
 			if h.ChatToUser[groupID] == nil{
 				h.ChatToUser[groupID] = make(map[string]bool)
 			}
 			h.ChatToUser[groupID][userID] = true
+					
 		//same thing just the opposite of the join
 		case client := <- h.LeaveChan:
 			groupID := client.GroupID.String()
@@ -83,10 +95,10 @@ func (h *Hub)Run(){
 					delete(h.ChatToUser,groupID)
 				}
 			}	
-			if chatsIDList,ok := h.UsertoChat[userID];ok{
+			if chatsIDList,ok := h.UsertoChannel[userID];ok{
 				delete(chatsIDList,groupID)
 				if len(chatsIDList)==0{
-					delete(h.UsertoChat,userID)
+					delete(h.UsertoChannel,userID)
 				}	
 			}
 			
@@ -95,7 +107,7 @@ func (h *Hub)Run(){
 				delete(h.Clients,client.UserID.String())
 				close(client.Send)
 			}
-			if chatIds, ok := h.UsertoChat[client.UserID.String()]; ok{
+			if chatIds, ok := h.UsertoChannel[client.UserID.String()]; ok{
 				for chat := range chatIds{
 					if usersInChat,ok := h.ChatToUser[chat]; ok{
 						delete(usersInChat,client.UserID.String())	
@@ -105,7 +117,7 @@ func (h *Hub)Run(){
 					}
 				}
 			}
-			delete(h.UsertoChat,client.UserID.String())
+			delete(h.UsertoChannel,client.UserID.String())
 		
 		//basically stores the targetIds based on the type of the message
 		//if it is private you find in the clients and then write to it 

@@ -14,9 +14,10 @@ import (
 	authClient "RyanDev-21.com/Chirpy/internal/auth"
 	"RyanDev-21.com/Chirpy/internal/chat"
 	chatmodel "RyanDev-21.com/Chirpy/internal/chat/chatModel"
+	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"RyanDev-21.com/Chirpy/internal/database"
 	"RyanDev-21.com/Chirpy/internal/groups"
-	rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
+//	rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
@@ -25,6 +26,7 @@ import (
 	_ "github.com/lib/pq"
 )
 
+var CreateGroup = "CreateGroup"
 
 const (
 	Port = ":8080"
@@ -726,8 +728,7 @@ func main(){
 	assetHandler := http.StripPrefix("/app/assets/",assetChain)
 	
 	//init rabbitmq queue
-	rabbitmq:=rabbitmq.NewRabbitMQ();
-
+	mq := mq.NewMainMQ(&map[string]chan *mq.Channel{},10)
 	//init hub
 	hub := chatmodel.NewHub()
 	go hub.Run()	
@@ -740,14 +741,19 @@ func main(){
 	//Create Services
 	userService := users.NewUserService(userRepo)
 	authService := authClient.NewAuthService(userRepo,authRepo,apicfg.secret)
-	chatService := chat.NewChatService(chatRepo,hub,rabbitmq)
-	groupService := groups.NewGroupService(groupRepo,hub,rabbitmq)
+	chatService := chat.NewChatService(chatRepo,hub,mq)
+	groupService := groups.NewGroupService(groupRepo,hub,mq)
 
 	//Create Hanlders
 	userHandler := users.NewUserHandler(userService)
 	authHandler := authClient.NewAuthHandler(authService)
 	chatHandler := chat.NewChatHandler(chatService)
 	groupHandler := groups.NewGroupHandler(groupService)
+
+	//startup workers for each event
+	// run the message queue
+	go mq.Run()
+	go mq.ListeningForTheChannels("createGroup",100,groupService.StartWorkerForCreateGroup)
 
 
 	//Main app route

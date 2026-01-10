@@ -1,0 +1,12 @@
+-- +goose Up
+ALTER TABLE chat_groups 
+ALTER COLUMN name SET NOT NULL,
+ALTER COLUMN description SET NOT NULL,
+ALTER COLUMN max_member SET NOT NULL;
+
+
+-- +goose Down
+ALTER TABLE chat_groups
+ALTER COLUMN name DROP NOT NULL,
+ALTER COLUMN description DROP NOT NULL,
+ALTER COLUMN max_member  DROP NOT NULL;
