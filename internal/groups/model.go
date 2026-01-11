@@ -1,7 +1,14 @@
 package groups
 
-import "github.com/google/uuid"
+import (
+	"errors"
 
+	"github.com/google/uuid"
+)
+
+
+var ErrNotFoundGroup = errors.New("group not found")
+var ErrGroupFull = errors.New("group full")
 
 type createGroupRequest struct{
 	GroupName string  `json:"group_name"`
@@ -19,6 +26,15 @@ type GroupPublish struct{
 	GroupInfo createGroupRequest `json:"group_info"`	
 }
 
+type creatorPublishStruct struct{
+	GroupID uuid.UUID
+	UserID uuid.UUID
+	Role string
+}
 
+type ManageGroupPublishStruct struct{
+	GroupId uuid.UUID
+	UserID uuid.UUID
+}
 
 

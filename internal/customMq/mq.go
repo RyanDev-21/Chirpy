@@ -42,6 +42,7 @@ type Channel struct{
 	topic string 
 	LocalTag int
 	Msg any
+	RetriesCount int
 }
 
 
@@ -67,7 +68,7 @@ func (mq *MainMQ)Run(){
 		select{
 		case task := <- mq.pub:
 			log.Printf("inside the pub struct now")
-			mq.mu.RLock();
+			mq.mu.Lock();
 			//if the topic doesn't exist create one
 			//and set its job count to 0
 				if _,ok :=mq.mainMq[task.topic];!ok{
@@ -84,7 +85,7 @@ func (mq *MainMQ)Run(){
 				LocalTag: jobCount[task.topic],
 				Msg: task.info,
 			}
-			mq.mu.RUnlock();
+			mq.mu.Unlock();
 			//finally unlock the read lock
 		case result := <-mq.FailedResult:
 			//pull from the fail channel and if their retires count is lower than the limit then 
@@ -92,12 +93,14 @@ func (mq *MainMQ)Run(){
 			log.Printf("got result from %v ,retries :%v\n",result.topic,result.retries)
 				log.Printf("restrying the msg id :%v\n",result.tag)
 			if result.retries<mq.retriesLimit{
-
+				mq.mu.Lock();	
 				mq.mainMq[result.topic]<- &Channel{
 					topic: result.topic,
 					LocalTag: result.tag,
 					Msg: result.msg,
+					RetriesCount:result.retries ,
 				}	
+				mq.mu.Unlock()
 			}else{
 				log.Printf("retries count exceed the limit\n saving it to log\n")
 			}	
@@ -123,33 +126,7 @@ func (mq *MainMQ)Republish(channel *Channel,retries int){
 	}	
 }
 
-// the worker basically recieve all the msg from the chan 
-// if the operation failed then you retry it with the pub one again
-// this fucntion is just for testing purpose
-// func (mq *MainMQ)workerForTheSmth(channel chan*Channel,workfucntion func()){
-// 	retiresChanList := make(map[int]int)
-// 	   for msg := range channel{
-// 			workfucntion()	
-// 		if msg.LocalTag == 3{
-// 			retiresChanList[msg.LocalTag] +=1
-// 			mq.FailedResult<-ResultStruct{
-// 				topic: msg.topic,
-// 				tag: msg.LocalTag,
-// 				msg: msg.Msg,
-// 				retries: retiresChanList[msg.LocalTag],
-// 			}
-// 		}
-// 	}
-// }
 
-
-//we don't need this one at all 
-func (mq *MainMQ)GetChannelForTopic(topic string)chan *Channel{
-	if v, ok := mq.mainMq[topic];ok{
-		return v
-	}
-	return nil
-}
 
 //wait the topic to be created and then make those worker do the job
 func (mq *MainMQ)ListeningForTheChannels(topic string,numWorkers int,workFunction WorkerFunction){
@@ -170,53 +147,3 @@ func (mq *MainMQ)ListeningForTheChannels(topic string,numWorkers int,workFunctio
 	} 
 
 
-// func main(){
-// 	messageQueue := make(map[string]chan*Channel)		
-// 	mq := NewMainMQ(&messageQueue,10);
-//  	var saveIntoDb = "save into db"
-// 	var notifyEvent = "pls notify this"
-// 	go mq.Run()
-// 	messages := []PubStruct{
-// 		{saveIntoDb, "Hello from 1 of db"},
-// 		{saveIntoDb, "Hello from 2 of db"},
-// 		{saveIntoDb, "Hello from 3 of db"},
-// 		{saveIntoDb, "Hello from 4 of db"},
-// 		{notifyEvent, "Hello from 1 of noti"},
-// 		{notifyEvent, "Hello from 2 of noti"},
-// 		{notifyEvent, "Hello from 3 of noti"},
-// 		{notifyEvent, "Hello from 4 of noti"},
-// }	
-// 	for i := range messages{
-// 		mq.publish(messages[i].topic,messages[i].info)
-// 	}
-//
-// 	go mq.listeningForTheChannels(saveIntoDb,3,mq.workerForTheSmth)
-// 	go mq.listeningForTheChannels(notifyEvent,3,mq.workerForTheSmth)
-//
-//
-//
-// 	sigs := make(chan os.Signal, 1)
-// 	done := make(chan bool, 1)
-//
-// 	// 2. Register the channel to receive notifications for specific signals.
-// 	// In this case, SIGINT (Ctrl+C) and SIGTERM (terminate).
-// 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-//
-// 	// 3. Start a goroutine to handle received signals.
-// 	go func() {
-// 		// This blocks until a signal is received on the 'sigs' channel.
-// 		sig := <-sigs
-// 		fmt.Printf("\nReceived signal: %s\n", sig)
-//
-// 		// Perform cleanup or graceful shutdown logic here
-// 		fmt.Println("Performing graceful shutdown... cleaning up resources.")
-//
-// 		// Signal the main goroutine that processing is done.
-// 		done <- true
-// 	}()
-//
-// 	// 4. The main goroutine waits for the signal handler to finish.
-// 	fmt.Println("Program is running. Press Ctrl+C or send a SIGTERM to exit.")
-// 	<-done
-// 	fmt.Println("Program exited gracefully.")
-// }

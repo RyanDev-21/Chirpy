@@ -26,10 +26,12 @@ func NewGroupHandler(groupService GroupService)*groupHandler{
 
 //has to create the common id for the chat
 func (h *groupHandler)CreateGroup(w http.ResponseWriter,r *http.Request){
+
 	parameters := createGroupRequest{}
 	decoder := json.NewDecoder(r.Body)
 	err := decoder.Decode(&parameters)
 	if err !=nil{
+
 		log.Printf("failed to decode the params #%s#",err)
 		response.Error(w,400,"invalid credentails")
 		return
@@ -45,7 +47,12 @@ func (h *groupHandler)CreateGroup(w http.ResponseWriter,r *http.Request){
 	//will return the common chatID
 	responseStruct, err := h.groupService.createGroup(r.Context(),createrID,&parameters)
 	if err !=nil{
+		if err == ErrDuplicateName{
+			response.Error(w,400,err.Error())
+			return
+		}
 		response.Error(w,500,"somthing went wrong")
+		return
 	}
 	response.JSON(w,200,responseStruct)	
 

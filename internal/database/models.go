@@ -12,12 +12,13 @@ import (
 )
 
 type ChatGroup struct {
-	ID          uuid.UUID
-	Name        string
-	Description string
-	MaxMember   int16
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID            uuid.UUID
+	Name          string
+	Description   string
+	MaxMember     int16
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	CurrentMember int16
 }
 
 type Chirp struct {
@@ -41,10 +42,10 @@ type Groupmessage struct {
 
 type MemberTable struct {
 	ID       uuid.UUID
-	GroupID  uuid.NullUUID
-	MemberID uuid.NullUUID
+	GroupID  uuid.UUID
+	MemberID uuid.UUID
 	JoinedAt time.Time
-	Role     sql.NullString
+	Role     string
 }
 
 type Message struct {

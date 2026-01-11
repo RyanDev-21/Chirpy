@@ -69,3 +69,5 @@ func (s *userService)UpdatePassword(ctx context.Context,userID uuid.UUID,oldPass
 	return user,nil
 	
 }
+
+
