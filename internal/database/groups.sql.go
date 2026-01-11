@@ -19,7 +19,7 @@ VALUES(
     $3,
     $4
 )
-RETURNING id, name, description, max_member, created_at, updated_at
+RETURNING id, name, description, max_member, created_at, updated_at, current_member
 `
 
 type CreateGroupParams struct {
@@ -44,6 +44,151 @@ func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) (ChatG
 		&i.MaxMember,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CurrentMember,
+	)
+	return i, err
+}
+
+const createGroupLeaderRole = `-- name: CreateGroupLeaderRole :one
+INSERT INTO member_table(group_id,member_id,role)
+VALUES(
+    $1,
+    $2,
+    $3
+)
+RETURNING id, group_id, member_id, joined_at, role
+`
+
+type CreateGroupLeaderRoleParams struct {
+	GroupID  uuid.UUID
+	MemberID uuid.UUID
+	Role     string
+}
+
+func (q *Queries) CreateGroupLeaderRole(ctx context.Context, arg CreateGroupLeaderRoleParams) (MemberTable, error) {
+	row := q.db.QueryRowContext(ctx, createGroupLeaderRole, arg.GroupID, arg.MemberID, arg.Role)
+	var i MemberTable
+	err := row.Scan(
+		&i.ID,
+		&i.GroupID,
+		&i.MemberID,
+		&i.JoinedAt,
+		&i.Role,
+	)
+	return i, err
+}
+
+const getAllGroupInfo = `-- name: GetAllGroupInfo :many
+SELECT id,name,max_member,current_member FROM chat_groups
+`
+
+type GetAllGroupInfoRow struct {
+	ID            uuid.UUID
+	Name          string
+	MaxMember     int16
+	CurrentMember int16
+}
+
+func (q *Queries) GetAllGroupInfo(ctx context.Context) ([]GetAllGroupInfoRow, error) {
+	rows, err := q.db.QueryContext(ctx, getAllGroupInfo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllGroupInfoRow
+	for rows.Next() {
+		var i GetAllGroupInfoRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.MaxMember,
+			&i.CurrentMember,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getGroupInfoByID = `-- name: GetGroupInfoByID :one
+SELECT id, name, description, max_member, created_at, updated_at, current_member FROM chat_groups WHERE  id = $1
+`
+
+func (q *Queries) GetGroupInfoByID(ctx context.Context, id uuid.UUID) (ChatGroup, error) {
+	row := q.db.QueryRowContext(ctx, getGroupInfoByID, id)
+	var i ChatGroup
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.MaxMember,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CurrentMember,
+	)
+	return i, err
+}
+
+const getTotalMemberCountByID = `-- name: GetTotalMemberCountByID :one
+SELECT COUNT(*)FROM member_table WHERE group_id = $1
+`
+
+func (q *Queries) GetTotalMemberCountByID(ctx context.Context, groupID uuid.UUID) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getTotalMemberCountByID, groupID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const joinGroup = `-- name: JoinGroup :one
+INSERT INTO member_table(group_id,member_id)
+VALUES(
+    $1,
+    $2
+)
+RETURNING id, group_id, member_id, joined_at, role
+`
+
+type JoinGroupParams struct {
+	GroupID  uuid.UUID
+	MemberID uuid.UUID
+}
+
+func (q *Queries) JoinGroup(ctx context.Context, arg JoinGroupParams) (MemberTable, error) {
+	row := q.db.QueryRowContext(ctx, joinGroup, arg.GroupID, arg.MemberID)
+	var i MemberTable
+	err := row.Scan(
+		&i.ID,
+		&i.GroupID,
+		&i.MemberID,
+		&i.JoinedAt,
+		&i.Role,
+	)
+	return i, err
+}
+
+const searchInfoByName = `-- name: SearchInfoByName :one
+SELECT id, name, description, max_member, created_at, updated_at, current_member FROM chat_groups WHERE name = $1
+`
+
+func (q *Queries) SearchInfoByName(ctx context.Context, name string) (ChatGroup, error) {
+	row := q.db.QueryRowContext(ctx, searchInfoByName, name)
+	var i ChatGroup
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.MaxMember,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CurrentMember,
 	)
 	return i, err
 }

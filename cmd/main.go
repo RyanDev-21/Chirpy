@@ -17,7 +17,8 @@ import (
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"RyanDev-21.com/Chirpy/internal/database"
 	"RyanDev-21.com/Chirpy/internal/groups"
-//	rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
+
+	//	rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
@@ -732,17 +733,19 @@ func main(){
 	//init hub
 	hub := chatmodel.NewHub()
 	go hub.Run()	
+
 	//Create Repositories
 	userRepo := users.NewUserRepo(dbQueries)
 	authRepo := authClient.NewAuthRepo(dbQueries)
 	chatRepo := chat.NewChatRepo(dbQueries)
 	groupRepo := groups.NewGroupRepo(dbQueries)	
-
+	//set up group cache
+	groupCache := groups.NewGroupCache(groupRepo)
 	//Create Services
 	userService := users.NewUserService(userRepo)
 	authService := authClient.NewAuthService(userRepo,authRepo,apicfg.secret)
 	chatService := chat.NewChatService(chatRepo,hub,mq)
-	groupService := groups.NewGroupService(groupRepo,hub,mq)
+	groupService := groups.NewGroupService(groupRepo,hub,mq,groupCache)
 
 	//Create Hanlders
 	userHandler := users.NewUserHandler(userService)
@@ -752,9 +755,11 @@ func main(){
 
 	//startup workers for each event
 	// run the message queue
+
+
 	go mq.Run()
 	go mq.ListeningForTheChannels("createGroup",100,groupService.StartWorkerForCreateGroup)
-
+	go mq.ListeningForTheChannels("addCreator",100,groupService.StartWorkerForCreateGroupLeader)
 
 	//Main app route
 	mux.Handle("/app/",middleWareLog(finalHanlder))
@@ -807,7 +812,7 @@ func main(){
 
 	//need to update these dummy function
 	//join group
-	mux.Handle("POST /api/chats/groups/{group_id}/memebers",middleware.AuthMiddleWare(groupHandler.JoinGroup,apicfg.secret))
+	mux.Handle("POST /api/chats/groups/{group_id}/members",middleware.AuthMiddleWare(groupHandler.JoinGroup,apicfg.secret))
 
 	//leave group
 	mux.Handle("DELETE /api/chats/groups/{group_id}/members",middleware.AuthMiddleWare(groupHandler.LeaveGroup,apicfg.secret))
