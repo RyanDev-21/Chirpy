@@ -154,6 +154,7 @@ func (s *groupService)joinGroup(ctx context.Context,groupID uuid.UUID,userID uui
 		return ErrGroupFull	
 	}	
 	//assign the job for the db operation of adding member
+	//NOTE::maybe implement member cache
 	s.mq.Publish("manageGroupMembers",&ManageGroupPublishStruct{
 		GroupId: groupID,
 		UserID: userID,
