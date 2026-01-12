@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
@@ -685,7 +687,7 @@ func(cfg *apiConfig)WebHookHandle(w http.ResponseWriter,r *http.Request){
 		respondWithError(w,500,"Internal server error")
 		return
 	}	
-	if rows,_:= result.RowsAffected(); rows==0{
+	if rows:= result.RowsAffected(); rows==0{
 		respondWithError(w,404,"Not found user")
 		return 	
 	}
@@ -710,17 +712,18 @@ func main(){
 	if err !=nil{
 		log.Fatal("failed to load the env")
 	}
+	ctx := context.Background()
 	dURL := os.Getenv("DB_URL")
 	platform := os.Getenv("PLATFORM")
 	secret := os.Getenv("SECRET")
 	polkaKey := os.Getenv("POLKA_KEY")	
-	db,err := sql.Open("postgres",dURL)
-
+	db ,err := pgxpool.New(ctx,dURL)
 	if err !=nil{
 		log.Fatal("Failed connection to the db ")
 		
 	}
 	dbQueries := database.New(db)
+	defer db.Close()
 	apicfg := apiConfig{queries: dbQueries,platform: platform,secret:secret,polkaKey: polkaKey}
 	mux := http.NewServeMux()
 	handlerChain := apicfg.middlewareMeticsInc(http.FileServer(http.Dir("./")))
@@ -760,6 +763,7 @@ func main(){
 	go mq.Run()
 	go mq.ListeningForTheChannels("createGroup",100,groupService.StartWorkerForCreateGroup)
 	go mq.ListeningForTheChannels("addCreator",100,groupService.StartWorkerForCreateGroupLeader)
+	go mq.ListeningForTheChannels("addMember",100,groupService.StartWorkerForAddMember)
 
 	//Main app route
 	mux.Handle("/app/",middleWareLog(finalHanlder))
