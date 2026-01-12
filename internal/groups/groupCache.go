@@ -10,8 +10,8 @@ import (
 )
 
 type CacheGroupInfo struct{
-	total_mem int16
 	name string
+	total_mem int16
 	max_mem int16
 }
 
