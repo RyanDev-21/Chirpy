@@ -40,7 +40,11 @@ SELECT member_id FROM member_table WHERE group_id = $1;
 UPDATE  chat_groups SET current_member = (SELECT COUNT(*)FROM member_table WHERE group_id = $1)RETURNING *;
 
 
--- name: AddMember :copyfrom
+-- name: AddMemberList :copyfrom
+INSERT INTO member_table(group_id,member_id) VALUES($1,$2);
+
+
+-- name: AddMember :exec
 INSERT INTO member_table(group_id,member_id) VALUES($1,$2);
 
 

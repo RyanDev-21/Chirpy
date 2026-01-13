@@ -9,13 +9,13 @@ import (
 	"context"
 )
 
-// iteratorForAddMember implements pgx.CopyFromSource.
-type iteratorForAddMember struct {
-	rows                 []AddMemberParams
+// iteratorForAddMemberList implements pgx.CopyFromSource.
+type iteratorForAddMemberList struct {
+	rows                 []AddMemberListParams
 	skippedFirstNextCall bool
 }
 
-func (r *iteratorForAddMember) Next() bool {
+func (r *iteratorForAddMemberList) Next() bool {
 	if len(r.rows) == 0 {
 		return false
 	}
@@ -27,17 +27,17 @@ func (r *iteratorForAddMember) Next() bool {
 	return len(r.rows) > 0
 }
 
-func (r iteratorForAddMember) Values() ([]interface{}, error) {
+func (r iteratorForAddMemberList) Values() ([]interface{}, error) {
 	return []interface{}{
 		r.rows[0].GroupID,
 		r.rows[0].MemberID,
 	}, nil
 }
 
-func (r iteratorForAddMember) Err() error {
+func (r iteratorForAddMemberList) Err() error {
 	return nil
 }
 
-func (q *Queries) AddMember(ctx context.Context, arg []AddMemberParams) (int64, error) {
-	return q.db.CopyFrom(ctx, []string{"member_table"}, []string{"group_id", "member_id"}, &iteratorForAddMember{rows: arg})
+func (q *Queries) AddMemberList(ctx context.Context, arg []AddMemberListParams) (int64, error) {
+	return q.db.CopyFrom(ctx, []string{"member_table"}, []string{"group_id", "member_id"}, &iteratorForAddMemberList{rows: arg})
 }

@@ -11,7 +11,21 @@ import (
 	"github.com/google/uuid"
 )
 
+const addMember = `-- name: AddMember :exec
+INSERT INTO member_table(group_id,member_id) VALUES($1,$2)
+`
+
 type AddMemberParams struct {
+	GroupID  uuid.UUID
+	MemberID uuid.UUID
+}
+
+func (q *Queries) AddMember(ctx context.Context, arg AddMemberParams) error {
+	_, err := q.db.Exec(ctx, addMember, arg.GroupID, arg.MemberID)
+	return err
+}
+
+type AddMemberListParams struct {
 	GroupID  uuid.UUID
 	MemberID uuid.UUID
 }

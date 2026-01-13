@@ -18,9 +18,11 @@ type GroupService interface{
 	createGroup(ctx context.Context,createrID uuid.UUID,groupMembers *createGroupRequest)(*GroupInfo,error)
 	joinGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error
 	leaveGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error
-	 StartWorkerForCreateGroup(channel chan *mq.Channel)
+	StartWorkerForCreateGroup(channel chan *mq.Channel)
 	StartWorkerForCreateGroupLeader(channel chan *mq.Channel)
+	StartWorkerForAddMemberList(channel chan *mq.Channel)
 	StartWorkerForAddMember(channel chan *mq.Channel)
+		
 }
 
 
@@ -28,7 +30,7 @@ var ErrDuplicateName = errors.New("duplicate name")
 
 //both join and leave share the same struct type
 type groupService struct{
-	groupCache *GroupCache
+	groupCache *Cache
 	groupRepo GroupRepo
 	hub *chatmodel.Hub
 	mq *mq.MainMQ
@@ -36,7 +38,7 @@ type groupService struct{
 
 
 
-func NewGroupService(groupRepo GroupRepo,hub *chatmodel.Hub,mq *mq.MainMQ,groupCache *GroupCache)GroupService{
+func NewGroupService(groupRepo GroupRepo,hub *chatmodel.Hub,mq *mq.MainMQ,groupCache *Cache)GroupService{
 	return &groupService{
 		groupRepo: groupRepo,
 		hub : hub,
@@ -74,7 +76,6 @@ func (s *groupService)createGroup(ctx context.Context,createrID uuid.UUID,groupI
 	log.Printf("okay now publishing the payload")
 	//publsih two jobs for the db operations
 	//in the first one i marshal it so that it becomes bytes 
-	// didn't marshal it so it becomes the struct
 	s.mq.Publish("createGroup",payload)
 	//job for the db op
 	s.mq.Publish("addCreator",creatorPublishStruct{
@@ -105,7 +106,7 @@ func (s *groupService)joinGroup(ctx context.Context,groupID uuid.UUID,userID uui
 	if err !=nil{
 		return err
 	}
-	if groupInfo.total_mem ==groupInfo.max_mem{
+	if groupInfo.totalMem ==groupInfo.maxMem{
 		return ErrGroupFull	
 	}	
 	//assign the job for the db operation of adding member
