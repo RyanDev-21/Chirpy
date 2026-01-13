@@ -78,8 +78,8 @@ func (s *groupService)StartWorkerForAddMemberList(channel chan *mq.Channel){
 			if _,ok:= s.groupCache.GroupCache[msg.GroupId];!ok{
 				s.groupCache.GroupCache[msg.GroupId] = &CacheGroupInfo{}
 			}
-			s.groupCache.GroupCache[msg.GroupId].total_mem =int16(len(msg.UserIds))+1
-			log.Printf("total_mem in the cache #%v#",s.groupCache.GroupCache[msg.GroupId].total_mem)	
+			s.groupCache.GroupCache[msg.GroupId].totalMem =int16(len(msg.UserIds))+1
+			log.Printf("total_mem in the cache #%v#",s.groupCache.GroupCache[msg.GroupId].totalMem)	
 			s.groupCache.groupMuLock.Unlock()
 
 		}(msg)
@@ -124,8 +124,8 @@ func (s *groupService)StartWorkerForAddMember(channel chan *mq.Channel){
 		//the reason i didn't check the map and its existent is this endpoint will be only available when there is a group
 		go func(msg *ManageGroupPublishStruct){
 			s.groupCache.groupMuLock.Lock()
-			s.groupCache.GroupCache[msg.GroupId].total_mem +=1
-			log.Printf("Finished incrementing the mem_coutn #%v#",s.groupCache.GroupCache[msg.GroupId].total_mem)
+			s.groupCache.GroupCache[msg.GroupId].totalMem +=1
+			log.Printf("Finished incrementing the mem_coutn #%v#",s.groupCache.GroupCache[msg.GroupId].totalMem)
 			s.groupCache.groupMuLock.Unlock()	
 
 		}(&msg)	
