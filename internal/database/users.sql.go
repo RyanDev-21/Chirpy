@@ -7,9 +7,9 @@ package database
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const createUser = `-- name: CreateUser :one
@@ -30,7 +30,7 @@ type CreateUserParams struct {
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
-	row := q.db.QueryRowContext(ctx, createUser, arg.Email, arg.Password)
+	row := q.db.QueryRow(ctx, createUser, arg.Email, arg.Password)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -48,7 +48,7 @@ DELETE FROM users
 `
 
 func (q *Queries) DeleteUser(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, deleteUser)
+	_, err := q.db.Exec(ctx, deleteUser)
 	return err
 }
 
@@ -57,7 +57,7 @@ SELECT id, created_at, updated_at, email, password, is_chirpy_red  FROM users WH
 `
 
 func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, error) {
-	row := q.db.QueryRowContext(ctx, getUserInfoByEmail, email)
+	row := q.db.QueryRow(ctx, getUserInfoByEmail, email)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -75,7 +75,7 @@ SELECT id, created_at, updated_at, email, password, is_chirpy_red FROM users WHE
 `
 
 func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, error) {
-	row := q.db.QueryRowContext(ctx, getUserInfoByID, id)
+	row := q.db.QueryRow(ctx, getUserInfoByID, id)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -92,8 +92,8 @@ const updateIsRedById = `-- name: UpdateIsRedById :execresult
 UPDATE users SET  is_chirpy_red = true ,updated_at = NOW() WHERE id = $1
 `
 
-func (q *Queries) UpdateIsRedById(ctx context.Context, id uuid.UUID) (sql.Result, error) {
-	return q.db.ExecContext(ctx, updateIsRedById, id)
+func (q *Queries) UpdateIsRedById(ctx context.Context, id uuid.UUID) (pgconn.CommandTag, error) {
+	return q.db.Exec(ctx, updateIsRedById, id)
 }
 
 const updatePassword = `-- name: UpdatePassword :exec
@@ -106,6 +106,6 @@ type UpdatePasswordParams struct {
 }
 
 func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error {
-	_, err := q.db.ExecContext(ctx, updatePassword, arg.Password, arg.ID)
+	_, err := q.db.Exec(ctx, updatePassword, arg.Password, arg.ID)
 	return err
 }

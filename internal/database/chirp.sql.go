@@ -29,7 +29,7 @@ type CreateRecordParams struct {
 }
 
 func (q *Queries) CreateRecord(ctx context.Context, arg CreateRecordParams) (Chirp, error) {
-	row := q.db.QueryRowContext(ctx, createRecord, arg.Body, arg.UserID)
+	row := q.db.QueryRow(ctx, createRecord, arg.Body, arg.UserID)
 	var i Chirp
 	err := row.Scan(
 		&i.ID,
@@ -46,7 +46,7 @@ DELETE FROM chirp WHERE id = $1
 `
 
 func (q *Queries) DeleteRecordByID(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.ExecContext(ctx, deleteRecordByID, id)
+	_, err := q.db.Exec(ctx, deleteRecordByID, id)
 	return err
 }
 
@@ -55,7 +55,7 @@ DELETE FROM chirp
 `
 
 func (q *Queries) DeleteRecords(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, deleteRecords)
+	_, err := q.db.Exec(ctx, deleteRecords)
 	return err
 }
 
@@ -64,7 +64,7 @@ SELECT id, created_at, updated_at, body, user_id FROM chirp
 `
 
 func (q *Queries) GetAllRecord(ctx context.Context) ([]Chirp, error) {
-	rows, err := q.db.QueryContext(ctx, getAllRecord)
+	rows, err := q.db.Query(ctx, getAllRecord)
 	if err != nil {
 		return nil, err
 	}
@@ -83,9 +83,6 @@ func (q *Queries) GetAllRecord(ctx context.Context) ([]Chirp, error) {
 		}
 		items = append(items, i)
 	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
@@ -97,7 +94,7 @@ SELECT id, created_at, updated_at, body, user_id FROM chirp WHERE id = $1
 `
 
 func (q *Queries) GetRecordByID(ctx context.Context, id uuid.UUID) (Chirp, error) {
-	row := q.db.QueryRowContext(ctx, getRecordByID, id)
+	row := q.db.QueryRow(ctx, getRecordByID, id)
 	var i Chirp
 	err := row.Scan(
 		&i.ID,
@@ -114,7 +111,7 @@ SELECT id, created_at, updated_at, body, user_id FROM chirp WHERE user_id = $1
 `
 
 func (q *Queries) GetRecordByUserID(ctx context.Context, userID uuid.UUID) (Chirp, error) {
-	row := q.db.QueryRowContext(ctx, getRecordByUserID, userID)
+	row := q.db.QueryRow(ctx, getRecordByUserID, userID)
 	var i Chirp
 	err := row.Scan(
 		&i.ID,

@@ -47,6 +47,7 @@ func (h *groupHandler)CreateGroup(w http.ResponseWriter,r *http.Request){
 	//will return the common chatID
 	responseStruct, err := h.groupService.createGroup(r.Context(),createrID,&parameters)
 	if err !=nil{
+		log.Printf("failed to create a group in the db #%s#",err)
 		if err == ErrDuplicateName{
 			response.Error(w,400,err.Error())
 			return
