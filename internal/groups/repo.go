@@ -16,6 +16,8 @@ type GroupRepo interface {
 getGroupInfoByID(ctx context.Context,id uuid.UUID)(*database.ChatGroup,error)
 	//joinGroup(groupID uuid.UUID,userID uuid.UUID)error
 	getAllGroupInfo(ctx context.Context)(*[]database.GetAllGroupInfoRow,error)
+	getMemsByID(ctx context.Context,groupID uuid.UUID)(*[]uuid.UUID,error)
+	addMember(ctx context.Context,payload *[]database.AddMemberParams)error
 }
 
 type groupRepo struct {
@@ -81,6 +83,8 @@ func (r *groupRepo)getGroupInfoByID(ctx context.Context,id uuid.UUID)(*database.
 	return &groupInfo,nil
 }
 
+
+//this one will return all the member id list too
 func (r *groupRepo)getAllGroupInfo(ctx context.Context)(*[]database.GetAllGroupInfoRow,error){
 	groupInfo, err := r.queries.GetAllGroupInfo(ctx)
 	if err !=nil{
@@ -88,5 +92,25 @@ func (r *groupRepo)getAllGroupInfo(ctx context.Context)(*[]database.GetAllGroupI
 	}
 	return &groupInfo,nil
 
+}
+
+
+//if i do something like add all the member id to the db like line by line that would really slow me down i need to find a way to make this sure it keep storing the db fast
+//func (r *groupRepo)addMember(ctx context.Context,members *)
+func(r *groupRepo) getMemsByID(ctx context.Context,groupID uuid.UUID)(*[]uuid.UUID,error){
+	groupMems , err := 	r.queries.GetMemberListByID(ctx,groupID)
+	if err !=nil{
+		return nil,err
+	}
+	return &groupMems,nil
+}
+
+
+func(r *groupRepo)addMember(ctx context.Context,payload *[]database.AddMemberParams)error{
+	_,err := r.queries.AddMember(ctx,*payload)
+	if err !=nil{
+		return err
+	}
+	return nil
 }
 

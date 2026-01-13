@@ -5,10 +5,10 @@
 package database
 
 import (
-	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type ChatGroup struct {
@@ -16,8 +16,8 @@ type ChatGroup struct {
 	Name          string
 	Description   string
 	MaxMember     int16
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	CreatedAt     pgtype.Timestamp
+	UpdatedAt     pgtype.Timestamp
 	CurrentMember int16
 }
 
@@ -31,41 +31,41 @@ type Chirp struct {
 
 type Groupmessage struct {
 	ID        uuid.UUID
-	Content   sql.NullString
-	GroupID   uuid.NullUUID
-	FromID    uuid.NullUUID
-	ParentID  uuid.NullUUID
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt sql.NullTime
+	Content   pgtype.Text
+	GroupID   pgtype.UUID
+	FromID    pgtype.UUID
+	ParentID  pgtype.UUID
+	CreatedAt pgtype.Timestamp
+	UpdatedAt pgtype.Timestamp
+	DeletedAt pgtype.Timestamp
 }
 
 type MemberTable struct {
 	ID       uuid.UUID
 	GroupID  uuid.UUID
 	MemberID uuid.UUID
-	JoinedAt time.Time
+	JoinedAt pgtype.Timestamp
 	Role     string
 }
 
 type Message struct {
 	ID        uuid.UUID
-	Content   sql.NullString
-	Parentid  uuid.NullUUID
-	FromID    uuid.NullUUID
-	ToID      uuid.NullUUID
-	DeletedAt sql.NullTime
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Content   pgtype.Text
+	Parentid  pgtype.UUID
+	FromID    pgtype.UUID
+	ToID      pgtype.UUID
+	DeletedAt pgtype.Timestamp
+	CreatedAt pgtype.Timestamp
+	UpdatedAt pgtype.Timestamp
 }
 
 type RefreshToken struct {
 	Token     string
-	CreatedAt time.Time
+	CreatedAt pgtype.Timestamp
 	UpdatedAt time.Time
 	UserID    uuid.UUID
 	ExpireAt  time.Time
-	RevokedAt sql.NullTime
+	RevokedAt pgtype.Timestamp
 }
 
 type User struct {
@@ -74,5 +74,5 @@ type User struct {
 	UpdatedAt   time.Time
 	Email       string
 	Password    string
-	IsChirpyRed sql.NullBool
+	IsChirpyRed pgtype.Bool
 }

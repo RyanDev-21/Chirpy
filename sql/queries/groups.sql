@@ -32,8 +32,15 @@ SELECT * FROM chat_groups WHERE name = $1;
 SELECT * FROM chat_groups WHERE  id = $1;
 
 -- name: GetAllGroupInfo :many
-SELECT id,name,max_member,current_member FROM chat_groups;
+SELECT id,current_member,name,max_member FROM chat_groups;
+-- name: GetMemberListByID :many
+SELECT member_id FROM member_table WHERE group_id = $1;
+
+-- name: UpdateGroupCurrentMemberByID :one
+UPDATE  chat_groups SET current_member = (SELECT COUNT(*)FROM member_table WHERE group_id = $1)RETURNING *;
 
 
--- name: GetTotalMemberCountByID :one
-SELECT COUNT(*)FROM member_table WHERE group_id = $1;
+-- name: AddMember :copyfrom
+INSERT INTO member_table(group_id,member_id) VALUES($1,$2);
+
+

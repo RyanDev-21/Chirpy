@@ -2,7 +2,6 @@ package groups
 
 import (
 	"context"
-//	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +20,7 @@ type GroupService interface{
 	leaveGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error
 	 StartWorkerForCreateGroup(channel chan *mq.Channel)
 	StartWorkerForCreateGroupLeader(channel chan *mq.Channel)
+	StartWorkerForAddMember(channel chan *mq.Channel)
 }
 
 
@@ -54,11 +54,12 @@ func (s *groupService)createGroup(ctx context.Context,createrID uuid.UUID,groupI
 		return nil,err
 	}
 	//check the name first 
-	ok,err := s.groupCache.CheckGroupNameFromCache(groupInfo.GroupName)
+	valid,err := s.groupCache.CheckGroupNameFromCache(groupInfo.GroupName)
 	if err !=nil {
+		log.Printf("failed to check the name #%s#",err)
 		return nil,err
 	}
-	if !ok{
+	if valid{
 		return nil,ErrDuplicateName
 	}
 	//store newly created groupID and its member list
@@ -75,70 +76,24 @@ func (s *groupService)createGroup(ctx context.Context,createrID uuid.UUID,groupI
 	//in the first one i marshal it so that it becomes bytes 
 	// didn't marshal it so it becomes the struct
 	s.mq.Publish("createGroup",payload)
+	//job for the db op
 	s.mq.Publish("addCreator",creatorPublishStruct{
 		GroupID: chatID,	
 		UserID: createrID,
 		Role: "Leader",
 	})	
+	//for updating the cache and for db
+	userIdsList :=append(groupInfo.Members,createrID);
+	s.mq.Publish("addMember",membersPubStruct{
+		UserIds: userIdsList,
+		GroupId: chatID,
+	})
 
 	return &GroupInfo{
 		ChatID: chatID,
 	},nil
 }
 
-//NOTE::you really need centralized encoder and decoder
-//there is a code duplication in this fucntion
-func (s *groupService)StartWorkerForCreateGroup(channel chan *mq.Channel){
-	for chen := range channel{
-		//if this is not the valid type then the pipeline will break
-		jsonBytes := chen.Msg.([]byte)
-		var msg GroupPublish
-		 err := json.Unmarshal(jsonBytes,&msg)
-		if err !=nil{
-
-			chen.RetriesCount ++
-		 s.mq.Republish(chen,chen.RetriesCount)		
-
-		}
-		
-		groupID := msg.GroupID.ChatID
-		groupInfo := msg.GroupInfo
-		err = s.groupRepo.createGroup(groupID,createGroupRequest{
-			GroupName: groupInfo.GroupName,
-			Description: groupInfo.Description,
-			MaxMems: groupInfo.MaxMems ,
-		})
-
-		if err !=nil{
-
-			chen.RetriesCount ++
-		 s.mq.Republish(chen,chen.RetriesCount)		
-			return
-		}
-		log.Printf("Successfully created the group")
-	}	
-
-}
-func (s *groupService)StartWorkerForCreateGroupLeader(channel chan *mq.Channel){
-	for chen := range channel{
-		//if this is not the valid type then the pipeline will break
-		msg := chen.Msg.(creatorPublishStruct)	
-		err := s.groupRepo.createGroupLeader(creatorPublishStruct{
-				GroupID: msg.GroupID,
-				UserID: msg.UserID,
-				Role: msg.Role,
-		})
-
-		if err !=nil{
-			log.Printf("error reason: %v",err)
-			chen.RetriesCount ++
-		 s.mq.Republish(chen,chen.RetriesCount)		
-			return	
-		}
-		log.Printf("Doned the group leader worker %v",chen.LocalTag)
-	}	
-
-}
 
 
 //might have to refactor these two service into one service which operate based on the type of the service
@@ -146,7 +101,7 @@ func (s *groupService)StartWorkerForCreateGroupLeader(channel chan *mq.Channel){
 //TODO:right now haven't stored the generated groupID in db so we can basically add the invalid id and will still work
 //need to fix that
 func (s *groupService)joinGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error{
-	groupInfo, err := s.groupCache.GetGroupInfoFromGroupCache(groupID)
+	groupInfo, err := s.groupCache.GetFromGroup(groupID)
 	if err !=nil{
 		return err
 	}

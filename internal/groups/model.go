@@ -11,8 +11,8 @@ var ErrNotFoundGroup = errors.New("group not found")
 var ErrGroupFull = errors.New("group full")
 
 type createGroupRequest struct{
-	GroupName string  `json:"group_name"`
 	Members []uuid.UUID `json:"member_ids"`
+	GroupName string  `json:"group_name"`
 	Description string `json:"description"`
 	MaxMems int16 `json:"max_mems"`
 }
@@ -27,14 +27,21 @@ type GroupPublish struct{
 }
 
 type creatorPublishStruct struct{
+	Role string
 	GroupID uuid.UUID
 	UserID uuid.UUID
-	Role string
 }
 
 type ManageGroupPublishStruct struct{
 	GroupId uuid.UUID
 	UserID uuid.UUID
 }
+
+type membersPubStruct struct{
+	UserIds []uuid.UUID
+	GroupId uuid.UUID	
+}
+
+
 
 
