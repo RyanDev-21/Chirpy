@@ -17,7 +17,8 @@ getGroupInfoByID(ctx context.Context,id uuid.UUID)(*database.ChatGroup,error)
 	//joinGroup(groupID uuid.UUID,userID uuid.UUID)error
 	getAllGroupInfo(ctx context.Context)(*[]database.GetAllGroupInfoRow,error)
 	getMemsByID(ctx context.Context,groupID uuid.UUID)(*[]uuid.UUID,error)
-	addMember(ctx context.Context,payload *[]database.AddMemberParams)error
+	addMemberList(ctx context.Context,payload *[]database.AddMemberListParams)error
+	addMember(ctx context.Context,payload *database.AddMemberParams)error
 }
 
 type groupRepo struct {
@@ -106,8 +107,17 @@ func(r *groupRepo) getMemsByID(ctx context.Context,groupID uuid.UUID)(*[]uuid.UU
 }
 
 
-func(r *groupRepo)addMember(ctx context.Context,payload *[]database.AddMemberParams)error{
-	_,err := r.queries.AddMember(ctx,*payload)
+func(r *groupRepo)addMemberList(ctx context.Context,payload *[]database.AddMemberListParams)error{
+	_,err := r.queries.AddMemberList(ctx,*payload)
+	if err !=nil{
+		return err
+	}
+	return nil
+}
+
+
+func (r *groupRepo)addMember(ctx context.Context,payload *database.AddMemberParams)error{
+	err := r.queries.AddMember(ctx,*payload)
 	if err !=nil{
 		return err
 	}

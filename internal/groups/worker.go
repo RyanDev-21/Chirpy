@@ -66,7 +66,7 @@ func (s *groupService)StartWorkerForCreateGroupLeader(channel chan *mq.Channel){
 }
 
 //this will update the cache of the group and its member
-func (s *groupService)StartWorkerForAddMember(channel chan *mq.Channel){
+func (s *groupService)StartWorkerForAddMemberList(channel chan *mq.Channel){
 	context , cancel := context.WithTimeout(context.Background(),5*time.Second)
 	defer cancel()
 	for chen := range channel{
@@ -79,6 +79,7 @@ func (s *groupService)StartWorkerForAddMember(channel chan *mq.Channel){
 				s.groupCache.GroupCache[msg.GroupId] = &CacheGroupInfo{}
 			}
 			s.groupCache.GroupCache[msg.GroupId].total_mem =int16(len(msg.UserIds))+1
+			log.Printf("total_mem in the cache #%v#",s.groupCache.GroupCache[msg.GroupId].total_mem)	
 			s.groupCache.groupMuLock.Unlock()
 
 		}(msg)
@@ -89,20 +90,21 @@ func (s *groupService)StartWorkerForAddMember(channel chan *mq.Channel){
 				s.groupCache.MemberCache[msg.GroupId]= &[]uuid.UUID{}
 			}
 			s.groupCache.MemberCache[msg.GroupId] = &msg.UserIds
+			log.Printf("members in the group #%v#",msg.UserIds)
 		}(msg)
 		
 		//i could use the unest thing and just raw byte to send in one round trip 
 		//but looping through a thousand members doesn't seem too slow at all so yeah
-		var memberIds []database.AddMemberParams
+		var memberIds []database.AddMemberListParams
 		for _,v:= range msg.UserIds{
-			memberIds = append(memberIds,database.AddMemberParams{
+			memberIds = append(memberIds,database.AddMemberListParams{
 				 MemberID: v,
 				 GroupID: msg.GroupId,
 			})	
 		}
 
 		//this is done in one round trip using copyfrom
-		err := s.groupRepo.addMember(context,&memberIds)
+		err := s.groupRepo.addMemberList(context,&memberIds)
 		if err !=nil{
 			log.Printf("failed to create member: %v",err)
 			chen.RetriesCount ++
@@ -113,4 +115,44 @@ func (s *groupService)StartWorkerForAddMember(channel chan *mq.Channel){
 		
 	}	
 
+}
+
+
+func (s *groupService)StartWorkerForAddMember(channel chan *mq.Channel){
+	for chen := range channel{
+		msg := chen.Msg.(ManageGroupPublishStruct)		
+		//the reason i didn't check the map and its existent is this endpoint will be only available when there is a group
+		go func(msg *ManageGroupPublishStruct){
+			s.groupCache.groupMuLock.Lock()
+			s.groupCache.GroupCache[msg.GroupId].total_mem +=1
+			log.Printf("Finished incrementing the mem_coutn #%v#",s.groupCache.GroupCache[msg.GroupId].total_mem)
+			s.groupCache.groupMuLock.Unlock()	
+
+		}(&msg)	
+
+		go func(msg *ManageGroupPublishStruct){
+			s.groupCache.memMuLock.Lock()
+			memberList:=s.groupCache.MemberCache[msg.GroupId] 
+			//this takes the value at the memory address and actually update the value in that address
+			//you can just update append to the address value that's why you have to use * to get the value 
+			*s.groupCache.MemberCache[msg.GroupId] = append(*memberList,msg.UserID)		
+			log.Printf("members updating finished #%v#",s.groupCache.MemberCache[msg.GroupId])
+			s.groupCache.memMuLock.Unlock()
+		}(&msg)	
+
+
+		contex,cancel := context.WithTimeout(context.Background(),1*time.Second)
+		defer cancel()
+		err := s.groupRepo.addMember(contex,&database.AddMemberParams{
+	GroupID: msg.GroupId,
+	MemberID: msg.UserID,
+		})	
+		if err !=nil{
+			log.Printf("failed to add member: %v",err)
+			chen.RetriesCount ++
+		 s.mq.Republish(chen,chen.RetriesCount)		
+			return	
+		}
+		log.Printf("successfully added into the group")
+		}		
 }
