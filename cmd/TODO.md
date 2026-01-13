@@ -1,3 +1,8 @@
 NOTE::duplication error are not handling properly
---need to fix that and the handler is not correctly returning too maybe have to
-do something with that
+NOTE:: alright right now the handler does what it should now
+NOTE:: frontend need to make sure the duplicate member_id doesn't have in the
+member_list
+SUCCESS:: the join group route is working good need to implement the worker for
+that job
+
+

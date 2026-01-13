@@ -49,17 +49,20 @@ func NewGroupCache(groupRepo GroupRepo)*GroupCache{
 
 
 //this will get all rows from the group and store it in the map NOTE:: need to fix the currentMember(total) value 
+//NOTE:: pls remember to set up the load cache
 func (cache *GroupCache)Load()error{
-	context,cancel:=context.WithTimeout(context.Background(),1*time.Second)
+	ctx,cancel:=context.WithTimeout(context.Background(),10*time.Second)
 	defer cancel()
-	groupInfo, err :=cache.groupRepo.getAllGroupInfo(context)
+	groupInfo, err :=cache.groupRepo.getAllGroupInfo(ctx)
+	log.Printf("group info #%v#",groupInfo)
 	if err !=nil{
 		return err
 	}
 
 	for _,v:= range *groupInfo{
-	go func(id uuid.UUID){
-			groupMems, err := cache.groupRepo.getMemsByID(context,id)
+		groupContext := context.Background()
+		go func(id uuid.UUID){
+			groupMems, err := cache.groupRepo.getMemsByID(groupContext,id)
 			if err !=nil{
 				log.Printf("failed to get the user member ids #%s#",err)
 				return
@@ -135,15 +138,18 @@ func (cache *GroupCache)CheckGroupNameFromCache(name string)(bool,error){
 	}	
 	context,cancel := context.WithTimeout(context.Background(),1*time.Second)
 	defer cancel()
-	_,err := cache.groupRepo.getGroupInfoByName(context,name)
+	err := cache.groupRepo.getGroupInfoByName(context,name)
 	if err !=nil{
+
 		log.Printf("error #%s#",err)	
 		if pgErr,ok:=err.(*pq.Error);ok{
 			if pgErr.Code == "23505"{
+				log.Println("are we in the duplicate state")
 				return true,nil
 			}
 		}
 		if err == pgx.ErrNoRows{
+			log.Println("alright we are in the no row state")
 			return false,nil
 		}
 		return false,err

@@ -90,8 +90,8 @@ func (mq *MainMQ)Run(){
 		case result := <-mq.FailedResult:
 			//pull from the fail channel and if their retires count is lower than the limit then 
 			//resend it through the pub channel again with the same tag and info
-			log.Printf("got result from %v ,retries :%v\n",result.topic,result.retries)
-				log.Printf("restrying the msg id :%v\n",result.tag)
+			// log.Printf("got result from %v ,retries :%v\n",result.topic,result.retries)
+			// 	log.Printf("restrying the msg id :%v\n",result.tag)
 			if result.retries<mq.retriesLimit{
 				mq.mu.Lock();	
 				mq.mainMq[result.topic]<- &Channel{

@@ -744,6 +744,7 @@ func main(){
 	groupRepo := groups.NewGroupRepo(dbQueries)	
 	//set up group cache
 	groupCache := groups.NewGroupCache(groupRepo)
+	go groupCache.Load()
 	//Create Services
 	userService := users.NewUserService(userRepo)
 	authService := authClient.NewAuthService(userRepo,authRepo,apicfg.secret)
