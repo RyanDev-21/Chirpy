@@ -2,7 +2,7 @@ package groups
 
 import (
 	"context"
-	"database/sql"
+//	"database/sql"
 	"time"
 
 	"RyanDev-21.com/Chirpy/internal/database"
@@ -12,7 +12,7 @@ import (
 type GroupRepo interface {
 	createGroup(groupID uuid.UUID,groupInfo createGroupRequest)error
 	createGroupLeader(payload creatorPublishStruct)error
-	getGroupInfoByName(ctx context.Context,name string)(bool,error)
+	getGroupInfoByName(ctx context.Context,name string)error
 getGroupInfoByID(ctx context.Context,id uuid.UUID)(*database.ChatGroup,error)
 	//joinGroup(groupID uuid.UUID,userID uuid.UUID)error
 	getAllGroupInfo(ctx context.Context)(*[]database.GetAllGroupInfoRow,error)
@@ -66,13 +66,13 @@ func (r *groupRepo)createGroupLeader(payload creatorPublishStruct)error{
 }
 
 
-func (r *groupRepo)getGroupInfoByName(ctx context.Context,name string)(bool,error){
+func (r *groupRepo)getGroupInfoByName(ctx context.Context,name string)error{
 	_,err :=r.queries.SearchInfoByName(ctx,name)
-
-	if err == sql.ErrNoRows{
-		return true,nil
+	
+	if err !=nil{
+		return  err
 	}
-	return false, err
+	return nil
 }
 
 func (r *groupRepo)getGroupInfoByID(ctx context.Context,id uuid.UUID)(*database.ChatGroup,error){
