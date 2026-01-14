@@ -122,13 +122,23 @@ func (s *groupService)StartWorkerForAddMember(channel chan *mq.Channel){
 	for chen := range channel{
 		msg := chen.Msg.(ManageGroupPublishStruct)		
 		//the reason i didn't check the map and its existent is this endpoint will be only available when there is a group
-		go func(msg *ManageGroupPublishStruct){
+		switch msg.Action{
+		case "Join":
+
+		}	
+
+				
+}
+}
+
+func (s *groupService)JoinGroup(msg *ManageGroupPublishStruct,chen chan *mq.Channel)error{
+	go func(msg *ManageGroupPublishStruct){
 			s.groupCache.groupMuLock.Lock()
 			s.groupCache.GroupCache[msg.GroupId].totalMem +=1
 			log.Printf("Finished incrementing the mem_coutn #%v#",s.groupCache.GroupCache[msg.GroupId].totalMem)
 			s.groupCache.groupMuLock.Unlock()	
 
-		}(&msg)	
+		}(msg)	
 
 		go func(msg *ManageGroupPublishStruct){
 			s.groupCache.memMuLock.Lock()
@@ -138,7 +148,7 @@ func (s *groupService)StartWorkerForAddMember(channel chan *mq.Channel){
 			*s.groupCache.MemberCache[msg.GroupId] = append(*memberList,msg.UserID)		
 			log.Printf("members updating finished #%v#",s.groupCache.MemberCache[msg.GroupId])
 			s.groupCache.memMuLock.Unlock()
-		}(&msg)	
+		}(msg)	
 
 
 		contex,cancel := context.WithTimeout(context.Background(),1*time.Second)
@@ -151,8 +161,10 @@ func (s *groupService)StartWorkerForAddMember(channel chan *mq.Channel){
 			log.Printf("failed to add member: %v",err)
 			chen.RetriesCount ++
 		 s.mq.Republish(chen,chen.RetriesCount)		
-			return	
+			return	nil
 		}
 		log.Printf("successfully added into the group")
-		}		
+	return nil		
 }
+
+

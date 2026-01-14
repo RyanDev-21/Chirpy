@@ -7,4 +7,4 @@ that job
 NOTE:: -- need to implement leave group and maybe user caching before that need
 --to consider about redis caching or smth
 
-
+NOTE:: -- need to abstract the business logic between service and worker

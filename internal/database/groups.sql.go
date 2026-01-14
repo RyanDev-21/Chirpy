@@ -97,6 +97,15 @@ func (q *Queries) CreateGroupLeaderRole(ctx context.Context, arg CreateGroupLead
 	return i, err
 }
 
+const deleteMemFromGroup = `-- name: DeleteMemFromGroup :exec
+DELETE FROM member_table WHERE id = $1
+`
+
+func (q *Queries) DeleteMemFromGroup(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteMemFromGroup, id)
+	return err
+}
+
 const getAllGroupInfo = `-- name: GetAllGroupInfo :many
 SELECT id,current_member,name,max_member FROM chat_groups
 `
