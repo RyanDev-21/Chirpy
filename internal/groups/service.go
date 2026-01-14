@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"slices"
+
+	//	"fmt"
 	"log"
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chat/chatModel"
@@ -114,6 +116,7 @@ func (s *groupService)joinGroup(ctx context.Context,groupID uuid.UUID,userID uui
 	s.mq.Publish("manageGroupMembers",&ManageGroupPublishStruct{
 		GroupId: groupID,
 		UserID: userID,
+		Action: "Join",
 	})		
 
 	joinStruct := chatmodel.GroupActionInfo{
@@ -134,14 +137,44 @@ func (s *groupService)joinGroup(ctx context.Context,groupID uuid.UUID,userID uui
 	return nil
 }
 
+//should separate the normal mem leaveGroup with leader leaveGroup
+//need to think about whether i want my service to do the cache or the worker to do it
 func (s *groupService)leaveGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error{
 	//saving into the db should be different from the join one
-	fmt.Println("saved into the db")
 	leaveStruct := chatmodel.GroupActionInfo{
 		GroupID: groupID,
 		UserID: userID,
 	}
+	//firts update the group metadata first 
+	go func(gpID *uuid.UUID){
+	s.groupCache.groupMuLock.Lock()
+	s.groupCache.GroupCache[*gpID].totalMem -=1
+	s.groupCache.groupMuLock.Unlock()
+	}(&groupID)
+	 
+	//now we update the member list of that group
+	go func(gpID *uuid.UUID,userID *uuid.UUID){
+		s.groupCache.memMuLock.Lock()
+		memberIdsList := *s.groupCache.MemberCache[*gpID]
+		//you need to know the index
+		updatedMemberIdsList := func()[]uuid.UUID{
+			index := slices.Index(memberIdsList,*userID)
+			memberIdsList[index] = memberIdsList[len(memberIdsList)-1]
+			log.Printf("memberIdsList value: %v",memberIdsList)
+			return memberIdsList
+		}
+		log.Printf("finished updating in the cache : %v",updatedMemberIdsList())
+		*s.groupCache.MemberCache[*gpID] = updatedMemberIdsList()
+		
+	}(&groupID,&userID)
 
+
+	//and then we publish the job for the db worker to consume
+	s.mq.Publish("manageGroupMembers",&ManageGroupPublishStruct{
+		GroupId: groupID,
+		UserID: userID,
+		Action: "Leave",
+	})		
 	//don't really like this duplicate thing
 
 	select{

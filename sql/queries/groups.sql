@@ -47,4 +47,7 @@ INSERT INTO member_table(group_id,member_id) VALUES($1,$2);
 -- name: AddMember :exec
 INSERT INTO member_table(group_id,member_id) VALUES($1,$2);
 
+-- name: DeleteMemFromGroup :exec
+DELETE FROM member_table WHERE id = $1;
+
 
