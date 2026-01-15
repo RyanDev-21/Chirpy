@@ -2,7 +2,6 @@ package groups
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"slices"
 
@@ -20,11 +19,12 @@ type GroupService interface{
 	createGroup(ctx context.Context,createrID uuid.UUID,groupMembers *createGroupRequest)(*GroupInfo,error)
 	joinGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error
 	leaveGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error
+	//need to abstract out worker logic from service	
 	StartWorkerForCreateGroup(channel chan *mq.Channel)
 	StartWorkerForCreateGroupLeader(channel chan *mq.Channel)
 	StartWorkerForAddMemberList(channel chan *mq.Channel)
 	StartWorkerForAddMember(channel chan *mq.Channel)
-		
+	StartWorkerForLeaveMember(channel chan *mq.Channel)
 }
 
 
@@ -66,29 +66,43 @@ func (s *groupService)createGroup(ctx context.Context,createrID uuid.UUID,groupI
 	if valid{
 		return nil,ErrDuplicateName
 	}
-	//store newly created groupID and its member list
-	//before saving into the db we first publish it into the queue stack
-	payload , err := json.Marshal(GroupPublish{
+	//update the metadata in the cache	
+	go func(groupID uuid.UUID,groupInfo *createGroupRequest){
+		s.groupCache.groupMuLock.Lock()
+		s.groupCache.GroupCache[chatID] = &CacheGroupInfo{
+		 Name: groupInfo.GroupName,
+		 TotalMem: int16(len(groupInfo.Members))+1,//the creator id should count too +1
+		 MaxMem: groupInfo.MaxMems,
+		}	
+		s.groupCache.groupMuLock.Unlock()
+		
+	}(chatID,groupInfo)
+	//need to add the creatorId into the memberIds 	
+	updatedMemList :=append(groupInfo.Members,createrID);
+	//now update the member list
+	go func(groupID uuid.UUID,memberIds *[]uuid.UUID){
+		s.groupCache.memMuLock.Lock()
+		s.groupCache.MemberCache[chatID] = memberIds
+		s.groupCache.memMuLock.Unlock()
+	}(chatID,&updatedMemList)
+
+	payload  :=GroupPublish{
 		GroupID: GroupInfo{chatID},
 		GroupInfo: *groupInfo,
-	})
+	}
 	if err !=nil{
 		return nil,err
 	}
-	log.Printf("okay now publishing the payload")
-	//publsih two jobs for the db operations
-	//in the first one i marshal it so that it becomes bytes 
+	
+	//create three job for db operations
 	s.mq.Publish("createGroup",payload)
-	//job for the db op
 	s.mq.Publish("addCreator",creatorPublishStruct{
 		GroupID: chatID,	
 		UserID: createrID,
 		Role: "Leader",
 	})	
-	//for updating the cache and for db
-	userIdsList :=append(groupInfo.Members,createrID);
-	s.mq.Publish("addMember",membersPubStruct{
-		UserIds: userIdsList,
+	s.mq.Publish("addChunkMembers",membersPubStruct{
+		UserIds: updatedMemList,
 		GroupId: chatID,
 	})
 
@@ -108,15 +122,32 @@ func (s *groupService)joinGroup(ctx context.Context,groupID uuid.UUID,userID uui
 	if err !=nil{
 		return err
 	}
-	if groupInfo.totalMem ==groupInfo.maxMem{
+
+	//first check whether the gp is full or not
+	if groupInfo.TotalMem ==groupInfo.MaxMem{
 		return ErrGroupFull	
 	}	
+	//update the group's metadata
+	go func(groupID,userID uuid.UUID){
+		s.groupCache.groupMuLock.Lock();
+		s.groupCache.GroupCache[groupID].TotalMem +=1;
+		s.groupCache.groupMuLock.Unlock();
+	}(groupID,userID)
+
+	//update the group member list
+	//NOTE::maybe should check about the dupli err in cache before processing
+	go func(groupID,userID uuid.UUID){
+		s.groupCache.memMuLock.Lock();
+		memberLists := s.groupCache.MemberCache[groupID]
+		*s.groupCache.MemberCache[groupID] = append(*memberLists,userID)
+		s.groupCache.groupMuLock.Unlock();
+	}(groupID,userID)
+	
+
 	//assign the job for the db operation of adding member
-	//NOTE::maybe implement member cache
-	s.mq.Publish("manageGroupMembers",&ManageGroupPublishStruct{
+	s.mq.Publish("addGroupMember",&ManageGroupPublishStruct{
 		GroupId: groupID,
 		UserID: userID,
-		Action: "Join",
 	})		
 
 	joinStruct := chatmodel.GroupActionInfo{
@@ -148,7 +179,7 @@ func (s *groupService)leaveGroup(ctx context.Context,groupID uuid.UUID,userID uu
 	//firts update the group metadata first 
 	go func(gpID *uuid.UUID){
 	s.groupCache.groupMuLock.Lock()
-	s.groupCache.GroupCache[*gpID].totalMem -=1
+	s.groupCache.GroupCache[*gpID].TotalMem -=1
 	s.groupCache.groupMuLock.Unlock()
 	}(&groupID)
 	 
@@ -170,10 +201,9 @@ func (s *groupService)leaveGroup(ctx context.Context,groupID uuid.UUID,userID uu
 
 
 	//and then we publish the job for the db worker to consume
-	s.mq.Publish("manageGroupMembers",&ManageGroupPublishStruct{
+	s.mq.Publish("removeGroupMember",&ManageGroupPublishStruct{
 		GroupId: groupID,
 		UserID: userID,
-		Action: "Leave",
 	})		
 	//don't really like this duplicate thing
 

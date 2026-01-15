@@ -35,7 +35,6 @@ type creatorPublishStruct struct{
 type ManageGroupPublishStruct struct{
 	GroupId uuid.UUID
 	UserID uuid.UUID
-	Action string
 }
 
 type membersPubStruct struct{

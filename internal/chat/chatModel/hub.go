@@ -14,10 +14,6 @@ type GroupActionInfo struct{
 	UserID uuid.UUID
 	GroupID uuid.UUID
 }
-
-
-
-
 type Hub struct{
 	//contains all the chatId which the user register
 	UsertoChannel map[string]map[string]bool
@@ -135,9 +131,7 @@ func (h *Hub)Run(){
 					for userID := range userIdsInChat{
 						targetIds = append(targetIds, userID)
 					}
-
 				}
-				
 			}	
 			
 			if len(targetIds)>0{
@@ -153,7 +147,6 @@ func (h *Hub)Run(){
 				fmt.Println("stored it in db")
 			}	
 		}
-
 				}
 }
 

@@ -764,7 +764,9 @@ func main(){
 	go mq.Run()
 	go mq.ListeningForTheChannels("createGroup",100,groupService.StartWorkerForCreateGroup)
 	go mq.ListeningForTheChannels("addCreator",100,groupService.StartWorkerForCreateGroupLeader)
-	go mq.ListeningForTheChannels("addMember",100,groupService.StartWorkerForAddMember)
+	go mq.ListeningForTheChannels("addMemberList",100,groupService.StartWorkerForAddMember)
+	go mq.ListeningForTheChannels("addMember",100,groupService.StartWorkerForAddMemberList)
+	go mq.ListeningForTheChannels("removeGroupMember",100,groupService.StartWorkerForLeaveMember)
 
 	//Main app route
 	mux.Handle("/app/",middleWareLog(finalHanlder))
