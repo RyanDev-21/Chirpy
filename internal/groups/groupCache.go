@@ -14,9 +14,9 @@ import (
 )
 
 type CacheGroupInfo struct{
-	name string
-	totalMem int16
-	maxMem int16
+	Name string
+	TotalMem int16
+	MaxMem int16
 }
 
 
@@ -33,9 +33,9 @@ type Cache struct{
 
 func FormatDbModel(dbModel *database.ChatGroup)*CacheGroupInfo{
 	return &CacheGroupInfo{
-		totalMem: dbModel.CurrentMember,
-		name:dbModel.Name,
-		maxMem: dbModel.MaxMember,
+		TotalMem: dbModel.CurrentMember,
+		Name:dbModel.Name,
+		MaxMem: dbModel.MaxMember,
 	}
 }
 
@@ -134,7 +134,7 @@ func (cache *Cache)GetFromMember(groupID uuid.UUID)(*[]uuid.UUID,error){
 func (cache *Cache)CheckGroupNameFromCache(name string)(bool,error){
 	for _,v := range cache.GroupCache{
 		//if we have the same name then we return true 
-		if v.name == name{
+		if v.Name == name{
 			return true, nil	
 		}
 	}
