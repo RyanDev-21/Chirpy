@@ -19,6 +19,7 @@ getGroupInfoByID(ctx context.Context,id uuid.UUID)(*database.ChatGroup,error)
 	getMemsByID(ctx context.Context,groupID uuid.UUID)(*[]uuid.UUID,error)
 	addMemberList(ctx context.Context,payload *[]database.AddMemberListParams)error
 	addMember(ctx context.Context,payload *database.AddMemberParams)error
+	deleteMember(ctx context.Context,payload *database.DeleteMemFromGroupParams)error
 }
 
 type groupRepo struct {
@@ -124,3 +125,8 @@ func (r *groupRepo)addMember(ctx context.Context,payload *database.AddMemberPara
 	return nil
 }
 
+
+func (r *groupRepo)deleteMember(ctx context.Context,payload *database.DeleteMemFromGroupParams)error{
+	err:= r.queries.DeleteMemFromGroup(ctx,*payload)
+	return err
+}

@@ -1,15 +1,14 @@
 package chatmodel
 
 import (
-//	"bytes"
+	//	"bytes"
 	"log"
 	"time"
 
+	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
-
-
 
 //this is standard way of doing this i guess
 const (
@@ -29,21 +28,19 @@ type Client struct{
 	Conn *websocket.Conn
 	Send chan []byte
 	UserID uuid.UUID
-}
-
-type Message struct{
-	Content string `json:"msg"`
-	ToID string `json:"toID"`
-	Type string `json:"type"`
+	MsgQ *mq.MainMQ
+	Cache ChatRepoCache
 }
 
 
-func NewClient(hub *Hub,conn *websocket.Conn,send chan []byte,userID uuid.UUID)*Client{
+func NewClient(hub *Hub,conn *websocket.Conn,send chan []byte,userID uuid.UUID,msgQ *mq.MainMQ,redisCache ChatRepoCache)*Client{
 	return &Client{
 		Hub: hub,
 		Conn: conn,
 		Send: send,
 		UserID: userID,
+		MsgQ: msgQ ,
+		Cache: redisCache,
 	}
 }
 
@@ -78,10 +75,22 @@ func (c *Client)ReadPump(){
 			}	
 			break
 		}
+		//the toID should be uuid.UUID only 
+		parseID, err:=uuid.Parse(msg.ToID)
+		if err !=nil{
+			log.Println("parsing the uuid failed")
+		}
+		if msg.Type == "private"{
+			HandlePrivateMsg(c,&msg,parseID)	
+		}	
+
+
+
+
 		//the last parameters takes how many you wanna replace if <0 there is no limit
 		//as we don't read the message type anymore 	
-		//msg= bytes.TrimSpace(bytes.Replace(message,newline,space,-1))
-			
+		//msg= bytes.TrimSpace(bytes.Replace(message,newline,space,-1))		
+
 		c.Hub.Broadcast <- msg
 	
 	}
@@ -128,4 +137,3 @@ func (c *Client)WritePump(){
 			
 	
 }
-

@@ -75,4 +75,15 @@ type User struct {
 	Email       string
 	Password    string
 	IsChirpyRed pgtype.Bool
+	Name        string
+}
+
+type UserRelationship struct {
+	ID          uuid.UUID
+	UserID      uuid.UUID
+	OtheruserID uuid.UUID
+	Label       string
+	Status      string
+	CreatedAt   pgtype.Timestamp
+	UpdatedAt   pgtype.Timestamp
 }

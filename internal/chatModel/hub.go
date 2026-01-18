@@ -1,19 +1,9 @@
 package chatmodel
 
 import (
-	"fmt"
 	"log"
-
 	"github.com/google/uuid"
 )
-
-//import "strings"
-
-
-type GroupActionInfo struct{
-	UserID uuid.UUID
-	GroupID uuid.UUID
-}
 
 
 
@@ -126,7 +116,9 @@ func (h *Hub)Run(){
 		//of that chat
 		case message := <-h.Broadcast:
 			var targetIds []string	
+			//update the cache first
 			switch message.Type{
+			//just for the sake of this i put the type in th msg struct	
 			case "private":
 				targetIds = append(targetIds, message.ToID)
 			case "public":
@@ -135,25 +127,26 @@ func (h *Hub)Run(){
 					for userID := range userIdsInChat{
 						targetIds = append(targetIds, userID)
 					}
-
 				}
-				
 			}	
-			
+					
 			if len(targetIds)>0{
 				for _,clientID:= range targetIds{
-					select{
-					case h.Clients[clientID].Send <- []byte(message.Content):
-					default: 
+					//i need to implement mutex lock or smth
+					if _,ok:= h.Clients[clientID];ok{
+						log.Printf("the reciever is not online")
+						select {
+						case h.Clients[clientID].Send<- []byte(message.Content):
+						default: 
 						close(h.Clients[clientID].Send)
-						delete(h.Clients,message.ToID)
+						delete(h.Clients,clientID)
+						}		
 					}
-				}
-			}else{
-				fmt.Println("stored it in db")
-			}	
-		}
 
+					}
+				
+			}
+		}
 				}
 }
 
