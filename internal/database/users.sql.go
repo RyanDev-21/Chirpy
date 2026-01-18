@@ -12,25 +12,45 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-const createUser = `-- name: CreateUser :one
-INSERT INTO  users(id, created_at,updated_at, email,password)
+const addSendReq = `-- name: AddSendReq :exec
+INSERT INTO user_relationships (user_id,otherUser_id)
 VALUES(
-    gen_random_uuid(),
-    NOW(),
-    NOW(),
     $1,
     $2
 )
-RETURNING id, created_at, updated_at, email, password, is_chirpy_red
+`
+
+type AddSendReqParams struct {
+	UserID      uuid.UUID
+	OtheruserID uuid.UUID
+}
+
+func (q *Queries) AddSendReq(ctx context.Context, arg AddSendReqParams) error {
+	_, err := q.db.Exec(ctx, addSendReq, arg.UserID, arg.OtheruserID)
+	return err
+}
+
+const createUser = `-- name: CreateUser :one
+INSERT INTO  users(id,name,created_at,updated_at, email,password)
+VALUES(
+    gen_random_uuid(),
+    $1,
+    NOW(),
+    NOW(),
+    $2,
+    $3
+)
+RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name
 `
 
 type CreateUserParams struct {
+	Name     string
 	Email    string
 	Password string
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
-	row := q.db.QueryRow(ctx, createUser, arg.Email, arg.Password)
+	row := q.db.QueryRow(ctx, createUser, arg.Name, arg.Email, arg.Password)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -39,6 +59,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Email,
 		&i.Password,
 		&i.IsChirpyRed,
+		&i.Name,
 	)
 	return i, err
 }
@@ -52,8 +73,104 @@ func (q *Queries) DeleteUser(ctx context.Context) error {
 	return err
 }
 
+const getAllUser = `-- name: GetAllUser :many
+SELECT id, created_at, updated_at, email, password, is_chirpy_red, name FROM users
+`
+
+func (q *Queries) GetAllUser(ctx context.Context) ([]User, error) {
+	rows, err := q.db.Query(ctx, getAllUser)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Email,
+			&i.Password,
+			&i.IsChirpyRed,
+			&i.Name,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllUserRs = `-- name: GetAllUserRs :many
+SELECT id, user_id, otheruser_id, label, status, created_at, updated_at FROM user_relationships WHERE status != 'pending'
+`
+
+func (q *Queries) GetAllUserRs(ctx context.Context) ([]UserRelationship, error) {
+	rows, err := q.db.Query(ctx, getAllUserRs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserRelationship
+	for rows.Next() {
+		var i UserRelationship
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.OtheruserID,
+			&i.Label,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFriReqList = `-- name: GetFriReqList :many
+SELECT id, user_id, otheruser_id, label, status, created_at, updated_at  FROM user_relationships WHERE otherUser_id = $1
+`
+
+func (q *Queries) GetFriReqList(ctx context.Context, otheruserID uuid.UUID) ([]UserRelationship, error) {
+	rows, err := q.db.Query(ctx, getFriReqList, otheruserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserRelationship
+	for rows.Next() {
+		var i UserRelationship
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.OtheruserID,
+			&i.Label,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUserInfoByEmail = `-- name: GetUserInfoByEmail :one
-SELECT id, created_at, updated_at, email, password, is_chirpy_red  FROM users WHERE email = $1
+SELECT id, created_at, updated_at, email, password, is_chirpy_red, name  FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, error) {
@@ -66,12 +183,13 @@ func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, e
 		&i.Email,
 		&i.Password,
 		&i.IsChirpyRed,
+		&i.Name,
 	)
 	return i, err
 }
 
 const getUserInfoByID = `-- name: GetUserInfoByID :one
-SELECT id, created_at, updated_at, email, password, is_chirpy_red FROM users WHERE id = $1
+SELECT id, created_at, updated_at, email, password, is_chirpy_red, name FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, error) {
@@ -84,8 +202,41 @@ func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, erro
 		&i.Email,
 		&i.Password,
 		&i.IsChirpyRed,
+		&i.Name,
 	)
 	return i, err
+}
+
+const getYourSendReqList = `-- name: GetYourSendReqList :many
+SELECT id, user_id, otheruser_id, label, status, created_at, updated_at FROM user_relationships WHERE user_id = $1
+`
+
+func (q *Queries) GetYourSendReqList(ctx context.Context, userID uuid.UUID) ([]UserRelationship, error) {
+	rows, err := q.db.Query(ctx, getYourSendReqList, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserRelationship
+	for rows.Next() {
+		var i UserRelationship
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.OtheruserID,
+			&i.Label,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateIsRedById = `-- name: UpdateIsRedById :execresult
@@ -107,5 +258,20 @@ type UpdatePasswordParams struct {
 
 func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error {
 	_, err := q.db.Exec(ctx, updatePassword, arg.Password, arg.ID)
+	return err
+}
+
+const updateSendReq = `-- name: UpdateSendReq :exec
+UPDATE user_relationships SET status = 'confirm' WHERE user_id = $1
+AND otherUser_id = $2
+`
+
+type UpdateSendReqParams struct {
+	UserID      uuid.UUID
+	OtheruserID uuid.UUID
+}
+
+func (q *Queries) UpdateSendReq(ctx context.Context, arg UpdateSendReqParams) error {
+	_, err := q.db.Exec(ctx, updateSendReq, arg.UserID, arg.OtheruserID)
 	return err
 }

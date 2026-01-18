@@ -1,6 +1,12 @@
 package chatmodel
 
-import "github.com/google/uuid"
+import (
+	// "context"
+	// "fmt"
+	// "time"
+
+	"github.com/google/uuid"
+)
 
 type Message struct{
 	Content string `json:"msg"`
@@ -18,6 +24,9 @@ type GroupActionInfo struct{
 	GroupID uuid.UUID
 }
 type MessageCache struct{
-	Id string
 	Msg Message				
+	FromID uuid.UUID
 }
+
+
+

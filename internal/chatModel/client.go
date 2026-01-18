@@ -6,7 +6,6 @@ import (
 	"time"
 
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
-	rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
@@ -30,11 +29,11 @@ type Client struct{
 	Send chan []byte
 	UserID uuid.UUID
 	MsgQ *mq.MainMQ
-	Cache *rediscache.RedisCacheImpl
+	Cache ChatRepoCache
 }
 
 
-func NewClient(hub *Hub,conn *websocket.Conn,send chan []byte,userID uuid.UUID,msgQ *mq.MainMQ,redisCache *rediscache.RedisCacheImpl)*Client{
+func NewClient(hub *Hub,conn *websocket.Conn,send chan []byte,userID uuid.UUID,msgQ *mq.MainMQ,redisCache ChatRepoCache)*Client{
 	return &Client{
 		Hub: hub,
 		Conn: conn,
@@ -77,22 +76,15 @@ func (c *Client)ReadPump(){
 			break
 		}
 		//the toID should be uuid.UUID only 
-		_, err=uuid.Parse(msg.ToID)
+		parseID, err:=uuid.Parse(msg.ToID)
 		if err !=nil{
 			log.Println("parsing the uuid failed")
 		}
-		
-		//generate  for the chatID
-		//NOTE::need to fix this one
-//	    _ = GenerateChatID(c.UserID,parseID)				
-		
-		//first need to update the cache
-		log.Printf("update the cache completed")	
-		//second publish the job
-		c.MsgQ.Publish("addMessage",&PublishMessageStruct{
-			Msg: &msg,
-			UserID: c.UserID,
-		})	
+		if msg.Type == "private"{
+			HandlePrivateMsg(c,&msg,parseID)	
+		}	
+
+
 
 
 		//the last parameters takes how many you wanna replace if <0 there is no limit
