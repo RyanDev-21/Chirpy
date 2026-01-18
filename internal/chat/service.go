@@ -3,8 +3,9 @@ package chat
 import (
 	"net/http"
 
-	chatmodel "RyanDev-21.com/Chirpy/internal/chat/chatModel"
+	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
+
 	//rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -24,22 +25,24 @@ type chatService struct{
 	chatRepo ChatRepo
 	hub *chatmodel.Hub
 	mq *mq.MainMQ
+	rediscache chatmodel.ChatRepoCache
 }
 
 
-func NewChatService(chatRepo ChatRepo,hub *chatmodel.Hub,mq *mq.MainMQ)ChatService{
+func NewChatService(chatRepo ChatRepo,hub *chatmodel.Hub,mq *mq.MainMQ,cache chatmodel.ChatRepoCache)ChatService{
 
 	return &chatService{
 		chatRepo: chatRepo,	
 		hub: hub,
 		mq:mq,
+		rediscache: cache,
 	}
 	}
 
 
 
 func (s *chatService)initWs(conn *websocket.Conn,userID uuid.UUID){
-	client := chatmodel.NewClient(s.hub,conn,make(chan []byte,256),userID)
+	client := chatmodel.NewClient(s.hub,conn,make(chan []byte,256),userID,s.mq,s.rediscache)
 	client.Hub.Register <- client
 
 	go client.WritePump()

@@ -1,7 +1,9 @@
 package users
 
+//NOTE::if have time,refactor the code and abstrac the decode and encode
+
 import (
-	"fmt"
+	//"fmt"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -31,7 +33,7 @@ func (h *UserHandler)Register(w http.ResponseWriter,r *http.Request){
 		response.Error(w,400,"invalid params")
 		return
 	}
-	user, err:= h.userService.Register(r.Context(),params.Email,params.Password)
+	user, err:= h.userService.Register(r.Context(),params.Name,params.Email,params.Password)
 	if err !=nil{
 		if err == DuplicateKeyErr{
 			response.Error(w,400,"the user already exists")
@@ -41,7 +43,6 @@ func (h *UserHandler)Register(w http.ResponseWriter,r *http.Request){
 		response.Error(w,500,"something went wrong")
 		return
 	}
-	fmt.Println("created the user now returning")
 	response.JSON(w,200,user)
 }
 
@@ -81,4 +82,30 @@ func (h *UserHandler)UpdatePassword(w http.ResponseWriter,r *http.Request){
 	}
 	response.JSON(w,200,updatedUser)
 	
+}
+
+
+//can use the job for add friend
+func (h *UserHandler)AddFriend(w http.ResponseWriter,r *http.Request){
+	decoder := json.NewDecoder(r.Body)
+	payload := &AddFriendParameters{}
+	err:= decoder.Decode(payload)
+	if err !=nil{
+		response.Error(w,400,"invalid parameters")
+		return
+	}
+	userID,ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
+	if !ok{
+		response.Error(w,500,"internal server error")
+		return	
+	}
+	switch payload.Type{
+		case "send":
+			err= h.userService.AddFriendSend(r.Context(),userID,payload.ToID,"pending")		
+		case "confirm":
+		default:
+			response.Error(w,400,"invalid type ")
+			return
+	}
+		
 }

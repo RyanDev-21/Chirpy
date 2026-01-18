@@ -9,15 +9,18 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync/atomic"
+	"sync/atomic" 
 	"time"
 
 	authClient "RyanDev-21.com/Chirpy/internal/auth"
 	"RyanDev-21.com/Chirpy/internal/chat"
-	chatmodel "RyanDev-21.com/Chirpy/internal/chat/chatModel"
+	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"RyanDev-21.com/Chirpy/internal/database"
 	"RyanDev-21.com/Chirpy/internal/groups"
+	rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
+
+	//rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
 
 	//	rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"RyanDev-21.com/Chirpy/internal/users"
@@ -257,6 +260,7 @@ func ValidateHandle(w http.ResponseWriter,r *http.Request){
 
 func(cfg *apiConfig) UserHandle(w http.ResponseWriter,r *http.Request){
 	type parameters struct{
+		Name string `json:"Name"`
 		Email string `json:"email"`
 		Password string `json:"password"`
 	}	
@@ -275,9 +279,11 @@ func(cfg *apiConfig) UserHandle(w http.ResponseWriter,r *http.Request){
 		return
 	}
 	payload := struct{
+		Name string
 		Email string 
 		Password string 
 	}{
+		Name:params.Name,
 		Email: params.Email,
 		Password:hashpassword,
 	}
@@ -372,95 +378,6 @@ func (cfg *apiConfig)ChirpHandle(w http.ResponseWriter,r *http.Request){
 
 }
 
-//refactored and move this guy to auth service
-// func (cfg *apiConfig)UserLoginHandle(w http.ResponseWriter,r *http.Request){
-// 	type parameters struct{
-// 		Email string `json:"email"`
-// 		Password string `json:"password"`
-// 	}
-// 	decoder := json.NewDecoder(r.Body)
-// 	params := &parameters{}
-// 	err:= decoder.Decode(params)
-// 	if err !=nil{
-// 		respondWithError(w,400,"Invalid parameters")
-// 		return
-// 	}
-//
-// 	userPayload,err := cfg.queries.GetUserInfoByEmail(r.Context(),params.Email)
-// 	if err!=nil{
-// 		if err == sql.ErrNoRows{
-// 			respondWithError(w,404,"Can't find the user")
-// 			return
-// 		}
-// 		log.Printf("failed to get the user from database %s",err)
-// 		respondWithError(w,500,"Something went wrong")
-// 		return
-// 	}
-// 	if valid,_:=auth.CheckPassword(params.Password,userPayload.Password); !valid{
-// 		respondWithError(w,401,"Invalid ceredentials")
-// 		return
-// 	}
-// 	accessToken,refreshToken,err:= GetAccessTokenAndRefreshToken(r,userPayload.ID,cfg)
-// 	if err !=nil{
-// 		respondWithError(w,500,"Something went wrong")	
-// 		return
-// 	}
-// 	respondWithJSON(w,200,AuthUser{
-// 		User : User{
-// 			ID: userPayload.ID,
-// 			CreatedAt: userPayload.CreatedAt,
-// 			UpdatedAt: userPayload.UpdatedAt,
-// 			Email: userPayload.Email,
-// 			IsRED: userPayload.IsChirpyRed.Bool,
-// 		},
-// 		Token: accessToken,
-// 		RefreshToken: refreshToken,
-// 	})
-// }
-//
-
-
-//this func is now belongs to auth service now
-// func (cfg *apiConfig) RefreshHandle(w http.ResponseWriter,r *http.Request){
-// 	token ,err:= auth.GetBearerToken(r.Header)
-// 	if err!=nil{
-// 		respondWithError(w,400,"Invalid token")
-// 		return
-// 	}
-// 	response,err:= cfg.queries.GetRefreshToken(r.Context(),token)
-// 	if err !=nil{
-// 		if err == sql.ErrNoRows{
-// 			respondWithError(w,401,"Unauthorized")
-// 			return
-// 		}
-// 		log.Printf("failed to get the refreshToken #%s#",err)
-// 		respondWithError(w,500,"Something went wrong")
-// 		return
-// 	}	
-// 	if time.Now().After(response.ExpireAt){
-// 		respondWithError(w,401,"Token expired")	
-// 		return
-// 	}	
-// 	err=cfg.queries.RevokeRefreshToken(r.Context(),token)		
-// 	if err !=nil{
-// 		log.Printf("failed to revoke the refreshToken #%s#",err)
-// 		respondWithError(w,500,"Something went wrong")
-// 		return
-// 	}
-// 	accessToken,_,err:= GetAccessTokenAndRefreshToken(r,response.UserID,cfg)
-// 	if err !=nil{
-// 		respondWithError(w,500,"Something went wrong")
-// 		return
-// 	}
-//
-// 		respondStruct := struct{
-// 		Token string `json:"Token"`
-// 	}{
-// 		Token: accessToken,
-// 	}
-// 	respondWithJSON(w,200,respondStruct)
-// }
-
 func GetAccessTokenAndRefreshToken(r *http.Request,userID uuid.UUID,cfg  *apiConfig)(string,string,error){
 	expireIn := 60*time.Minute
 	accessToken ,err:= auth.MakeJWT(userID,cfg.secret,expireIn)
@@ -487,28 +404,6 @@ func GetAccessTokenAndRefreshToken(r *http.Request,userID uuid.UUID,cfg  *apiCon
 	return accessToken,refreshToken,nil
 
 }
-
-//this business login belongs to the auth service now
-//don't like where i am going but anyway
-// func (cfg *apiConfig)RevokeHandle(w http.ResponseWriter,r *http.Request){
-// 	token, err:= auth.GetBearerToken(r.Header)
-// 	if err!=nil{
-// 		respondWithError(w,400,"Bad request")
-// 		return
-// 	}
-// 	err= cfg.queries.RevokeRefreshToken(r.Context(),token)
-// 	if err !=nil{
-// 		if err == sql.ErrNoRows{
-// 			respondWithError(w,401,"Unauthorized")
-// 			return
-// 		}
-// 		log.Printf("failed to revoke the refresh tokne #%s#",err)
-// 		respondWithError(w,500,"Something went wrong")
-// 		return
-// 	}
-// 	 w.WriteHeader(204)
-//
-// }
 
 func (cfg *apiConfig) GetChirpWithIDHandle(w http.ResponseWriter,r *http.Request){
 	stringIDParam := r.PathValue("chirp_id")
@@ -703,9 +598,6 @@ func (cfg *apiConfig)SwitchProtocol(w http.ResponseWriter,r *http.Request){
 	}
 	
 }
-
-
-
 func main(){
 
 	err:=godotenv.Load("../.env")
@@ -737,6 +629,14 @@ func main(){
 	hub := chatmodel.NewHub()
 	go hub.Run()	
 
+	//init redis cache
+	cacheClient,err :=rediscache.NewRedisClient()
+	if err !=nil{
+		log.Printf("failed to get the redis client \n #%s#",err)
+	}
+	
+	rediscache := rediscache.NewRedisCacheImpl(cacheClient)
+	chatCache := chatmodel.NewChatRepoCache(rediscache)	
 	//Create Repositories
 	userRepo := users.NewUserRepo(dbQueries)
 	authRepo := authClient.NewAuthRepo(dbQueries)
@@ -745,10 +645,13 @@ func main(){
 	//set up group cache
 	groupCache := groups.NewGroupCache(groupRepo)
 	go groupCache.Load()
+	//set up user cache
+	userCache := users.NewUserCache(userRepo)
+	go userCache.Load()
 	//Create Services
-	userService := users.NewUserService(userRepo)
+	userService := users.NewUserService(userRepo,userCache)
 	authService := authClient.NewAuthService(userRepo,authRepo,apicfg.secret)
-	chatService := chat.NewChatService(chatRepo,hub,mq)
+	chatService := chat.NewChatService(chatRepo,hub,mq,chatCache)
 	groupService := groups.NewGroupService(groupRepo,hub,mq,groupCache)
 
 	//Create Hanlders
@@ -764,7 +667,9 @@ func main(){
 	go mq.Run()
 	go mq.ListeningForTheChannels("createGroup",100,groupService.StartWorkerForCreateGroup)
 	go mq.ListeningForTheChannels("addCreator",100,groupService.StartWorkerForCreateGroupLeader)
-	go mq.ListeningForTheChannels("addMember",100,groupService.StartWorkerForAddMember)
+	go mq.ListeningForTheChannels("addMemberList",100,groupService.StartWorkerForAddMember)
+	go mq.ListeningForTheChannels("addMember",100,groupService.StartWorkerForAddMemberList)
+	go mq.ListeningForTheChannels("removeGroupMember",100,groupService.StartWorkerForLeaveMember)
 
 	//Main app route
 	mux.Handle("/app/",middleWareLog(finalHanlder))
@@ -799,7 +704,7 @@ func main(){
 	mux.HandleFunc("POST /api/polka/webhooks",apicfg.WebHookHandle)
 
 	//PUT route
-	mux.HandleFunc("PUT /api/users",apicfg.UserPutHandle)
+	mux.HandleFunc("PUT /api/users",userHandler.UpdatePassword)
 
 	//UpdatePassword route
 	//uses middleware to parse the userID

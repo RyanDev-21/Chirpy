@@ -1,24 +1,34 @@
 package chat
 
-import "RyanDev-21.com/Chirpy/internal/database"
+import (
+	"context"
+	"time"
+
+	"RyanDev-21.com/Chirpy/internal/database"
+)
 
 
 type chatRepo struct{
-	quries *database.Queries	
+	queries *database.Queries	
 }
 
 
 type ChatRepo interface{
-	any		
+	AddMessage(payload *database.AddMessageParams)(*database.Message,error)
 }
 
 
 func NewChatRepo(queries *database.Queries)ChatRepo{
 	return &chatRepo{
-		quries: queries,
+		queries: queries,
 	}
 }
 
-//func (r *chatRepo)
+func (r *chatRepo)AddMessage(payload *database.AddMessageParams)(*database.Message,error){
+	ctx,cancel := context.WithTimeout(context.Background(),1*time.Second)	
+	defer cancel()
+	res, err:= r.queries.AddMessage(ctx,*payload)
+	return &res,err	
+}
 
 
