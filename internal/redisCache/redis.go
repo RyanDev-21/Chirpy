@@ -73,7 +73,7 @@ func (rc *RedisCache)Get(ctx context.Context,key string,dst interface{})(bool,er
 
 
 func (rc *RedisCache) Set(ctx context.Context, key string, val interface{}) error {
-	if err := rc.redis.Set(ctx, key, val,30*time.Hour).Err(); err != nil {
+	if err := rc.redis.Set(ctx, key, val,10*time.Hour).Err(); err != nil {
 		return err
 	}
 	return nil

@@ -8,7 +8,7 @@ import (
 	//	"fmt"
 	"log"
 
-	chatmodel "RyanDev-21.com/Chirpy/internal/chat/chatModel"
+	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
 
 	//rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"

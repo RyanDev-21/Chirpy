@@ -1,11 +1,12 @@
 -- name: CreateUser :one
-INSERT INTO  users(id, created_at,updated_at, email,password)
+INSERT INTO  users(id,name,created_at,updated_at, email,password)
 VALUES(
     gen_random_uuid(),
-    NOW(),
-    NOW(),
     $1,
-    $2
+    NOW(),
+    NOW(),
+    $2,
+    $3
 )
 RETURNING *;
 
@@ -23,3 +24,28 @@ SELECT * FROM users WHERE id = $1;
 
 -- name: UpdateIsRedById :execresult
 UPDATE users SET  is_chirpy_red = true ,updated_at = NOW() WHERE id = $1;
+
+-- name: GetAllUser :many
+SELECT * FROM users;
+
+
+-- name: GetAllUserRs :many
+SELECT * FROM user_relationships WHERE status != 'pending';
+
+-- name: AddSendReq :exec
+INSERT INTO user_relationships (user_id,otherUser_id)
+VALUES(
+    $1,
+    $2
+);
+
+-- name: UpdateSendReq :exec
+UPDATE user_relationships SET status = 'confirm' WHERE user_id = $1
+AND otherUser_id = $2;
+
+
+-- name: GetFriReqList :many
+SELECT *  FROM user_relationships WHERE otherUser_id = $1;
+
+-- name: GetYourSendReqList :many
+SELECT * FROM user_relationships WHERE user_id = $1;

@@ -1,9 +1,7 @@
 package chatmodel
 
 import (
-	"fmt"
 	"log"
-
 	"github.com/google/uuid"
 )
 
@@ -136,6 +134,7 @@ func (h *Hub)Run(){
 				for _,clientID:= range targetIds{
 					//i need to implement mutex lock or smth
 					if _,ok:= h.Clients[clientID];ok{
+						log.Printf("the reciever is not online")
 						select {
 						case h.Clients[clientID].Send<- []byte(message.Content):
 						default: 
@@ -146,9 +145,7 @@ func (h *Hub)Run(){
 
 					}
 				
-			}else{
-				fmt.Println("stored it in db")
-			}	
+			}
 		}
 				}
 }

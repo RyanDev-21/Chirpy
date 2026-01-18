@@ -7,8 +7,6 @@ import (
 
 //for somehow reason chaning the driver to the pgv4 version is making the type pgtype
 //so need to convert that
-
-
 func GetStringType(val string)*pgtype.Text{
 	return &pgtype.Text{
 		String: val,
@@ -22,3 +20,5 @@ func GetUUIDType(val any)*pgtype.UUID{
 		Valid: true,
 	}
 }
+
+

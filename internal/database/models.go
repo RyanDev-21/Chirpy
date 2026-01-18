@@ -75,6 +75,7 @@ type User struct {
 	Email       string
 	Password    string
 	IsChirpyRed pgtype.Bool
+	Name        string
 }
 
 type UserRelationship struct {

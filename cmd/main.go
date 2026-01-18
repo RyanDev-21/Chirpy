@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync/atomic"
+	"sync/atomic" 
 	"time"
 
 	authClient "RyanDev-21.com/Chirpy/internal/auth"
@@ -18,6 +18,8 @@ import (
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"RyanDev-21.com/Chirpy/internal/database"
 	"RyanDev-21.com/Chirpy/internal/groups"
+	rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
+
 	//rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
 
 	//	rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
@@ -258,6 +260,7 @@ func ValidateHandle(w http.ResponseWriter,r *http.Request){
 
 func(cfg *apiConfig) UserHandle(w http.ResponseWriter,r *http.Request){
 	type parameters struct{
+		Name string `json:"Name"`
 		Email string `json:"email"`
 		Password string `json:"password"`
 	}	
@@ -276,9 +279,11 @@ func(cfg *apiConfig) UserHandle(w http.ResponseWriter,r *http.Request){
 		return
 	}
 	payload := struct{
+		Name string
 		Email string 
 		Password string 
 	}{
+		Name:params.Name,
 		Email: params.Email,
 		Password:hashpassword,
 	}
@@ -624,6 +629,14 @@ func main(){
 	hub := chatmodel.NewHub()
 	go hub.Run()	
 
+	//init redis cache
+	cacheClient,err :=rediscache.NewRedisClient()
+	if err !=nil{
+		log.Printf("failed to get the redis client \n #%s#",err)
+	}
+	
+	rediscache := rediscache.NewRedisCacheImpl(cacheClient)
+	chatCache := chatmodel.NewChatRepoCache(rediscache)	
 	//Create Repositories
 	userRepo := users.NewUserRepo(dbQueries)
 	authRepo := authClient.NewAuthRepo(dbQueries)
@@ -632,10 +645,13 @@ func main(){
 	//set up group cache
 	groupCache := groups.NewGroupCache(groupRepo)
 	go groupCache.Load()
+	//set up user cache
+	userCache := users.NewUserCache(userRepo)
+	go userCache.Load()
 	//Create Services
-	userService := users.NewUserService(userRepo)
+	userService := users.NewUserService(userRepo,userCache)
 	authService := authClient.NewAuthService(userRepo,authRepo,apicfg.secret)
-	chatService := chat.NewChatService(chatRepo,hub,mq)
+	chatService := chat.NewChatService(chatRepo,hub,mq,chatCache)
 	groupService := groups.NewGroupService(groupRepo,hub,mq,groupCache)
 
 	//Create Hanlders
@@ -688,7 +704,7 @@ func main(){
 	mux.HandleFunc("POST /api/polka/webhooks",apicfg.WebHookHandle)
 
 	//PUT route
-	mux.HandleFunc("PUT /api/users",apicfg.UserPutHandle)
+	mux.HandleFunc("PUT /api/users",userHandler.UpdatePassword)
 
 	//UpdatePassword route
 	//uses middleware to parse the userID

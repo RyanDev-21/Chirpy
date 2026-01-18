@@ -5,7 +5,6 @@ import (
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
-	rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
 
 	//rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"github.com/google/uuid"
@@ -26,11 +25,11 @@ type chatService struct{
 	chatRepo ChatRepo
 	hub *chatmodel.Hub
 	mq *mq.MainMQ
-	rediscache *rediscache.RedisCacheImpl
+	rediscache chatmodel.ChatRepoCache
 }
 
 
-func NewChatService(chatRepo ChatRepo,hub *chatmodel.Hub,mq *mq.MainMQ,cache *rediscache.RedisCacheImpl)ChatService{
+func NewChatService(chatRepo ChatRepo,hub *chatmodel.Hub,mq *mq.MainMQ,cache chatmodel.ChatRepoCache)ChatService{
 
 	return &chatService{
 		chatRepo: chatRepo,	

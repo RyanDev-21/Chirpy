@@ -13,6 +13,7 @@ import (
 var (
 	NoUserFoundErr  = errors.New("no user found")
 	DuplicateKeyErr = errors.New("duplicate error")
+	NoRecordFoundErr = errors.New("no row found")
 )
 
 type UserRepo interface {
@@ -20,6 +21,13 @@ type UserRepo interface {
 	GetUserByEmail(ctx context.Context, email string) (*User, string, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (*User, string, error)
 	UpdateUserPassword(ctx context.Context, payload UpdateUserPassword) (*User, error)
+	GetAllUsers(ctx context.Context)(*[]database.User,error)
+	GetAllUsersRs(ctx context.Context)(*[]database.UserRelationship,error)
+SendFriendRequest(ctx context.Context,fromID,toID uuid.UUID)error
+	GetMyFriReqList(ctx context.Context,userID uuid.UUID)(*[]database.UserRelationship,error)	
+	GetMySendFirReqList(ctx context.Context,userID uuid.UUID)(
+		*[]database.UserRelationship,error)
+	
 }
 
 type userRepo struct {
@@ -44,6 +52,7 @@ func NewUserRepo(queries *database.Queries) UserRepo {
 
 func (r *userRepo) Create(ctx context.Context, input CreateUserInput) (*User, error) {
 	user, err := r.queries.CreateUser(ctx, database.CreateUserParams{
+		Name:     input.Name,
 		Email:    input.Email,
 		Password: input.Password,
 	})
@@ -94,4 +103,55 @@ func (r *userRepo) GetUserByID(ctx context.Context, userID uuid.UUID) (*User, st
 		return nil, "", err
 	}
 	return toUserFormat(user), user.Password, nil
+}
+
+
+//this function is for the sake of upading the cache so no neeed to format
+func (r *userRepo)GetAllUsers(ctx context.Context)(*[]database.User,error){
+	userList, err :=r.queries.GetAllUser(ctx)
+	if err !=nil{
+		if err == sql.ErrNoRows{
+			return nil,NoUserFoundErr
+		}
+		return nil,err
+	}
+	return &userList ,nil
+}
+
+func (r *userRepo)GetAllUsersRs(ctx context.Context)(*[]database.UserRelationship,error){
+	rsList,err:=r.queries.GetAllUserRs(ctx)
+	if err !=nil{
+		return nil,err
+	}
+	return &rsList,nil 
+}
+
+func (r *userRepo)SendFriendRequest(ctx context.Context,fromID,toID uuid.UUID)error{
+	err :=r.queries.AddSendReq(ctx,database.AddSendReqParams{
+		UserID: fromID,
+		OtheruserID: toID,
+	})
+	return err
+}
+
+func (r *userRepo)GetMyFriReqList(ctx context.Context,userID uuid.UUID)(*[]database.UserRelationship,error){
+	list , err := r.queries.GetFriReqList(ctx,userID)
+	if err !=nil{
+		if err == sql.ErrNoRows{
+			return nil,NoRecordFoundErr
+		}
+		return nil,err
+	}
+	return &list,nil
+}
+
+func (r *userRepo)GetMySendFirReqList(ctx context.Context,userID uuid.UUID)(*[]database.UserRelationship,error){
+	list ,err := r.queries.GetYourSendReqList(ctx,userID)
+	if err !=nil{
+		if err == sql.ErrNoRows{
+			return nil,NoRecordFoundErr
+		}
+		return nil,err
+	}
+	return &list,nil
 }
