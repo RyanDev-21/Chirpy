@@ -102,7 +102,14 @@ func (h *UserHandler)AddFriend(w http.ResponseWriter,r *http.Request){
 	switch payload.Type{
 		case "send":
 			err= h.userService.AddFriendSend(r.Context(),userID,payload.ToID,"pending")		
-		case "confirm":
+		if err !=nil{
+			log.Printf("failed to add frient req\n#%s#",err)
+			response.Error(w,500,"internal server error")
+			return	
+		}
+		response.JSON(w,201,"sucessfully send req")
+		return
+	case "confirm":
 		default:
 			response.Error(w,400,"invalid type ")
 			return

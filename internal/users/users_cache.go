@@ -2,7 +2,10 @@ package users
 
 import (
 	"context"
+	"errors"
+	//"fmt"
 	"log"
+	"slices"
 	"sync"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 type UserCacheItf interface{
 	Load()
 	UpdateUserRs(payload *CacheUpdateStruct)
+	CleanUpUserRs(payload *CacheUpdateStruct)
 }
 
 type Cache struct{
@@ -154,4 +158,48 @@ func (c *Cache)UpdateUserRs(payload *CacheUpdateStruct){
 	
 }
 
+func (c *Cache)CleanUpUserRs(payload *CacheUpdateStruct){
+	//need to delete all the cache except the friend one
+	go func(fromID,toID uuid.UUID){
+		c.UserRsMuLock.Lock()	
+		if _,ok:= c.UserRsCache[fromID]; ok{
+			if v,ok:= c.UserRsCache[fromID]["pending"];ok{
+				if index:=slices.Index(*v,toID);index!=-1{
+					updatedList,err:= removeEleFromSlice(c.UserRsCache[fromID]["pending"],toID)				
+					if err !=nil{
+						log.Fatal("failed to remove ele from slice")
+					}
+					c.UserRsCache[fromID]["pending"]= updatedList	
+				}
+
+				}	
+			if v,ok:= c.UserRsCache[fromID]["send"];ok{
+				if index:=slices.Index(*v,toID);index!=-1{
+				updatedList,err:= removeEleFromSlice(c.UserRsCache[fromID]["send"],toID)				
+				if err !=nil{
+					log.Fatal("failed to remove ele from slice")
+				}
+				c.UserRsCache[fromID]["send"]= updatedList	
+			}
+		}
+
+		}else{
+			log.Printf("cannot find the userID#%v#",fromID)
+		}
+		c.UserRsMuLock.Unlock()
+		
+	}(payload.UserID,payload.toID)
+}
+
+func removeEleFromSlice(slice *[]uuid.UUID,ele uuid.UUID)(*[]uuid.UUID,error){
+	orgList := *slice
+	index := slices.Index(orgList,ele)
+	if index == -1{
+		return nil,errors.New("failed to get the index")	
+	}
+	var newSlice *[]uuid.UUID
+	orgList[index] = orgList[len(orgList)-1]	
+	*newSlice = orgList[:len(orgList)-1]
+	return newSlice,nil
+}
 
