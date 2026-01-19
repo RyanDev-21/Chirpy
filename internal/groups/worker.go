@@ -9,6 +9,8 @@ import (
 	"RyanDev-21.com/Chirpy/internal/database"
 //	"github.com/google/uuid"
 )
+//WARNING:need to fix the way of using context
+
 
 //NOTE::you really need centralized encoder and decoder
 //there is a code duplication in this fucntion
@@ -113,7 +115,7 @@ func (s *groupService)StartWorkerForLeaveMember(channel chan *mq.Channel){
 	for  chen := range channel{
 		msg := chen.Msg.(ManageGroupPublishStruct) 
 		context,cancel := context.WithTimeout(context.Background(),1*time.Second)
-		defer cancel();
+		defer cancel()
 		payload := &database.DeleteMemFromGroupParams{
 			GroupID: msg.GroupId,
 			MemberID: msg.UserID,	

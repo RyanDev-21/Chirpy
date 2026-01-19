@@ -80,13 +80,15 @@ func (c *Client)ReadPump(){
 		if err !=nil{
 			log.Println("parsing the uuid failed")
 		}
-		if msg.Type == "private"{
+		switch  msg.Type{
+		case "private":	
 			HandlePrivateMsg(c,&msg,parseID)	
+		case "public":
+			HandlePublicMsg(c,&msg)
+
+		default: 
+			log.Printf("invalid type of msg in readpump ")
 		}	
-
-
-
-
 		//the last parameters takes how many you wanna replace if <0 there is no limit
 		//as we don't read the message type anymore 	
 		//msg= bytes.TrimSpace(bytes.Replace(message,newline,space,-1))		
