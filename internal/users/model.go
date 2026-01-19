@@ -44,3 +44,8 @@ type CacheUpdateStruct struct{
 	UserID uuid.UUID
 	toID uuid.UUID
 }
+
+type FriendReq struct{
+	FromID uuid.UUID
+	ToID uuid.UUID
+}

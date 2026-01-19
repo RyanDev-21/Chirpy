@@ -14,6 +14,8 @@ import (
 	//rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"github.com/google/uuid"
 )
+//WARNING:need to abstract out the caching function
+
 
 type GroupService interface{
 	createGroup(ctx context.Context,createrID uuid.UUID,groupMembers *createGroupRequest)(*GroupInfo,error)
@@ -191,6 +193,7 @@ func (s *groupService)leaveGroup(ctx context.Context,groupID uuid.UUID,userID uu
 		updatedMemberIdsList := func()[]uuid.UUID{
 			index := slices.Index(memberIdsList,*userID)
 			memberIdsList[index] = memberIdsList[len(memberIdsList)-1]
+			memberIdsList = memberIdsList[:len(memberIdsList)-1]
 			log.Printf("memberIdsList value: %v",memberIdsList)
 			return memberIdsList
 		}
