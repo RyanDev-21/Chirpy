@@ -8,28 +8,32 @@ package database
 import (
 	"context"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const addMessage = `-- name: AddMessage :one
-INSERT INTO message(content,parentId,from_id,to_id)VALUES(
+const addMessagePrivate = `-- name: AddMessagePrivate :one
+INSERT INTO message(id,content,parentId,from_id,to_id)VALUES(
     $1,
     $2,
     $3,
-    $4
+    $4,
+    $5
 )
 RETURNING id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at
 `
 
-type AddMessageParams struct {
+type AddMessagePrivateParams struct {
+	ID       uuid.UUID
 	Content  pgtype.Text
 	Parentid pgtype.UUID
 	FromID   pgtype.UUID
 	ToID     pgtype.UUID
 }
 
-func (q *Queries) AddMessage(ctx context.Context, arg AddMessageParams) (Message, error) {
-	row := q.db.QueryRow(ctx, addMessage,
+func (q *Queries) AddMessagePrivate(ctx context.Context, arg AddMessagePrivateParams) (Message, error) {
+	row := q.db.QueryRow(ctx, addMessagePrivate,
+		arg.ID,
 		arg.Content,
 		arg.Parentid,
 		arg.FromID,
@@ -45,6 +49,48 @@ func (q *Queries) AddMessage(ctx context.Context, arg AddMessageParams) (Message
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const addMessagePublic = `-- name: AddMessagePublic :one
+INSERT INTO GroupMessage(id,content,group_id,from_id,parent_id)
+VALUES(
+    $1,
+    $2,
+    $3,
+    $4,
+    $5
+)
+RETURNING id, content, group_id, from_id, parent_id, created_at, updated_at, deleted_at
+`
+
+type AddMessagePublicParams struct {
+	ID       uuid.UUID
+	Content  pgtype.Text
+	GroupID  pgtype.UUID
+	FromID   pgtype.UUID
+	ParentID pgtype.UUID
+}
+
+func (q *Queries) AddMessagePublic(ctx context.Context, arg AddMessagePublicParams) (Groupmessage, error) {
+	row := q.db.QueryRow(ctx, addMessagePublic,
+		arg.ID,
+		arg.Content,
+		arg.GroupID,
+		arg.FromID,
+		arg.ParentID,
+	)
+	var i Groupmessage
+	err := row.Scan(
+		&i.ID,
+		&i.Content,
+		&i.GroupID,
+		&i.FromID,
+		&i.ParentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }

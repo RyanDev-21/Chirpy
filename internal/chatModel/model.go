@@ -28,5 +28,10 @@ type MessageCache struct{
 	FromID uuid.UUID
 }
 
+type MessageMetaData struct{
+	ID uuid.UUID
+	MsgInfo *MessageCache
+}
+
 
 

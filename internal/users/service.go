@@ -2,6 +2,8 @@ package users
 
 import (
 	"context"
+
+	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"github.com/google/uuid"
 )
@@ -14,12 +16,14 @@ type UserService interface{
 type userService struct{
 	userRepo UserRepo
 	userCache UserCacheItf
+	mainMq *mq.MainMQ	
 }
 
-func NewUserService(userRepo UserRepo,userCache UserCacheItf)UserService{
+func NewUserService(userRepo UserRepo,userCache UserCacheItf,mainMq *mq.MainMQ)UserService{
 	return &userService{
 		userRepo: userRepo,
 		userCache: userCache,
+		mainMq: mainMq,
 	}
 }
 
@@ -67,12 +71,31 @@ func (s *userService)UpdatePassword(ctx context.Context,userID uuid.UUID,oldPass
 
 //will save  record with pending stauts 
 func (s *userService)AddFriendSend(ctx context.Context,senderID,receiveID uuid.UUID,label string)error{
+	//udpate the current user cache
 	s.userCache.UpdateUserRs(&CacheUpdateStruct{
 		UserID: senderID,	
 		toID: receiveID,
-		Label: label,
-	})			
+		Label: "send",
+	})
+	//this update the opp user
+	s.userCache.UpdateUserRs(&CacheUpdateStruct{
+		UserID: receiveID,
+		toID: senderID,
+		Label: "pending",
+	})
 	//need to publish the job for db
+	s.mainMq.Publish("sendRequest",&FriendReq{
+		FromID: senderID,
+		ToID: receiveID,
+	})
 	return nil
 }
 
+
+// func (s *userService)ConfrimFriendReq(ctx context.Context,fromID,toID uuid.UUID,label string)error{
+// 	//this update the pending guy
+// 	s.userCache.CleanUpUserRs(&CacheUpdateStruct{
+// 		UserID: fromID,
+// 		toID: toID,
+// 	})	
+// }
