@@ -19,6 +19,9 @@ type UserCacheItf interface{
 	CleanUpUserRs(payload *CacheUpdateStruct)
 }
 
+
+//i could do like the primary key of the rscache to be the req row id
+//so that when it comes to like update the cache i can just use that id and then do the logic
 type Cache struct{
 	UserCache map[uuid.UUID]*UserCache
 	UserMuLock sync.Mutex
@@ -197,9 +200,9 @@ func removeEleFromSlice(slice *[]uuid.UUID,ele uuid.UUID)(*[]uuid.UUID,error){
 	if index == -1{
 		return nil,errors.New("failed to get the index")	
 	}
-	var newSlice *[]uuid.UUID
+	var newSlice []uuid.UUID
 	orgList[index] = orgList[len(orgList)-1]	
-	*newSlice = orgList[:len(orgList)-1]
-	return newSlice,nil
+	newSlice = orgList[:len(orgList)-1]
+	return &newSlice,nil
 }
 
