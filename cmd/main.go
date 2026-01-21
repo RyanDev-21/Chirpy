@@ -736,6 +736,11 @@ func main(){
 	mux.HandleFunc("PATCH /api/chats/groups/{group_id}",groupHandler.CreateGroup)
 	
 	//NOTE:: i should really consider making the server as my own config and graceful shutdown
+
+	//ednpoint for add friend
+	//dummy function
+	mux.HandleFunc("POST /api/friends",groupHandler.CreateGroup)
+	mux.HandleFunc("PUT /api/friends/{request_id}/",groupHandler.CreateGroup)
 	server := http.Server{
 		Addr: Port,
 		Handler: mux,
