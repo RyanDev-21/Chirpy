@@ -99,20 +99,31 @@ func (h *UserHandler)AddFriend(w http.ResponseWriter,r *http.Request){
 		response.Error(w,500,"internal server error")
 		return	
 	}
-	switch payload.Type{
-		case "send":
-			err= h.userService.AddFriendSend(r.Context(),userID,payload.ToID,"pending")		
+
+	//need to fix this one differentiating the two logic can be good so much
+		err= h.userService.AddFriendSend(r.Context(),userID,payload.ToID,"pending")		
 		if err !=nil{
 			log.Printf("failed to add frient req\n#%s#",err)
 			response.Error(w,500,"internal server error")
 			return	
 		}
-		response.JSON(w,201,"sucessfully send req")
-		return
-	case "confirm":
-		default:
-			response.Error(w,400,"invalid type ")
-			return
-	}
+	w.WriteHeader(201)
 		
+}
+
+
+//refactor this later after you done this feature there is duplicate code
+func (h *UserHandler)ConfirmReq(w http.ResponseWriter,r *http.Request){
+	decoder := json.NewDecoder(r.Body)
+	payload := &AddFriendParameters{}
+	err:= decoder.Decode(payload)
+	if err !=nil{
+		response.Error(w,400,"invalid parameters")
+		return
+	}
+	userID,ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
+	if !ok{
+		response.Error(w,500,"internal server error")
+		return	
+	}
 }
