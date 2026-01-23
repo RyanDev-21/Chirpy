@@ -623,7 +623,7 @@ func main(){
 	assetChain := apicfg.middlewareMeticsInc(http.FileServer(http.Dir("./assets/")))
 	assetHandler := http.StripPrefix("/app/assets/",assetChain)
 	
-	//init rabbitmq queue
+	//init customMq queue
 	mq := mq.NewMainMQ(&map[string]chan *mq.Channel{},10)
 	//init hub
 	hub := chatmodel.NewHub()
@@ -649,7 +649,7 @@ func main(){
 	userCache := users.NewUserCache(userRepo)
 	go userCache.Load()
 	//Create Services
-	userService := users.NewUserService(userRepo,userCache)
+	userService := users.NewUserService(userRepo,userCache,mq)
 	authService := authClient.NewAuthService(userRepo,authRepo,apicfg.secret)
 	chatService := chat.NewChatService(chatRepo,hub,mq,chatCache)
 	groupService := groups.NewGroupService(groupRepo,hub,mq,groupCache)
@@ -740,6 +740,7 @@ func main(){
 	//ednpoint for add friend
 	//dummy function
 	mux.HandleFunc("POST /api/friends",groupHandler.CreateGroup)
+	
 	mux.HandleFunc("PUT /api/friends/{request_id}/",groupHandler.CreateGroup)
 	server := http.Server{
 		Addr: Port,
