@@ -88,7 +88,7 @@ func (h *UserHandler)UpdatePassword(w http.ResponseWriter,r *http.Request){
 //can use the job for add friend
 func (h *UserHandler)AddFriend(w http.ResponseWriter,r *http.Request){
 	decoder := json.NewDecoder(r.Body)
-	payload := &AddFriendParameters{}
+	payload := &StatusFriendParameters{}
 	err:= decoder.Decode(payload)
 	if err !=nil{
 		response.Error(w,400,"invalid parameters")
@@ -98,15 +98,20 @@ func (h *UserHandler)AddFriend(w http.ResponseWriter,r *http.Request){
 	if !ok{
 		response.Error(w,500,"internal server error")
 		return	
+
+	}
+	friReqId ,err := uuid.NewV7();
+	if err !=nil{
+		log.Printf("failed to gen the friReqId something went wrong")
 	}
 
-	//need to fix this one differentiating the two logic can be good so much
-		err= h.userService.AddFriendSend(r.Context(),userID,payload.ToID,"pending")		
-		if err !=nil{
+	
+	err= h.userService.AddFriendSend(r.Context(),userID,payload.ToID,"pending",friReqId)		
+	if err !=nil{
 			log.Printf("failed to add frient req\n#%s#",err)
 			response.Error(w,500,"internal server error")
 			return	
-		}
+	}
 	w.WriteHeader(201)
 		
 }
@@ -114,9 +119,19 @@ func (h *UserHandler)AddFriend(w http.ResponseWriter,r *http.Request){
 
 //refactor this later after you done this feature there is duplicate code
 func (h *UserHandler)ConfirmReq(w http.ResponseWriter,r *http.Request){
+	stringReqID:= r.PathValue("request_id")	
+	if stringReqID == ""{
+		response.Error(w,400,"invalid request")
+		return
+	} 
+	reqID, err := uuid.Parse(stringReqID)
+	if err !=nil{
+		response.Error(w,400,"invalid request")
+		return
+	}
 	decoder := json.NewDecoder(r.Body)
-	payload := &AddFriendParameters{}
-	err:= decoder.Decode(payload)
+	payload := &StatusFriendParameters{}
+	err= decoder.Decode(payload)
 	if err !=nil{
 		response.Error(w,400,"invalid parameters")
 		return
@@ -126,4 +141,14 @@ func (h *UserHandler)ConfirmReq(w http.ResponseWriter,r *http.Request){
 		response.Error(w,500,"internal server error")
 		return	
 	}
+	err= h.userService.ConfirmFriendReq(r.Context(),userID,payload.ToID,reqID,payload.Status)		
+			if err !=nil{
+				log.Printf("failed to do smth  friend req\n#%s#",err)
+				response.Error(w,500,"internal server error")
+				return	
+			}
+		w.WriteHeader(201)
 }
+
+
+
