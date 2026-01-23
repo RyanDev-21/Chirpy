@@ -34,18 +34,25 @@ type DefaultUsersParameters struct{
 		Password string `json:"password"`
 }
 
-type AddFriendParameters struct{
+type StatusFriendParameters struct{
 	ToID uuid.UUID `json:"to_id"`
-	Type string  `json:"type"`
+	Status string  `json:"status"`
 }
 
 type CacheUpdateStruct struct{
-	Label string
 	UserID uuid.UUID
-	toID uuid.UUID
+	ReqID uuid.UUID
+	Lable string
 }
 
 type FriendReq struct{
+	ReqID uuid.UUID
 	FromID uuid.UUID
 	ToID uuid.UUID
+}
+
+type CacheUpdateFriStruct struct{
+	UserID uuid.UUID
+	ToID uuid.UUID
+	Lable string
 }

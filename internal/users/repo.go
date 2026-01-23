@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
 	"RyanDev-21.com/Chirpy/internal/database"
 	"github.com/google/uuid"
@@ -23,11 +24,11 @@ type UserRepo interface {
 	UpdateUserPassword(ctx context.Context, payload UpdateUserPassword) (*User, error)
 	GetAllUsers(ctx context.Context)(*[]database.User,error)
 	GetAllUsersRs(ctx context.Context)(*[]database.UserRelationship,error)
-SendFriendRequest(ctx context.Context,fromID,toID uuid.UUID)error
+SendFriendRequest(fromID,toID,friReqID uuid.UUID)error
 	GetMyFriReqList(ctx context.Context,userID uuid.UUID)(*[]database.UserRelationship,error)	
 	GetMySendFirReqList(ctx context.Context,userID uuid.UUID)(
 		*[]database.UserRelationship,error)
-	
+	UpdateFriReq(reqID uuid.UUID)	error
 }
 
 type userRepo struct {
@@ -126,8 +127,11 @@ func (r *userRepo)GetAllUsersRs(ctx context.Context)(*[]database.UserRelationshi
 	return &rsList,nil 
 }
 
-func (r *userRepo)SendFriendRequest(ctx context.Context,fromID,toID uuid.UUID)error{
+func (r *userRepo)SendFriendRequest(fromID,toID,friReqID uuid.UUID)error{
+	ctx,cancel := context.WithTimeout(context.Background(),1*time.Second)
+	defer cancel()
 	err :=r.queries.AddSendReq(ctx,database.AddSendReqParams{
+		ID: friReqID,	
 		UserID: fromID,
 		OtheruserID: toID,
 	})
@@ -155,3 +159,11 @@ func (r *userRepo)GetMySendFirReqList(ctx context.Context,userID uuid.UUID)(*[]d
 	}
 	return &list,nil
 }
+
+func(r *userRepo)UpdateFriReq(reqID uuid.UUID)error{
+	ctx,cancel := context.WithTimeout(context.Background(),1*time.Second)
+	defer cancel()
+	err:= r.queries.UpdateSendReq(ctx,reqID)	
+	return err
+}	
+

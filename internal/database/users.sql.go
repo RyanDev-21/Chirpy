@@ -13,20 +13,22 @@ import (
 )
 
 const addSendReq = `-- name: AddSendReq :exec
-INSERT INTO user_relationships (user_id,otherUser_id)
+INSERT INTO user_relationships (id,user_id,otherUser_id)
 VALUES(
     $1,
-    $2
+    $2,
+    $3
 )
 `
 
 type AddSendReqParams struct {
+	ID          uuid.UUID
 	UserID      uuid.UUID
 	OtheruserID uuid.UUID
 }
 
 func (q *Queries) AddSendReq(ctx context.Context, arg AddSendReqParams) error {
-	_, err := q.db.Exec(ctx, addSendReq, arg.UserID, arg.OtheruserID)
+	_, err := q.db.Exec(ctx, addSendReq, arg.ID, arg.UserID, arg.OtheruserID)
 	return err
 }
 
@@ -262,16 +264,10 @@ func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) 
 }
 
 const updateSendReq = `-- name: UpdateSendReq :exec
-UPDATE user_relationships SET status = 'confirm' WHERE user_id = $1
-AND otherUser_id = $2
+UPDATE user_relationships SET status = 'confirm' WHERE id = $1
 `
 
-type UpdateSendReqParams struct {
-	UserID      uuid.UUID
-	OtheruserID uuid.UUID
-}
-
-func (q *Queries) UpdateSendReq(ctx context.Context, arg UpdateSendReqParams) error {
-	_, err := q.db.Exec(ctx, updateSendReq, arg.UserID, arg.OtheruserID)
+func (q *Queries) UpdateSendReq(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, updateSendReq, id)
 	return err
 }
