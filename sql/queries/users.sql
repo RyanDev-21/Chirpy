@@ -33,15 +33,15 @@ SELECT * FROM users;
 SELECT * FROM user_relationships WHERE status != 'pending';
 
 -- name: AddSendReq :exec
-INSERT INTO user_relationships (user_id,otherUser_id)
+INSERT INTO user_relationships (id,user_id,otherUser_id)
 VALUES(
     $1,
-    $2
+    $2,
+    $3
 );
 
 -- name: UpdateSendReq :exec
-UPDATE user_relationships SET status = 'confirm' WHERE user_id = $1
-AND otherUser_id = $2;
+UPDATE user_relationships SET status = 'confirm' WHERE id = $1;
 
 
 -- name: GetFriReqList :many

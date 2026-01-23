@@ -15,16 +15,17 @@ import (
 
 type UserCacheItf interface{
 	Load()
-	UpdateUserRs(payload *CacheUpdateStruct)
+	UpdateUserRs(payload interface{})
 	CleanUpUserRs(payload *CacheUpdateStruct)
+	GetUserRs(userID uuid.UUID)*map[string]*[]uuid.UUID
 }
 
-
-//i could do like the primary key of the rscache to be the req row id
-//so that when it comes to like update the cache i can just use that id and then do the logic
+//i could do like the primary key of the rscache to be the req row id so that when it comes to like update the cache i can just use that id and then do the logic
 type Cache struct{
 	UserCache map[uuid.UUID]*UserCache
 	UserMuLock sync.Mutex
+	//for now using the userId as the primary id
+	//need to replace this guy with friend_request id or smth
 	UserRsCache map[uuid.UUID]map[string]*[]uuid.UUID
 	UserRsMuLock sync.Mutex
 	UserRepo UserRepo
@@ -56,6 +57,13 @@ func formatToUser(user *database.User)*User{
 		UpdatedAt: user.UpdatedAt,
 		IsRED: user.IsChirpyRed.Bool,	
 	}
+}
+
+func (c *Cache)GetUserRs(userID uuid.UUID)*map[string]*[]uuid.UUID{
+	c.UserRsMuLock.Lock()
+	defer c.UserRsMuLock.Unlock()
+	v:= c.UserRsCache[userID]
+	return &v
 }
 
 
@@ -109,8 +117,8 @@ func (c *Cache)Load(){
 				//this one fetches the pending data 
 				c.UpdateUserRs(&CacheUpdateStruct{
 					UserID: user.ID,
-					toID:req.UserID,
-					Label: "pending",
+					ReqID: req.ID,
+					Lable: "pending",
 				})
 
 			}
@@ -118,8 +126,8 @@ func (c *Cache)Load(){
 			for _,req:=range *sendList{
 				c.UpdateUserRs(&CacheUpdateStruct{
 					UserID: user.ID,
-					toID: req.OtheruserID,
-					Label: "send",
+					ReqID: req.ID,
+					Lable: "send",
 				})
 			}
 		}
@@ -127,14 +135,14 @@ func (c *Cache)Load(){
 	go func(){
 		//this one update the only friend label
 		for _,userRs:= range *userRsList{
-			c.UpdateUserRs(&CacheUpdateStruct{
+			c.UpdateUserRs(&CacheUpdateFriStruct{
 				UserID: userRs.UserID,
-				toID: userRs.OtheruserID,
-				Label:userRs.Label,
+				ToID: userRs.OtheruserID,
+				Lable:userRs.Label,
 			})
 		}
 	}()
-	log.Println("Successfully loaded the user and its relations cache \n#%v#\n#%v#",c.UserRsCache,c.UserCache)
+	log.Printf("Successfully loaded the user and its relations cache \n#%v#\n#%v#",c.UserRsCache,c.UserCache)
 }
 
 
@@ -144,23 +152,28 @@ func (c *Cache)Load(){
 //label here represents 'status'
 //above function represents 'friend'(label from db)
 //have to fix this one cuz if one user's cache is updated then the other one has to update too
-func (c *Cache)UpdateUserRs(payload *CacheUpdateStruct){
-	go func(payload *CacheUpdateStruct){
-		c.UserRsMuLock.Lock()	
-		if _,ok:= c.UserRsCache[payload.UserID]; !ok{
-			c.UserRsCache[payload.UserID] = make(map[string]*[]uuid.UUID)
-		}	
-		if _,ok:= c.UserRsCache[payload.UserID][payload.Label]; !ok{
-			c.UserRsCache[payload.UserID][payload.Label] = &[]uuid.UUID{}
-		}
-		list := *c.UserRsCache[payload.UserID][payload.Label]
-		*c.UserRsCache[payload.UserID][payload.Label] = append(list,payload.toID)
-		c.UserRsMuLock.Unlock()	
-
-	}(payload)	
-	
+func (c *Cache)UpdateUserRs(payload interface{}){
+	switch payload:= payload.(type){
+	case CacheUpdateStruct:	
+			c.updateFriCache(payload.UserID,payload.ReqID,payload.Lable)
+	case CacheUpdateFriStruct:
+				c.updateFriCache(payload.UserID,payload.ToID,payload.Lable)			
+	default:
+		log.Printf("not a valid struct you are passing")
+	}	
 }
-
+func (c *Cache)updateFriCache(userID,otherID uuid.UUID,lable string){
+			c.UserRsMuLock.Lock()	
+			if _,ok:= c.UserRsCache[userID]; !ok{
+				c.UserRsCache[userID] = make(map[string]*[]uuid.UUID)		
+			}		
+			if _,ok:= c.UserRsCache[userID][lable];!ok{
+				c.UserRsCache[userID][lable]= &[]uuid.UUID{}
+			} 	
+			*c.UserRsCache[userID][lable] = append(*c.UserRsCache[userID][lable],otherID)
+	
+			c.UserRsMuLock.Unlock()	
+}
 func (c *Cache)CleanUpUserRs(payload *CacheUpdateStruct){
 	//need to delete all the cache except the friend one
 	go func(fromID,toID uuid.UUID){
@@ -191,7 +204,7 @@ func (c *Cache)CleanUpUserRs(payload *CacheUpdateStruct){
 		}
 		c.UserRsMuLock.Unlock()
 		
-	}(payload.UserID,payload.toID)
+	}(payload.UserID,payload.ReqID)
 }
 
 func removeEleFromSlice(slice *[]uuid.UUID,ele uuid.UUID)(*[]uuid.UUID,error){
