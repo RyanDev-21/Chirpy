@@ -1,0 +1,36 @@
+package users
+
+import (
+	"log"
+
+	mq "RyanDev-21.com/Chirpy/internal/customMq"
+)
+
+func (s *userService)StartWorkerForAddFri(channel chan *mq.Channel){
+	for chen:= range channel{
+		msg := chen.Msg.(FriendReq)
+
+		err:=s.userRepo.SendFriendRequest(msg.FromID,msg.ToID,msg.ReqID)
+		if err !=nil{
+			chen.RetriesCount++
+			s.mainMq.Republish(chen,chen.RetriesCount)
+		}
+		continue
+	}
+	log.Printf("successfully created the add fri record")
+}
+
+func (s *userService)StartWorkerForConfirmFri(channel chan *mq.Channel){
+	for chen := range channel{
+		msg := chen.Msg.(FriendReq)
+		err:=s.userRepo.UpdateFriReq(msg.ReqID)
+		if err !=nil{
+			chen.RetriesCount++
+			s.mainMq.Republish(chen,chen.RetriesCount)
+		}
+		continue
+	}
+	log.Printf("successfully created the add fri record")
+
+}
+

@@ -10,7 +10,10 @@ import (
 type UserService interface{
 	Register(ctx context.Context,name,email,password string)(*User,error)
 	UpdatePassword(ctx context.Context,userID uuid.UUID,oldPass string,newPass string)(*User,error)
-	AddFriendSend(ctx context.Context,sendID,recieveID uuid.UUID,label string)error
+	AddFriendSend(ctx context.Context,sendID,recieveID uuid.UUID,label string,friReqID uuid.UUID)error
+	ConfirmFriendReq(ctx context.Context,fromID,toID,reqID uuid.UUID,status string)error
+	StartWorkerForAddFri(channel chan *mq.Channel)
+	StartWorkerForConfirmFri(channel chan *mq.Channel)
 }
 
 type userService struct{
@@ -70,32 +73,58 @@ func (s *userService)UpdatePassword(ctx context.Context,userID uuid.UUID,oldPass
 
 
 //will save  record with pending stauts 
-func (s *userService)AddFriendSend(ctx context.Context,senderID,receiveID uuid.UUID,label string)error{
+func (s *userService)AddFriendSend(ctx context.Context,senderID,receiveID uuid.UUID,label string,friReqID uuid.UUID)error{
 	//udpate the current user cache
-	s.userCache.UpdateUserRs(&CacheUpdateStruct{
+	s.userCache.UpdateUserRs(CacheUpdateStruct{
 		UserID: senderID,	
-		toID: receiveID,
-		Label: "send",
+		ReqID: friReqID,
+		Lable: "send",
 	})
 	//this update the opp user
-	s.userCache.UpdateUserRs(&CacheUpdateStruct{
+	s.userCache.UpdateUserRs(CacheUpdateStruct{
 		UserID: receiveID,
-		toID: senderID,
-		Label: "pending",
+		ReqID: friReqID,
+		Lable: "pending",
 	})
-	//need to publish the job for db
-	s.mainMq.Publish("sendRequest",&FriendReq{
-		FromID: senderID,
-		ToID: receiveID,
-	})
+//	need to publish the job for db
+	// s.mainMq.Publish("sendRequest",&FriendReq{
+	// 	ReqID : friReqID,		
+	// 	FromID: senderID,
+	// 	ToID: receiveID,
+	// })
 	return nil
 }
 
+//this need to return error for failed case didn't do any of that 
+func (s *userService)ConfirmFriendReq(ctx context.Context,fromID,toID,reqID uuid.UUID,status string)error{
+	//this update the pending guy
+	s.userCache.CleanUpUserRs(&CacheUpdateStruct{
+		UserID: fromID,
+		ReqID: reqID,
+	})
 
-// func (s *userService)ConfrimFriendReq(ctx context.Context,fromID,toID uuid.UUID,label string)error{
-// 	//this update the pending guy
-// 	s.userCache.CleanUpUserRs(&CacheUpdateStruct{
-// 		UserID: fromID,
-// 		toID: toID,
-// 	})	
-// }
+	//this update the sending guy
+	s.userCache.CleanUpUserRs(&CacheUpdateStruct{
+		UserID: toID,
+		ReqID: reqID,
+	})
+	
+	//this update the pending guy
+	s.userCache.UpdateUserRs(CacheUpdateFriStruct{
+		UserID: fromID,
+		ToID: toID,
+		Lable:"friend",
+	})
+
+	s.userCache.UpdateUserRs(CacheUpdateFriStruct{
+		UserID: toID,
+		ToID: fromID,
+		Lable: "friend",
+	})
+
+	s.mainMq.Publish("confirmFriReq",&FriendReq{
+		ReqID: reqID,
+	})
+	 
+	return nil
+}
