@@ -15,17 +15,20 @@ import (
 type UserCacheItf interface{
 	Load()
 	UpdateUserRs(payload interface{})
-	CleanUpUserRs(payload *CacheUpdateStruct)
+	CleanUpUserRs(payload *CacheRsDeleteStruct)
+	GetUserFriList(userID uuid.UUID)*[]uuid.UUID
 	GetUserRs(userID uuid.UUID)bool
-	GetUserReqList(userID uuid.UUID)*[]uuid.UUID
-	GetUserSendReqList(userID uuid.UUID)*[]uuid.UUID
+	GetUserReqList(userID uuid.UUID)*map[uuid.UUID]uuid.UUID
+	GetUserSendReqList(userID uuid.UUID)*map[uuid.UUID]uuid.UUID
 }
 
 type Cache struct{
 	UserCache map[uuid.UUID]*UserCache
 	UserMuLock sync.Mutex
-	UserRsCache map[uuid.UUID]map[string]*[]uuid.UUID
+	UserRsCache map[uuid.UUID]map[string]*map[uuid.UUID]uuid.UUID
 	UserRsMuLock sync.Mutex
+	UserFriCache map[uuid.UUID]map[string]*[]uuid.UUID
+	UserFriMuLock sync.Mutex
 	UserRepo UserRepo
 }
 
@@ -40,8 +43,10 @@ func NewUserCache(userRepo UserRepo)UserCacheItf{
 		UserCache: make(map[uuid.UUID]*UserCache),
 		UserMuLock: sync.Mutex{},
 		UserRepo: userRepo,
-		UserRsCache: make(map[uuid.UUID]map[string]*[]uuid.UUID),
+		UserRsCache: make(map[uuid.UUID]map[string]*map[uuid.UUID]uuid.UUID),
 		UserRsMuLock: sync.Mutex{},	
+		UserFriCache: make(map[uuid.UUID]map[string]*[]uuid.UUID),
+		UserFriMuLock: sync.Mutex{},
 	}
 }
 
@@ -66,7 +71,7 @@ func (c *Cache)GetUserRs(userID uuid.UUID)bool{
 	return false
 }
 
-func (c *Cache)GetUserReqList(userID uuid.UUID)*[]uuid.UUID{
+func (c *Cache)GetUserReqList(userID uuid.UUID)*map[uuid.UUID]uuid.UUID{
 	c.UserRsMuLock.Lock()
 	defer c.UserRsMuLock.Unlock()
 	if v,ok := c.UserRsCache[userID]["pending"];ok{
@@ -75,12 +80,23 @@ func (c *Cache)GetUserReqList(userID uuid.UUID)*[]uuid.UUID{
 	return nil
 }
 
-func (c *Cache)GetUserSendReqList(userID uuid.UUID)*[]uuid.UUID{
+func (c *Cache)GetUserFriList(userID uuid.UUID)*[]uuid.UUID{
+	c.UserFriMuLock.Lock()
+	defer c.UserFriMuLock.Unlock()
+	if v,ok := c.UserFriCache[userID]["friend"];ok{
+		return v	
+	}
+	return nil
+}
+
+func (c *Cache)GetUserSendReqList(userID uuid.UUID)*map[uuid.UUID]uuid.UUID{
 	c.UserRsMuLock.Lock()
 	defer c.UserRsMuLock.Unlock()
 	if v,ok := c.UserRsCache[userID]["send"];ok{
+		log.Print("returning the address of send")
 		return v
 	}
+	log.Print("returning nil address")
 	return nil
 }
 
@@ -135,6 +151,7 @@ func (c *Cache)Load(){
 						c.UpdateUserRs(CacheUpdateStruct{
 							UserID: user.ID,
 							ReqID: req.ID,
+							OtherUserID: req.UserID,
 							Lable: "pending",
 						})
 
@@ -145,6 +162,7 @@ func (c *Cache)Load(){
 						c.UpdateUserRs(CacheUpdateStruct{
 							UserID: user.ID,
 							ReqID: req.ID,
+							OtherUserID: req.OtheruserID,
 							Lable: "send",
 						})
 					}
@@ -190,55 +208,49 @@ func (c *Cache)Load(){
 func (c *Cache)UpdateUserRs(payload interface{}){
 	switch payload:= payload.(type){
 	case CacheUpdateStruct:	
-			c.updateFriCache(payload.UserID,payload.ReqID,payload.Lable)
+			c.updateRsCache(payload.UserID,payload.OtherUserID,payload.ReqID,payload.Lable)
 	case CacheUpdateFriStruct:
 				c.updateFriCache(payload.UserID,payload.ToID,payload.Lable)			
 	default:
 		log.Printf("not a valid struct you are passing")
 	}	
 }
-func (c *Cache)updateFriCache(userID,otherID uuid.UUID,lable string){
-			c.UserRsMuLock.Lock()	
-			if _,ok:= c.UserRsCache[userID]; !ok{
-				c.UserRsCache[userID] = make(map[string]*[]uuid.UUID)		
-			}		
-			if _,ok:= c.UserRsCache[userID][lable];!ok{
-				c.UserRsCache[userID][lable]= &[]uuid.UUID{}
-			} 	
-			*c.UserRsCache[userID][lable] = append(*c.UserRsCache[userID][lable],otherID)
-			c.UserRsMuLock.Unlock()	
+func (c *Cache)updateRsCache(userID,otherID,reqID uuid.UUID,label string){
+	c.UserRsMuLock.Lock()
+	defer c.UserRsMuLock.Unlock()
+	if _,ok:= c.UserRsCache[userID];!ok{
+		c.UserRsCache[userID] = make(map[string]*map[uuid.UUID]uuid.UUID)
+	}
+	c.UserRsCache[userID][label]= &map[uuid.UUID]uuid.UUID{
+		reqID:otherID,
+	}
 }
-func (c *Cache)CleanUpUserRs(payload *CacheUpdateStruct){
+func (c *Cache)updateFriCache(userID,otherID uuid.UUID,lable string){
+			c.UserFriMuLock.Lock()	
+			defer c.UserFriMuLock.Unlock()	
+			if _,ok:= c.UserFriCache[userID]; !ok{
+				c.UserFriCache[userID] = make(map[string]*[]uuid.UUID)		
+				}		
+			if _,ok:= c.UserFriCache[userID][lable];!ok{
+				c.UserFriCache[userID][lable]= &[]uuid.UUID{}
+			} 	
+			*c.UserFriCache[userID][lable] = append(*c.UserFriCache[userID][lable],otherID)
+}
+//this one will clean up what ever the lable got passed 
+func (c *Cache)CleanUpUserRs(payload *CacheRsDeleteStruct){
 	//need to delete all the cache except the friend one
-	go func(fromID,toID uuid.UUID){
-		c.UserRsMuLock.Lock()	
-		if _,ok:= c.UserRsCache[fromID]; ok{
-			if v,ok:= c.UserRsCache[fromID]["pending"];ok{
-				if index:=slices.Index(*v,toID);index!=-1{
-					updatedList,err:= removeEleFromSlice(c.UserRsCache[fromID]["pending"],toID)				
-					if err !=nil{
-						log.Fatal("failed to remove ele from slice")
-					}
-					c.UserRsCache[fromID]["pending"]= updatedList	
-				}
-
-				}	
-			if v,ok:= c.UserRsCache[fromID]["send"];ok{
-				if index:=slices.Index(*v,toID);index!=-1{
-				updatedList,err:= removeEleFromSlice(c.UserRsCache[fromID]["send"],toID)				
-				if err !=nil{
-					log.Fatal("failed to remove ele from slice")
-				}
-				c.UserRsCache[fromID]["send"]= updatedList	
+	c.UserRsMuLock.Lock()
+	defer c.UserRsMuLock.Unlock()
+	if _,ok:= c.UserRsCache[payload.UserID];ok{
+		if v,ok:= c.UserRsCache[payload.UserID][payload.Lable];ok{
+			v := *v 
+			if _,ok:=v[payload.ReqID];ok{
+				delete(v,payload.ReqID)	
 			}
-		}
-
-		}else{
-			log.Printf("cannot find the userID#%v#",fromID)
-		}
-		c.UserRsMuLock.Unlock()
-		
-	}(payload.UserID,payload.ReqID)
+		}	
+	}else{
+		log.Print("cannot find the user in the userRscache map ")
+	}
 }
 
 func removeEleFromSlice(slice *[]uuid.UUID,ele uuid.UUID)(*[]uuid.UUID,error){
