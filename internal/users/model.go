@@ -35,12 +35,20 @@ type DefaultUsersParameters struct{
 		Password string `json:"password"`
 }
 
+//may be there will be better way than passing the to_id
 type StatusFriendParameters struct{
 	ToID uuid.UUID `json:"to_id"`
 	Status string  `json:"status"`
 }
 
 type CacheUpdateStruct struct{
+	UserID uuid.UUID
+	ReqID uuid.UUID
+	OtherUserID uuid.UUID
+	Lable string
+}
+
+type CacheRsDeleteStruct struct{
 	UserID uuid.UUID
 	ReqID uuid.UUID
 	Lable string
@@ -59,11 +67,11 @@ type CacheUpdateFriStruct struct{
 }
 
 type GetReqList struct{
-	PendingIDsList *[]uuid.UUID 
-	RequestIDsList *[]uuid.UUID 
+	PendingIDsList *map[uuid.UUID]uuid.UUID
+	RequestIDsList *map[uuid.UUID]uuid.UUID
 }
 
 type ResponseReqList struct{
-	PendingIDsList []uuid.UUID
-	RequestIDsList []uuid.UUID
+	PendingIDsList map[uuid.UUID]uuid.UUID `json:"pending_ids"`
+	RequestIDsList map[uuid.UUID]uuid.UUID `json:"request_ids"`
 }

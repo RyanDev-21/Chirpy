@@ -3,7 +3,7 @@ package users
 import (
 	"context"
 	"database/sql"
-
+	"log"
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"github.com/google/uuid"
@@ -100,15 +100,17 @@ func (s *userService)AddFriendSend(ctx context.Context,senderID,receiveID uuid.U
 //this need to return error for failed case didn't do any of that 
 func (s *userService)ConfirmFriendReq(ctx context.Context,fromID,toID,reqID uuid.UUID,status string)error{
 	//this update the pending guy
-	s.userCache.CleanUpUserRs(&CacheUpdateStruct{
+	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
 		UserID: fromID,
 		ReqID: reqID,
+		Lable: "pending",
 	})
 
 	//this update the sending guy
-	s.userCache.CleanUpUserRs(&CacheUpdateStruct{
+	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
 		UserID: toID,
 		ReqID: reqID,
+		Lable: "send",
 	})
 	
 	//this update the pending guy
@@ -131,22 +133,36 @@ func (s *userService)ConfirmFriendReq(ctx context.Context,fromID,toID,reqID uuid
 	return nil
 }
 
+//NOTE:: need to rethink about this
+// func (s *userService)GetFriendList(ctx context.Context,userID uuid.UUID)([]uuid.UUID,error){
+// 	list:= s.userCache.GetUserFriList(userID)									
+// 	if list ==nil{
+// 		log.Print("cannot find in the cache")	
+// 		list,err := s.userRepo.GetAllUsersRs(ctx)
+// 		return []uuid.UUID{},nil
+// 	}
+// 	return *list,nil
+// }
+
 func (s *userService)GetPendingList(ctx context.Context,userID uuid.UUID)(*GetReqList,error){
-	var list GetReqList
-	list.PendingIDsList = &[]uuid.UUID{}
-	list.RequestIDsList = &[]uuid.UUID{}
+	list := GetReqList{
+		PendingIDsList: &map[uuid.UUID]uuid.UUID{},
+		RequestIDsList: &map[uuid.UUID]uuid.UUID{},
+	}
 	check:= s.userCache.GetUserRs(userID)
 	if !check{
+		log.Print("are we deadass in side the not found")
 		reqList,err	:= s.userRepo.GetMyFriReqList(ctx,userID)
 		if err !=nil{
 			if err !=sql.ErrNoRows{
 				return nil,err
 			}
 		}
-		if reqList !=nil{
 
+		listOne := *list.PendingIDsList	
+		if reqList !=nil{
 			for _,v := range *reqList{
-				*list.PendingIDsList = append(*list.PendingIDsList,v.UserID)
+			listOne[v.ID] = v.UserID
 		}
 		}	
 		reqSendList,err	:= s.userRepo.GetMySendFirReqList(ctx,userID)
@@ -155,24 +171,31 @@ func (s *userService)GetPendingList(ctx context.Context,userID uuid.UUID)(*GetRe
 				return nil, err	
 			}	
 		}
+		listTwo := *list.RequestIDsList
 		if reqSendList !=nil{
-
 			for _,v := range *reqSendList{
-				*list.RequestIDsList = append(*list.RequestIDsList,v.UserID)
+			listTwo[v.ID] = v.OtheruserID		
 			}
-			return &list, nil
+
 
 		}
+		list.PendingIDsList = &listOne
+		list.RequestIDsList = &listTwo
+		return &list, nil
 	}
+	log.Print("outside  the check")
+
 	pendingList := s.userCache.GetUserReqList(userID)
 	if pendingList !=nil{
 		list.PendingIDsList = pendingList
+		for k,v := range *list.PendingIDsList{
+			log.Printf("%v:%v",k,v)
+		}	
 	}
 	reqList := s.userCache.GetUserSendReqList(userID)
 	if reqList !=nil{
 		list.RequestIDsList = reqList
 	}
-	
 	return &list,nil	
 }
 

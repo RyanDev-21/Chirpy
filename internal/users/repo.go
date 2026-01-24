@@ -168,5 +168,7 @@ func(r *userRepo)UpdateFriReq(reqID uuid.UUID)error{
 	defer cancel()
 	err:= r.queries.UpdateSendReq(ctx,reqID)	
 	return err
-}	
+}
+//nned to think about this again
+//func (r *userRepo)GetUserFriListByID(userID uuid.UUID)(*[]uuid.UUID,error)
 
