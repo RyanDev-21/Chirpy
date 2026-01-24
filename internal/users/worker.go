@@ -8,7 +8,7 @@ import (
 
 func (s *userService)StartWorkerForAddFri(channel chan *mq.Channel){
 	for chen:= range channel{
-		msg := chen.Msg.(FriendReq)
+		msg := chen.Msg.(*FriendReq)
 
 		err:=s.userRepo.SendFriendRequest(msg.FromID,msg.ToID,msg.ReqID)
 		if err !=nil{
@@ -22,7 +22,7 @@ func (s *userService)StartWorkerForAddFri(channel chan *mq.Channel){
 
 func (s *userService)StartWorkerForConfirmFri(channel chan *mq.Channel){
 	for chen := range channel{
-		msg := chen.Msg.(FriendReq)
+		msg := chen.Msg.(*FriendReq)
 		err:=s.userRepo.UpdateFriReq(msg.ReqID)
 		if err !=nil{
 			chen.RetriesCount++
