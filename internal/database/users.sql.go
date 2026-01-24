@@ -140,7 +140,7 @@ func (q *Queries) GetAllUserRs(ctx context.Context) ([]UserRelationship, error) 
 }
 
 const getFriReqList = `-- name: GetFriReqList :many
-SELECT id, user_id, otheruser_id, label, status, created_at, updated_at  FROM user_relationships WHERE otherUser_id = $1
+SELECT id, user_id, otheruser_id, label, status, created_at, updated_at  FROM user_relationships WHERE otherUser_id = $1 AND status != 'confirm'
 `
 
 func (q *Queries) GetFriReqList(ctx context.Context, otheruserID uuid.UUID) ([]UserRelationship, error) {
@@ -210,7 +210,7 @@ func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, erro
 }
 
 const getYourSendReqList = `-- name: GetYourSendReqList :many
-SELECT id, user_id, otheruser_id, label, status, created_at, updated_at FROM user_relationships WHERE user_id = $1
+SELECT id, user_id, otheruser_id, label, status, created_at, updated_at FROM user_relationships WHERE user_id = $1 AND status!= 'confirm'
 `
 
 func (q *Queries) GetYourSendReqList(ctx context.Context, userID uuid.UUID) ([]UserRelationship, error) {

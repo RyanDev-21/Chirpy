@@ -42,10 +42,11 @@ VALUES(
 
 -- name: UpdateSendReq :exec
 UPDATE user_relationships SET status = 'confirm' WHERE id = $1;
-
-
 -- name: GetFriReqList :many
-SELECT *  FROM user_relationships WHERE otherUser_id = $1;
+SELECT *  FROM user_relationships WHERE otherUser_id = $1 AND status != 'confirm';
 
 -- name: GetYourSendReqList :many
-SELECT * FROM user_relationships WHERE user_id = $1;
+SELECT * FROM user_relationships WHERE user_id = $1 AND status!= 'confirm';
+
+-- -- name: GetUserFriListByID :many
+-- SELECT user_id,otherUser_id FROM user_relationships
