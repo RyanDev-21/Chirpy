@@ -1,6 +1,6 @@
 package users
 
-//NOTE::if have time,refactor the code and abstrac the decode and encode
+//NOTE::if have time,refactor the code and abstract the decode and encode
 
 import (
 	//"fmt"
@@ -33,10 +33,18 @@ func (h *UserHandler)Register(w http.ResponseWriter,r *http.Request){
 		response.Error(w,400,"invalid params")
 		return
 	}
+	if params.Email == "" || params.Name == "" || params.Password == ""{
+		response.Error(w,400,"all fields need to have value")
+		return
+	}
 	user, err:= h.userService.Register(r.Context(),params.Name,params.Email,params.Password)
 	if err !=nil{
 		if err == DuplicateKeyErr{
 			response.Error(w,400,"the user already exists")
+			return
+		}
+		if err == DuplicateNameKeyErr{
+			response.Error(w,400,"the user name already exists")
 			return
 		}
 		log.Printf("internal error :#%s#",err)
@@ -100,13 +108,13 @@ func (h *UserHandler)AddFriend(w http.ResponseWriter,r *http.Request){
 		return	
 
 	}
-	friReqId ,err := uuid.NewV7();
+	friReqID ,err := uuid.NewV7();
 	if err !=nil{
 		log.Printf("failed to gen the friReqId something went wrong")
 	}
 
 	
-	err= h.userService.AddFriendSend(r.Context(),userID,payload.ToID,"pending",friReqId)		
+	err= h.userService.AddFriendSend(r.Context(),userID,payload.ToID,"pending",friReqID)		
 	if err !=nil{
 			log.Printf("failed to add frient req\n#%s#",err)
 			response.Error(w,500,"internal server error")
@@ -151,4 +159,22 @@ func (h *UserHandler)ConfirmReq(w http.ResponseWriter,r *http.Request){
 }
 
 
+func (h *UserHandler)GetPendingList(w http.ResponseWriter,r *http.Request){
+	userID,ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
+	if !ok{
+		response.Error(w,400,"invalid request")
+		return	
+	}		
+	list, err := h.userService.GetPendingList(r.Context(),userID)
+	if err !=nil{
+		log.Printf("failed to get the db \n #%s#",err)
+		response.Error(w,500,"internal server error")
+		return
+	}
+
+	response.JSON(w,200,ResponseReqList{
+			PendingIDsList: *list.PendingIDsList,
+			RequestIDsList: *list.RequestIDsList,
+		})	
+}
 

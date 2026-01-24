@@ -3,7 +3,6 @@ package users
 import (
 	"context"
 	"errors"
-	//"fmt"
 	"log"
 	"slices"
 	"sync"
@@ -17,15 +16,14 @@ type UserCacheItf interface{
 	Load()
 	UpdateUserRs(payload interface{})
 	CleanUpUserRs(payload *CacheUpdateStruct)
-	GetUserRs(userID uuid.UUID)*map[string]*[]uuid.UUID
+	GetUserRs(userID uuid.UUID)bool
+	GetUserReqList(userID uuid.UUID)*[]uuid.UUID
+	GetUserSendReqList(userID uuid.UUID)*[]uuid.UUID
 }
 
-//i could do like the primary key of the rscache to be the req row id so that when it comes to like update the cache i can just use that id and then do the logic
 type Cache struct{
 	UserCache map[uuid.UUID]*UserCache
 	UserMuLock sync.Mutex
-	//for now using the userId as the primary id
-	//need to replace this guy with friend_request id or smth
 	UserRsCache map[uuid.UUID]map[string]*[]uuid.UUID
 	UserRsMuLock sync.Mutex
 	UserRepo UserRepo
@@ -59,13 +57,32 @@ func formatToUser(user *database.User)*User{
 	}
 }
 
-func (c *Cache)GetUserRs(userID uuid.UUID)*map[string]*[]uuid.UUID{
+func (c *Cache)GetUserRs(userID uuid.UUID)bool{
 	c.UserRsMuLock.Lock()
 	defer c.UserRsMuLock.Unlock()
-	v:= c.UserRsCache[userID]
-	return &v
+	if _,ok := c.UserRsCache[userID]; ok{
+		return true	
+	}
+	return false
 }
 
+func (c *Cache)GetUserReqList(userID uuid.UUID)*[]uuid.UUID{
+	c.UserRsMuLock.Lock()
+	defer c.UserRsMuLock.Unlock()
+	if v,ok := c.UserRsCache[userID]["pending"];ok{
+		return v	
+	}
+	return nil
+}
+
+func (c *Cache)GetUserSendReqList(userID uuid.UUID)*[]uuid.UUID{
+	c.UserRsMuLock.Lock()
+	defer c.UserRsMuLock.Unlock()
+	if v,ok := c.UserRsCache[userID]["send"];ok{
+		return v
+	}
+	return nil
+}
 
 func (c *Cache)Load(){
 	ctx, cancel := context.WithTimeout(context.Background(),1*time.Second)
@@ -74,75 +91,93 @@ func (c *Cache)Load(){
 	if err !=nil{
 		log.Printf("failed to fetch the user data from db \n#%s#",err)
 	}
+	//this one is for the already confirmed friends rs
 	userRsList, err:= c.UserRepo.GetAllUsersRs(ctx)
 	if err !=nil{
 		log.Printf("failed to fetch the userRs from db \n #%s#",err)
 	}
+		go func(){
+			for _,user:= range *userList{
+				c.UserMuLock.Lock()
+				c.UserCache[user.ID]=&UserCache{
+					Info:formatToUser(&user),
+					IsActive: false,
+				} 
+				c.UserMuLock.Unlock()
 
-	
-	go func(){
-		for _,user:= range *userList{
-			c.UserMuLock.Lock()
-			c.UserCache[user.ID]=&UserCache{
-				Info:formatToUser(&user),
-				IsActive: false,
-			} 
-			c.UserMuLock.Unlock()
-		
-			context,cancel:= context.WithTimeout(context.Background(),10*time.Second)
-			defer cancel()
-			//fetcht the req list of current user
-			list,err:= c.UserRepo.GetMyFriReqList(context,user.ID)
-			if err !=nil{
-				if err == NoRecordFoundErr{
-					log.Printf("no friend request list found for user(%v)",user.ID)
+				context,cancel:= context.WithTimeout(context.Background(),10*time.Second)
+				defer cancel()
+				//fetcht the req list of current user
+				list,err:= c.UserRepo.GetMyFriReqList(context,user.ID)
+				if err !=nil{
+					if err == NoRecordFoundErr{
+						log.Printf("no friend request list found for user(%v)",user.ID)
+						continue
+					}
+					log.Printf("failed to get the fri req list for user(%v)",user.ID)
+					continue
+
+				}
+
+				sendList, err:= c.UserRepo.GetMySendFirReqList(context,user.ID)
+				if err !=nil{
+					if err == NoRecordFoundErr{
+						log.Printf("no send record found for user(%v)",user.ID)
+						continue
+					}	
+					log.Printf("failed to get the send req list from user(%v)",user.ID)
 					continue
 				}
-				log.Printf("failed to get the fri req list for user(%v)",user.ID)
-				continue
+				// update the cache for current user with pending label
+
+					for _,req := range *list{
+						//this one fetches the pending data 
+						c.UpdateUserRs(CacheUpdateStruct{
+							UserID: user.ID,
+							ReqID: req.ID,
+							Lable: "pending",
+						})
+
+					}
+					
+				//update the cache for current user with send label
+					for _,req:=range *sendList{
+						c.UpdateUserRs(CacheUpdateStruct{
+							UserID: user.ID,
+							ReqID: req.ID,
+							Lable: "send",
+						})
+					}
 				
 			}
-			
-			sendList, err:= c.UserRepo.GetMySendFirReqList(context,user.ID)
-			if err !=nil{
-				if err == NoRecordFoundErr{
-					log.Printf("no send record found for user(%v)",user.ID)
-					continue
-				}	
-				log.Printf("failed to get the send req list from user(%v)",user.ID)
-				continue
-			}
-			// update the cache for current user with pending label
-			for _,req := range *list{
-				//this one fetches the pending data 
-				c.UpdateUserRs(&CacheUpdateStruct{
-					UserID: user.ID,
-					ReqID: req.ID,
-					Lable: "pending",
-				})
+		}()
+	
 
-			}
-			//update the cache for current user with send label
-			for _,req:=range *sendList{
-				c.UpdateUserRs(&CacheUpdateStruct{
-					UserID: user.ID,
-					ReqID: req.ID,
-					Lable: "send",
+		go func(){
+
+			//this one update the only friend label
+			for _,userRs:= range *userRsList{
+				//this update the first user
+				c.UpdateUserRs(CacheUpdateFriStruct{
+					UserID: userRs.UserID,
+					ToID: userRs.OtheruserID,
+					Lable:userRs.Label,
+				})
+				//this update the other user
+				c.UpdateUserRs(CacheUpdateFriStruct{
+					UserID: userRs.OtheruserID,
+					ToID: userRs.UserID,
+					Lable: userRs.Label,
 				})
 			}
-		}
-	}()
-	go func(){
-		//this one update the only friend label
-		for _,userRs:= range *userRsList{
-			c.UpdateUserRs(&CacheUpdateFriStruct{
-				UserID: userRs.UserID,
-				ToID: userRs.OtheruserID,
-				Lable:userRs.Label,
-			})
-		}
-	}()
-	log.Printf("Successfully loaded the user and its relations cache \n#%v#\n#%v#",c.UserRsCache,c.UserCache)
+		}()
+	log.Printf("Successfully loaded the user and its relations cache ")
+	for k,v:= range c.UserCache{
+		log.Printf("%v : %v",k,v)	
+	}
+	for k,v:= range c.UserRsCache{
+		log.Printf("%v : %v",k,v)	
+	}
 }
 
 
@@ -171,7 +206,6 @@ func (c *Cache)updateFriCache(userID,otherID uuid.UUID,lable string){
 				c.UserRsCache[userID][lable]= &[]uuid.UUID{}
 			} 	
 			*c.UserRsCache[userID][lable] = append(*c.UserRsCache[userID][lable],otherID)
-	
 			c.UserRsMuLock.Unlock()	
 }
 func (c *Cache)CleanUpUserRs(payload *CacheUpdateStruct){
