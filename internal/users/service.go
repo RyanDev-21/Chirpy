@@ -2,6 +2,7 @@ package users
 
 import (
 	"context"
+	"database/sql"
 
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"RyanDev-21.com/Chirpy/pkg/auth"
@@ -12,6 +13,7 @@ type UserService interface{
 	UpdatePassword(ctx context.Context,userID uuid.UUID,oldPass string,newPass string)(*User,error)
 	AddFriendSend(ctx context.Context,sendID,recieveID uuid.UUID,label string,friReqID uuid.UUID)error
 	ConfirmFriendReq(ctx context.Context,fromID,toID,reqID uuid.UUID,status string)error
+	GetPendingList(ctx context.Context,userID uuid.UUID)(*GetReqList,error)
 	StartWorkerForAddFri(channel chan *mq.Channel)
 	StartWorkerForConfirmFri(channel chan *mq.Channel)
 }
@@ -87,11 +89,11 @@ func (s *userService)AddFriendSend(ctx context.Context,senderID,receiveID uuid.U
 		Lable: "pending",
 	})
 //	need to publish the job for db
-	// s.mainMq.Publish("sendRequest",&FriendReq{
-	// 	ReqID : friReqID,		
-	// 	FromID: senderID,
-	// 	ToID: receiveID,
-	// })
+	s.mainMq.Publish("sendRequest",&FriendReq{
+		ReqID : friReqID,		
+		FromID: senderID,
+		ToID: receiveID,
+	})
 	return nil
 }
 
@@ -128,3 +130,49 @@ func (s *userService)ConfirmFriendReq(ctx context.Context,fromID,toID,reqID uuid
 	 
 	return nil
 }
+
+func (s *userService)GetPendingList(ctx context.Context,userID uuid.UUID)(*GetReqList,error){
+	var list GetReqList
+	list.PendingIDsList = &[]uuid.UUID{}
+	list.RequestIDsList = &[]uuid.UUID{}
+	check:= s.userCache.GetUserRs(userID)
+	if !check{
+		reqList,err	:= s.userRepo.GetMyFriReqList(ctx,userID)
+		if err !=nil{
+			if err !=sql.ErrNoRows{
+				return nil,err
+			}
+		}
+		if reqList !=nil{
+
+			for _,v := range *reqList{
+				*list.PendingIDsList = append(*list.PendingIDsList,v.UserID)
+		}
+		}	
+		reqSendList,err	:= s.userRepo.GetMySendFirReqList(ctx,userID)
+		if err !=nil{
+			if err != sql.ErrNoRows{
+				return nil, err	
+			}	
+		}
+		if reqSendList !=nil{
+
+			for _,v := range *reqSendList{
+				*list.RequestIDsList = append(*list.RequestIDsList,v.UserID)
+			}
+			return &list, nil
+
+		}
+	}
+	pendingList := s.userCache.GetUserReqList(userID)
+	if pendingList !=nil{
+		list.PendingIDsList = pendingList
+	}
+	reqList := s.userCache.GetUserSendReqList(userID)
+	if reqList !=nil{
+		list.RequestIDsList = reqList
+	}
+	
+	return &list,nil	
+}
+

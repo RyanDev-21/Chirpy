@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync/atomic" 
+	"sync/atomic"
 	"time"
 
 	authClient "RyanDev-21.com/Chirpy/internal/auth"
@@ -664,12 +664,17 @@ func main(){
 	// run the message queue
 
 
+	
+	//right now the topic name for job are hand coded should change that later
 	go mq.Run()
 	go mq.ListeningForTheChannels("createGroup",100,groupService.StartWorkerForCreateGroup)
 	go mq.ListeningForTheChannels("addCreator",100,groupService.StartWorkerForCreateGroupLeader)
 	go mq.ListeningForTheChannels("addMemberList",100,groupService.StartWorkerForAddMember)
 	go mq.ListeningForTheChannels("addMember",100,groupService.StartWorkerForAddMemberList)
 	go mq.ListeningForTheChannels("removeGroupMember",100,groupService.StartWorkerForLeaveMember)
+	go mq.ListeningForTheChannels("sendRequest",100,userService.StartWorkerForAddFri)
+	go mq.ListeningForTheChannels("confirmFriReq",100,userService.StartWorkerForConfirmFri)
+
 
 	//Main app route
 	mux.Handle("/app/",middleWareLog(finalHanlder))
@@ -738,10 +743,10 @@ func main(){
 	//NOTE:: i should really consider making the server as my own config and graceful shutdown
 
 	//ednpoint for add friend
-	//dummy function
-	mux.HandleFunc("POST /api/friends",groupHandler.CreateGroup)
+	mux.Handle("POST /api/friends/requests",middleware.AuthMiddleWare(userHandler.AddFriend,apicfg.secret))
 	
-	mux.HandleFunc("PUT /api/friends/{request_id}/",groupHandler.CreateGroup)
+	mux.Handle("GET /api/friends/requests",middleware.AuthMiddleWare(userHandler.GetPendingList,apicfg.secret))	
+	mux.Handle("PUT /api/friends/requests/{request_id}/",middleware.AuthMiddleWare(userHandler.ConfirmReq,apicfg.secret))
 	server := http.Server{
 		Addr: Port,
 		Handler: mux,

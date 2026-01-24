@@ -1,8 +1,9 @@
 package users
 
 import (
-	"github.com/google/uuid"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type User struct{
@@ -55,4 +56,14 @@ type CacheUpdateFriStruct struct{
 	UserID uuid.UUID
 	ToID uuid.UUID
 	Lable string
+}
+
+type GetReqList struct{
+	PendingIDsList *[]uuid.UUID 
+	RequestIDsList *[]uuid.UUID 
+}
+
+type ResponseReqList struct{
+	PendingIDsList []uuid.UUID
+	RequestIDsList []uuid.UUID
 }
