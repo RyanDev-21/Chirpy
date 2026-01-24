@@ -14,6 +14,7 @@ import (
 var (
 	NoUserFoundErr  = errors.New("no user found")
 	DuplicateKeyErr = errors.New("duplicate error")
+	DuplicateNameKeyErr = errors.New("duplicate name error")
 	NoRecordFoundErr = errors.New("no row found")
 )
 
@@ -24,11 +25,10 @@ type UserRepo interface {
 	UpdateUserPassword(ctx context.Context, payload UpdateUserPassword) (*User, error)
 	GetAllUsers(ctx context.Context)(*[]database.User,error)
 	GetAllUsersRs(ctx context.Context)(*[]database.UserRelationship,error)
-SendFriendRequest(fromID,toID,friReqID uuid.UUID)error
+	SendFriendRequest(fromID,toID,friReqID uuid.UUID)error
 	GetMyFriReqList(ctx context.Context,userID uuid.UUID)(*[]database.UserRelationship,error)	
-	GetMySendFirReqList(ctx context.Context,userID uuid.UUID)(
-		*[]database.UserRelationship,error)
-	UpdateFriReq(reqID uuid.UUID)	error
+	GetMySendFirReqList(ctx context.Context,userID uuid.UUID)(*[]database.UserRelationship,error)
+	UpdateFriReq(reqID uuid.UUID)error
 }
 
 type userRepo struct {
@@ -58,7 +58,10 @@ func (r *userRepo) Create(ctx context.Context, input CreateUserInput) (*User, er
 		Password: input.Password,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "unique constraint") {
+		if strings.Contains(err.Error(), "unique constraint" ) {
+			if strings.Contains(err.Error(),"\"users_name_key\""){
+				return nil,DuplicateNameKeyErr
+			}
 			return nil, DuplicateKeyErr
 		}
 		return nil, err
