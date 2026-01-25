@@ -59,6 +59,10 @@ type FriendReq struct{
 	FromID uuid.UUID
 	ToID uuid.UUID
 }
+type CancelFriendReq struct{
+	ReqID uuid.UUID
+	UpdateTime time.Time	
+}
 
 type CacheUpdateFriStruct struct{
 	UserID uuid.UUID
@@ -74,4 +78,12 @@ type GetReqList struct{
 type ResponseReqList struct{
 	PendingIDsList map[uuid.UUID]uuid.UUID `json:"pending_ids"`
 	RequestIDsList map[uuid.UUID]uuid.UUID `json:"request_ids"`
+}
+
+type ResponseFriListStruct struct{
+	FriendList []uuid.UUID `json:"id_list"`
+}
+
+type DeleteFirReqStruct struct{
+	ReqID uuid.UUID
 }

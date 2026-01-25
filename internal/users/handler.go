@@ -126,7 +126,7 @@ func (h *UserHandler)AddFriend(w http.ResponseWriter,r *http.Request){
 
 
 //refactor this later after you done this feature there is duplicate code
-func (h *UserHandler)ConfirmReq(w http.ResponseWriter,r *http.Request){
+func (h *UserHandler)UpdateReq(w http.ResponseWriter,r *http.Request){
 	stringReqID:= r.PathValue("request_id")	
 	if stringReqID == ""{
 		response.Error(w,400,"invalid request")
@@ -149,12 +149,21 @@ func (h *UserHandler)ConfirmReq(w http.ResponseWriter,r *http.Request){
 		response.Error(w,500,"internal server error")
 		return	
 	}
-	err= h.userService.ConfirmFriendReq(r.Context(),userID,payload.ToID,reqID,payload.Status)		
-			if err !=nil{
-				log.Printf("failed to do smth  friend req\n#%s#",err)
-				response.Error(w,500,"internal server error")
-				return	
-			}
+	switch payload.Status{
+	case "confirm":
+		err= h.userService.ConfirmFriendReq(r.Context(),userID,reqID,"confirm")		
+	case "cancel":
+		err=h.userService.CancelFriReq(r.Context(),userID,reqID)		
+	
+	case "delete":
+		err =h.userService.DeleteFirReq(r.Context(),userID,reqID)	
+		
+	}
+	if err !=nil{
+			log.Printf("failed to do smth  friend req\n#%s#",err)
+			response.Error(w,500,"internal server error")
+			return	
+	}
 		w.WriteHeader(201)
 }
 
@@ -178,3 +187,31 @@ func (h *UserHandler)GetPendingList(w http.ResponseWriter,r *http.Request){
 		})	
 }
 
+func (h *UserHandler)GetFriendList(w http.ResponseWriter,r *http.Request){
+	userID, ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
+	if !ok{
+		response.Error(w,400,"invalid request")
+		return
+	}
+	list, err := h.userService.GetFriendList(r.Context(),userID)
+	if err !=nil{
+		log.Printf("failed to get the user friend list \n #%s#",err)
+		response.Error(w,500,"internal server error")
+		return
+	}
+	response.JSON(w,200,ResponseFriListStruct{
+		FriendList: list,
+	})
+}
+
+//WARN::rethinking about this
+// //route for cancel
+// func (h *UserHandler)CancelFriendReq(w http.ResponseWriter,r *http.Request){
+// 	userID, ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
+// 	if !ok{
+// 		response.Error(w,400,"invalid request")
+// 		return
+// 	}
+// 	//err := h.userService.CancelFriendReq(ctx,userID)
+//
+// }

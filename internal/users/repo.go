@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -28,7 +29,10 @@ type UserRepo interface {
 	SendFriendRequest(fromID,toID,friReqID uuid.UUID)error
 	GetMyFriReqList(ctx context.Context,userID uuid.UUID)(*[]database.UserRelationship,error)	
 	GetMySendFirReqList(ctx context.Context,userID uuid.UUID)(*[]database.UserRelationship,error)
-	UpdateFriReq(reqID uuid.UUID)error
+	UpdateFriReq(reqID uuid.UUID)error //this one confirm the fri req
+	GetUserFriListByID(ctx context.Context,userID uuid.UUID)(*[]uuid.UUID,error)
+	CancelFriReq(reqID uuid.UUID,updateTime time.Time)error //this one cancel the req
+	DeleteFriReq(reqID uuid.UUID)error //delete the record
 }
 
 type userRepo struct {
@@ -169,6 +173,37 @@ func(r *userRepo)UpdateFriReq(reqID uuid.UUID)error{
 	err:= r.queries.UpdateSendReq(ctx,reqID)	
 	return err
 }
-//nned to think about this again
-//func (r *userRepo)GetUserFriListByID(userID uuid.UUID)(*[]uuid.UUID,error)
 
+//NOTE:the db returns interface type so need to type assert every element in the list
+func (r *userRepo)GetUserFriListByID(ctx context.Context,userID uuid.UUID)(*[]uuid.UUID,error){
+	list, err :=r.queries.GetUserFriListByID(ctx,userID)
+	if err !=nil{
+		return nil,err
+	}	
+	var uuidList []uuid.UUID
+	for _,v := range list{
+		if _,ok:= v.(uuid.UUID); ok{
+			uuidList = append(uuidList,v.(uuid.UUID))	
+		}else{
+			log.Printf("cannot assert the value :%v",v)
+		}
+	}
+	return &uuidList,nil
+}
+
+
+func (r *userRepo)CancelFriReq(reqID uuid.UUID,updateTime time.Time)error{
+	context ,cancel := context.WithTimeout(context.Background(),1 * time.Second)
+	defer cancel()
+	err :=	r.queries.CancelFriReqStatus(context,database.CancelFriReqStatusParams{
+		ID: reqID,
+		UpdatedAt: updateTime,
+	})
+	return err
+}
+func (r *userRepo)DeleteFriReq(reqID uuid.UUID)error{
+	ctx,cancel := context.WithTimeout(context.Background(),1*time.Second)
+	defer cancel()
+	err :=	r.queries.DeleteFriReq(ctx,reqID)
+	return err
+}

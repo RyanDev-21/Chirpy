@@ -20,6 +20,7 @@ type UserCacheItf interface{
 	GetUserRs(userID uuid.UUID)bool
 	GetUserReqList(userID uuid.UUID)*map[uuid.UUID]uuid.UUID
 	GetUserSendReqList(userID uuid.UUID)*map[uuid.UUID]uuid.UUID
+	GetOtherUserIDByReqID(userID,reqID uuid.UUID,lable string)*uuid.UUID
 }
 
 type Cache struct{
@@ -70,6 +71,22 @@ func (c *Cache)GetUserRs(userID uuid.UUID)bool{
 	}
 	return false
 }
+
+func (c *Cache)GetOtherUserIDByReqID(userID,reqID uuid.UUID,lable string)*uuid.UUID{
+	c.UserRsMuLock.Lock()
+	defer c.UserRsMuLock.Unlock()
+	if _,ok:=c.UserRsCache[userID];ok{
+		if v,ok:= c.UserRsCache[userID][lable];ok{
+			v := *v
+			if newV,ok:= v[reqID];ok{
+				return &newV
+			}
+		}
+	}
+	return nil
+
+}
+
 
 func (c *Cache)GetUserReqList(userID uuid.UUID)*map[uuid.UUID]uuid.UUID{
 	c.UserRsMuLock.Lock()
