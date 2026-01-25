@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"time"
 )
 
 const addSendReq = `-- name: AddSendReq :exec
@@ -29,6 +30,20 @@ type AddSendReqParams struct {
 
 func (q *Queries) AddSendReq(ctx context.Context, arg AddSendReqParams) error {
 	_, err := q.db.Exec(ctx, addSendReq, arg.ID, arg.UserID, arg.OtheruserID)
+	return err
+}
+
+const cancelFriReqStatus = `-- name: CancelFriReqStatus :exec
+UPDATE user_relationships SET status = 'cancel',updated_at = $2 WHERE id = $1
+`
+
+type CancelFriReqStatusParams struct {
+	ID        uuid.UUID
+	UpdatedAt time.time
+}
+
+func (q *Queries) CancelFriReqStatus(ctx context.Context, arg CancelFriReqStatusParams) error {
+	_, err := q.db.Exec(ctx, cancelFriReqStatus, arg.ID, arg.UpdatedAt)
 	return err
 }
 
@@ -64,6 +79,15 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Name,
 	)
 	return i, err
+}
+
+const deleteFriReq = `-- name: DeleteFriReq :exec
+DELETE FROM user_relationships WHERE id=$1
+`
+
+func (q *Queries) DeleteFriReq(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteFriReq, id)
+	return err
 }
 
 const deleteUser = `-- name: DeleteUser :exec
@@ -171,6 +195,35 @@ func (q *Queries) GetFriReqList(ctx context.Context, otheruserID uuid.UUID) ([]U
 	return items, nil
 }
 
+const getUserFriListByID = `-- name: GetUserFriListByID :many
+SELECT 
+    CASE 
+    WHEN user_id = $1 THEN otherUser_id
+    WHEN otherUser_id = $1 THEN user_id
+    END AS friend_id 
+FROM user_relationships WHERE status == 'confirm'
+`
+
+func (q *Queries) GetUserFriListByID(ctx context.Context, userID uuid.UUID) ([]interface{}, error) {
+	rows, err := q.db.Query(ctx, getUserFriListByID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []interface{}
+	for rows.Next() {
+		var friend_id interface{}
+		if err := rows.Scan(&friend_id); err != nil {
+			return nil, err
+		}
+		items = append(items, friend_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUserInfoByEmail = `-- name: GetUserInfoByEmail :one
 SELECT id, created_at, updated_at, email, password, is_chirpy_red, name  FROM users WHERE email = $1
 `
@@ -264,7 +317,7 @@ func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) 
 }
 
 const updateSendReq = `-- name: UpdateSendReq :exec
-UPDATE user_relationships SET status = 'confirm' WHERE id = $1
+UPDATE user_relationships SET status = 'confirm',updated_at = NOW() WHERE id = $1
 `
 
 func (q *Queries) UpdateSendReq(ctx context.Context, id uuid.UUID) error {

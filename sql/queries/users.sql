@@ -41,12 +41,24 @@ VALUES(
 );
 
 -- name: UpdateSendReq :exec
-UPDATE user_relationships SET status = 'confirm' WHERE id = $1;
+UPDATE user_relationships SET status = 'confirm',updated_at = NOW() WHERE id = $1;
 -- name: GetFriReqList :many
 SELECT *  FROM user_relationships WHERE otherUser_id = $1 AND status != 'confirm';
 
 -- name: GetYourSendReqList :many
 SELECT * FROM user_relationships WHERE user_id = $1 AND status!= 'confirm';
 
--- -- name: GetUserFriListByID :many
--- SELECT user_id,otherUser_id FROM user_relationships
+-- name: GetUserFriListByID :many
+SELECT 
+    CASE 
+    WHEN user_id = $1 THEN otherUser_id
+    WHEN otherUser_id = $1 THEN user_id
+    END AS friend_id 
+FROM user_relationships WHERE status == 'confirm';
+
+
+-- name: CancelFriReqStatus :exec
+UPDATE user_relationships SET status = 'cancel',updated_at = $2 WHERE id = $1;
+
+-- name: DeleteFriReq :exec
+DELETE FROM user_relationships WHERE id=$1;
