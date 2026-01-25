@@ -34,3 +34,29 @@ func (s *userService)StartWorkerForConfirmFri(channel chan *mq.Channel){
 
 }
 
+func (s *userService)StartWorkerForCancelReq(channel chan *mq.Channel){
+	for chen := range channel{
+		msg := chen.Msg.(*CancelFriendReq)
+		err := s.userRepo.CancelFriReq(msg.ReqID,msg.UpdateTime)
+		if err !=nil{
+			chen.RetriesCount++
+			s.mainMq.Republish(chen,chen.RetriesCount)
+		}
+		continue
+	}
+	log.Printf("successfully updated the status to cancel")
+}
+
+func (s *userService)StartWorkerForDeleteReq(channel chan *mq.Channel){
+	for chen := range channel{
+		msg := chen.Msg.(*DeleteFirReqStruct)
+		err := s.userRepo.DeleteFriReq(msg.ReqID)
+		if err !=nil{
+			chen.RetriesCount++
+			s.mainMq.Republish(chen,chen.RetriesCount)
+		}
+		continue
+	}
+	log.Printf("successfully delete the req record")
+}
+
