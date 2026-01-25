@@ -746,7 +746,10 @@ func main(){
 	mux.Handle("POST /api/friends/requests",middleware.AuthMiddleWare(userHandler.AddFriend,apicfg.secret))
 	
 	mux.Handle("GET /api/friends/requests",middleware.AuthMiddleWare(userHandler.GetPendingList,apicfg.secret))	
-	mux.Handle("PUT /api/friends/requests/{request_id}/",middleware.AuthMiddleWare(userHandler.ConfirmReq,apicfg.secret))
+	mux.Handle("PUT /api/friends/requests/{request_id}/",middleware.AuthMiddleWare(userHandler.UpdateReq,apicfg.secret))
+	mux.Handle("GET /api/friends",middleware.AuthMiddleWare(
+		userHandler.GetFriendList,apicfg.secret))
+
 	server := http.Server{
 		Addr: Port,
 		Handler: mux,

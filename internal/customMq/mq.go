@@ -1,9 +1,14 @@
 package mq
 
 import (
+	"context"
+	"errors"
 	"log"
 	"sync"
+
+	mq "RyanDev-21.com/Chirpy/internal/customMq"
 )
+
 //the most basic form of the mq first
 
 //stores tag and the channel whcih can receive anything
@@ -115,6 +120,20 @@ func (mq *MainMQ)Publish(topic string,info any){
 		topic: topic,
 		info: info,
 	}		
+}
+
+func (mq *MainMQ)PublishWithContext(ctx context.Context,topic string,info any)error{
+	job:=PubStruct{
+		topic: topic,
+		info: info,
+	}		
+	select{
+	case <-ctx.Done():
+		log.Printf("publish cancelled")
+		return errors.New("context cancelled")
+	case mq.pub<-job:
+		return nil
+	}	
 }
 
 func (mq *MainMQ)Republish(channel *Channel,retries int){

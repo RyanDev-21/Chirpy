@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"time"
+
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"github.com/google/uuid"
@@ -12,8 +14,10 @@ type UserService interface{
 	Register(ctx context.Context,name,email,password string)(*User,error)
 	UpdatePassword(ctx context.Context,userID uuid.UUID,oldPass string,newPass string)(*User,error)
 	AddFriendSend(ctx context.Context,sendID,recieveID uuid.UUID,label string,friReqID uuid.UUID)error
-	ConfirmFriendReq(ctx context.Context,fromID,toID,reqID uuid.UUID,status string)error
+	ConfirmFriendReq(ctx context.Context,fromID,reqID uuid.UUID,status string)error
 	GetPendingList(ctx context.Context,userID uuid.UUID)(*GetReqList,error)
+	GetFriendList(ctx context.Context,userID uuid.UUID)([]uuid.UUID,error)
+	CancelFriReq(ctx context.Context,userID,reqID uuid.UUID)error
 	StartWorkerForAddFri(channel chan *mq.Channel)
 	StartWorkerForConfirmFri(channel chan *mq.Channel)
 }
@@ -88,17 +92,27 @@ func (s *userService)AddFriendSend(ctx context.Context,senderID,receiveID uuid.U
 		ReqID: friReqID,
 		Lable: "pending",
 	})
+	publishCtx,cancel:= context.WithTimeout(ctx,1*time.Second)
+	defer cancel()
 //	need to publish the job for db
-	s.mainMq.Publish("sendRequest",&FriendReq{
+	err:=s.mainMq.PublishWithContext(publishCtx,"sendRequest",&FriendReq{
 		ReqID : friReqID,		
 		FromID: senderID,
 		ToID: receiveID,
 	})
+	if err !=nil{
+		log.Printf("failed to upload the job sendRequest")
+	}
 	return nil
 }
 
 //this need to return error for failed case didn't do any of that 
-func (s *userService)ConfirmFriendReq(ctx context.Context,fromID,toID,reqID uuid.UUID,status string)error{
+func (s *userService)ConfirmFriendReq(ctx context.Context,fromID,reqID uuid.UUID,status string)error{
+	//this gets the opp userID  of the current one
+	toID := s.userCache.GetOtherUserIDByReqID(fromID,reqID,"pending")
+	if toID ==nil{
+		log.Printf("returning nil from cache")
+	}	
 	//this update the pending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
 		UserID: fromID,
@@ -108,7 +122,7 @@ func (s *userService)ConfirmFriendReq(ctx context.Context,fromID,toID,reqID uuid
 
 	//this update the sending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
-		UserID: toID,
+		UserID: *toID,
 		ReqID: reqID,
 		Lable: "send",
 	})
@@ -116,34 +130,112 @@ func (s *userService)ConfirmFriendReq(ctx context.Context,fromID,toID,reqID uuid
 	//this update the pending guy
 	s.userCache.UpdateUserRs(CacheUpdateFriStruct{
 		UserID: fromID,
-		ToID: toID,
+		ToID: *toID,
 		Lable:"friend",
 	})
 
 	s.userCache.UpdateUserRs(CacheUpdateFriStruct{
-		UserID: toID,
+		UserID: *toID,
 		ToID: fromID,
 		Lable: "friend",
 	})
-
-	s.mainMq.Publish("confirmFriReq",&FriendReq{
+	
+	context,cancel:= context.WithTimeout(ctx,1*time.Second)
+	defer cancel()
+	err:=s.mainMq.PublishWithContext(context,"confirmFriReq",&FriendReq{
 		ReqID: reqID,
 	})
-	 
+	if err !=nil{
+		log.Print("failed to upload the jbo for confirmFriReq")
+	} 
 	return nil
 }
 
-//NOTE:: need to rethink about this
-// func (s *userService)GetFriendList(ctx context.Context,userID uuid.UUID)([]uuid.UUID,error){
-// 	list:= s.userCache.GetUserFriList(userID)									
-// 	if list ==nil{
-// 		log.Print("cannot find in the cache")	
-// 		list,err := s.userRepo.GetAllUsersRs(ctx)
-// 		return []uuid.UUID{},nil
-// 	}
-// 	return *list,nil
-// }
 
+//need to handle the errorr from that PublishWithContext
+func (s *userService)CancelFriReq(ctx context.Context,userID,reqID uuid.UUID)error{
+	toID := s.userCache.GetOtherUserIDByReqID(userID,reqID,"pending")	   
+	
+	if toID ==nil {
+		log.Print("returning nil from the cache")	
+	}
+	//this update the pending guy
+	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
+		UserID: userID,
+		ReqID: reqID,
+		Lable: "pending",
+	})
+
+	//this update the sending guy
+	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
+		UserID: *toID,
+		ReqID: reqID,
+		Lable: "send",
+	})
+	context,cancel :=context.WithTimeout(ctx,1*time.Second)
+	defer cancel()
+	err:=s.mainMq.PublishWithContext(context,"cancalReq",&CancelFriendReq{
+		ReqID: reqID,
+		UpdateTime: time.Now(),
+		
+	})
+	if err !=nil{
+		log.Printf("failed to upload the job cancelReq")
+	}
+	return nil
+}
+
+//rethink about consistency
+func (s *userService)DeleteFriReq(ctx context.Context,userID,reqID uuid.UUID)error{
+	toID := s.userCache.GetOtherUserIDByReqID(userID,reqID,"send")
+	if toID == nil{
+	log.Print("faield to get the toID from cache")		
+	}
+	//this update the sending guy
+	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
+		UserID: userID,
+		ReqID: reqID,
+		Lable: "send",
+	})
+
+	//this update the pending guy
+	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
+		UserID: *toID,
+		ReqID: reqID,
+		Lable: "pending",
+	})
+	
+	context,cancel:=context.WithTimeout(ctx,1*time.Second)
+	defer cancel()
+	err:=s.mainMq.PublishWithContext(context,"deleteFriReq",&DeleteFirReqStruct{
+		ReqID: reqID,
+	})
+	if err !=nil{
+		log.Printf("failed to upload the job deleteFriReq")
+	}
+	return nil
+}
+
+
+
+//WARN: need to rethink about this
+//need to update the cache after finding from the db
+func (s *userService)GetFriendList(ctx context.Context,userID uuid.UUID)([]uuid.UUID,error){
+	//first need to get from the cache first
+	list:= s.userCache.GetUserFriList(userID)//maybe should just check whether the user exist or not first
+	if list ==nil{
+		log.Print("cannot find in the cache\n searching in db")
+		list,err := s.userRepo.GetUserFriListByID(ctx,userID)
+		if err !=nil{
+			return nil,err
+		}
+		return *list,nil
+	}
+	return *list,nil
+}
+
+
+//WARN:need to update the cache after fetching from db
 func (s *userService)GetPendingList(ctx context.Context,userID uuid.UUID)(*GetReqList,error){
 	list := GetReqList{
 		PendingIDsList: &map[uuid.UUID]uuid.UUID{},
@@ -162,8 +254,8 @@ func (s *userService)GetPendingList(ctx context.Context,userID uuid.UUID)(*GetRe
 		listOne := *list.PendingIDsList	
 		if reqList !=nil{
 			for _,v := range *reqList{
-			listOne[v.ID] = v.UserID
-		}
+				listOne[v.ID] = v.UserID
+			}
 		}	
 		reqSendList,err	:= s.userRepo.GetMySendFirReqList(ctx,userID)
 		if err !=nil{
@@ -174,7 +266,7 @@ func (s *userService)GetPendingList(ctx context.Context,userID uuid.UUID)(*GetRe
 		listTwo := *list.RequestIDsList
 		if reqSendList !=nil{
 			for _,v := range *reqSendList{
-			listTwo[v.ID] = v.OtheruserID		
+				listTwo[v.ID] = v.OtheruserID		
 			}
 
 
@@ -198,4 +290,3 @@ func (s *userService)GetPendingList(ctx context.Context,userID uuid.UUID)(*GetRe
 	}
 	return &list,nil	
 }
-
