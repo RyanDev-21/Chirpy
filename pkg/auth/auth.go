@@ -19,135 +19,129 @@ import (
 
 var ErrPassNotMatch = errors.New("password incorrect")
 
-
-//For extracting apiKey from authorization
-func GetAPIKEY(headers http.Header)(string,error){
+// For extracting apiKey from authorization
+func GetAPIKEY(headers http.Header) (string, error) {
 	headerString := headers.Get("Authorization")
-	if headerString == ""{
-		return "",errors.New("invalid apiKey")
+	if headerString == "" {
+		return "", errors.New("invalid apiKey")
 	}
-	key := strings.TrimPrefix(headerString,"ApiKey ")
-	
-	return key,nil
+	key := strings.TrimPrefix(headerString, "ApiKey ")
+
+	return key, nil
 }
 
-
-
-//For hashing and checking
-func HashPassword(password string)(string,error){
-	hash,err:=argon2id.CreateHash(password,argon2id.DefaultParams)
-	if err !=nil{
-		return "",err
+// For hashing and checking
+func HashPassword(password string) (string, error) {
+	hash, err := argon2id.CreateHash(password, argon2id.DefaultParams)
+	if err != nil {
+		return "", err
 	}
-	return hash,nil
+	return hash, nil
 }
-func CheckPassword(password string,hash string)(bool,error){
-	valid,err:=	argon2id.ComparePasswordAndHash(password,hash)
-	if err!=nil{
-		return valid,err
+func CheckPassword(password string, hash string) (bool, error) {
+	valid, err := argon2id.ComparePasswordAndHash(password, hash)
+	if err != nil {
+		return valid, err
 	}
-	return valid,nil
+	return valid, nil
 }
 
-//For making jwt
-func MakeJWT(userID uuid.UUID,tokenSecret string,expiresIn time.Duration)(string,error){
+// For making jwt
+func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
 	signedKey := []byte(tokenSecret)
 	claims := jwt.RegisteredClaims{
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiresIn)),
-		Issuer: "chirpy",
-		IssuedAt: jwt.NewNumericDate(time.Now()),
-		Subject:fmt.Sprintf("%v",userID) ,
+		Issuer:    "chirpy",
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+		Subject:   fmt.Sprintf("%v", userID),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256,claims)
-	accessToken,err := token.SignedString(signedKey)
-	if err !=nil{
-		return accessToken,err
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	accessToken, err := token.SignedString(signedKey)
+	if err != nil {
+		return accessToken, err
 	}
-	return accessToken,nil
+	return accessToken, nil
 }
-func ValidateJWT(tokenString,tokenSecret string) (uuid.UUID,error){
+func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	registerdClaims := &jwt.RegisteredClaims{}
-	token,err := jwt.ParseWithClaims(tokenString,registerdClaims,func(t *jwt.Token) (any, error) {
-	
-		return []byte(tokenSecret),nil
+	token, err := jwt.ParseWithClaims(tokenString, registerdClaims, func(t *jwt.Token) (any, error) {
+
+		return []byte(tokenSecret), nil
 	})
-	if err!=nil{
-		if errors.Is(err,jwt.ErrTokenExpired){
-			log.Printf("expired token %s",err)
-			return uuid.Nil,errors.New("expired token")
+	if err != nil {
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			log.Printf("expired token %s", err)
+			return uuid.Nil, errors.New("expired token")
 		}
-		log.Printf("failed to parse the token %s",err)
-		return uuid.Nil,errors.New("invalid token")
+		log.Printf("failed to parse the token %s", err)
+		return uuid.Nil, errors.New("invalid token")
 	}
 	if !token.Valid {
 		log.Print("failed to match the token claim type ")
-		return uuid.Nil,errors.New("invalid token claim type")
+		return uuid.Nil, errors.New("invalid token claim type")
 	}
-	userIDstring,err:= token.Claims.GetSubject()
-	if err !=nil{
-		return uuid.Nil,errors.New("jwt subject field is mssing")
+	userIDstring, err := token.Claims.GetSubject()
+	if err != nil {
+		return uuid.Nil, errors.New("jwt subject field is mssing")
 	}
- 
-	userID ,err:=uuid.Parse(userIDstring)
-	if err !=nil{
-		return uuid.Nil,err
+
+	userID, err := uuid.Parse(userIDstring)
+	if err != nil {
+		return uuid.Nil, err
 	}
-	return userID,nil
+	return userID, nil
 
 }
 
+// Get Token From the header
+func GetBearerToken(headers http.Header) (string, error) {
 
-//Get Token From the header
-func GetBearerToken(headers http.Header)(string,error){
+	tokenHeader := headers.Get("Authorization")
+	if tokenHeader == "" {
 
-   tokenHeader :=headers.Get("Authorization")	
-	if tokenHeader == ""{
-	
 		log.Printf("token header not set")
-		return "",errors.New("invalid token header")
+		return "", errors.New("invalid token header")
 	}
-	token := strings.TrimSpace(strings.TrimPrefix(tokenHeader,"Bearer"))
-	return token,nil
+	token := strings.TrimSpace(strings.TrimPrefix(tokenHeader, "Bearer"))
+	return token, nil
 }
 
-//For refreshToken
-func MakeRefreshToken()(string,error){
-	key := make([]byte,32)
-	_,err := rand.Read(key)
-	if err !=nil{
-		return "",errors.New("failed to generate the random data")
+// For refreshToken
+func MakeRefreshToken() (string, error) {
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	if err != nil {
+		return "", errors.New("failed to generate the random data")
 	}
 	hexString := hex.EncodeToString(key)
-	return hexString,nil
-	
+	return hexString, nil
+
 }
 
-//get both access and refresh and do the thing need to be doing (storing and stuff)
-func GetAccessTokenAndRefreshToken(ctx context.Context,userID uuid.UUID,secret string,queries *database.Queries)(string,string,error){
-	expireIn := 60*time.Minute
-	accessToken ,err:= MakeJWT(userID,secret,expireIn)
-	if err !=nil{
-		log.Printf("failed to make accessToken %s",err)
-		return 	"","",err
+// get both access and refresh and do the thing need to be doing (storing and stuff)
+func GetAccessTokenAndRefreshToken(ctx context.Context, userID uuid.UUID, secret string, queries *database.Queries) (string, string, error) {
+	expireIn := 60 * time.Minute
+	accessToken, err := MakeJWT(userID, secret, expireIn)
+	if err != nil {
+		log.Printf("failed to make accessToken %s", err)
+		return "", "", err
 	}
-	refreshToken, err:= MakeRefreshToken()
-	if err !=nil{
-		log.Printf("failed to make a refreshToken %s",err)
-		return "","",err	
+	refreshToken, err := MakeRefreshToken()
+	if err != nil {
+		log.Printf("failed to make a refreshToken %s", err)
+		return "", "", err
 	}
-	refreshTokenExpireDate := 30*(24*time.Hour)
-	_,err= queries.CreateARefreshToken(ctx,database.CreateARefreshTokenParams{
-		Token: refreshToken,
-		UserID:userID,
-		ExpireAt:time.Now().Add(refreshTokenExpireDate) ,
+	refreshTokenExpireDate := 30 * (24 * time.Hour)
+	_, err = queries.CreateARefreshToken(ctx, database.CreateARefreshTokenParams{
+		Token:    refreshToken,
+		UserID:   userID,
+		ExpireAt: time.Now().Add(refreshTokenExpireDate),
 	})
-	if err!=nil{
-		log.Printf("failed to insert into db #%s#",err)
-		return "","",err	
+	if err != nil {
+		log.Printf("failed to insert into db #%s#", err)
+		return "", "", err
 	}
 
-	return accessToken,refreshToken,nil
+	return accessToken, refreshToken, nil
 
 }
-
-
