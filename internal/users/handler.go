@@ -5,201 +5,212 @@ package users
 import (
 	//"fmt"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 
 	"RyanDev-21.com/Chirpy/pkg/auth"
+	"RyanDev-21.com/Chirpy/pkg/encoder"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
 	"RyanDev-21.com/Chirpy/pkg/response"
 	"github.com/google/uuid"
 )
 
-
-type UserHandler struct{
+type UserHandler struct {
 	userService UserService
 }
 
-
-func NewUserHandler(userService UserService)*UserHandler{
+func NewUserHandler(userService UserService) *UserHandler {
 	return &UserHandler{
 		userService: userService,
 	}
 }
-func (h *UserHandler)Register(w http.ResponseWriter,r *http.Request){
+func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	params := &DefaultUsersParameters{}
 	err := decoder.Decode(params)
-	if err !=nil{
-		response.Error(w,400,"invalid params")
+	if err != nil {
+		response.Error(w, 400, "invalid params")
 		return
 	}
-	if params.Email == "" || params.Name == "" || params.Password == ""{
-		response.Error(w,400,"all fields need to have value")
+	if params.Email == "" || params.Name == "" || params.Password == "" {
+		response.Error(w, 400, "all fields need to have value")
 		return
 	}
-	user, err:= h.userService.Register(r.Context(),params.Name,params.Email,params.Password)
-	if err !=nil{
-		if err == DuplicateKeyErr{
-			response.Error(w,400,"the user already exists")
+	user, err := h.userService.Register(r.Context(), params.Name, params.Email, params.Password)
+	if err != nil {
+		if err == DuplicateKeyErr {
+			response.Error(w, 400, "the user already exists")
 			return
 		}
-		if err == DuplicateNameKeyErr{
-			response.Error(w,400,"the user name already exists")
+		if err == DuplicateNameKeyErr {
+			response.Error(w, 400, "the user name already exists")
 			return
 		}
-		log.Printf("internal error :#%s#",err)
-		response.Error(w,500,"something went wrong")
+		log.Printf("internal error :#%s#", err)
+		response.Error(w, 500, "something went wrong")
 		return
 	}
-	response.JSON(w,200,user)
+	response.JSON(w, 200, user)
 }
 
+// uses one of user services and then hanlde the http route just as the name suggest
+// this one has to go into put users/one
+func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
+	params := &PasswordUpdateStruct{}
 
-//uses one of user services and then hanlde the http route just as the name suggest
-func (h *UserHandler)UpdatePassword(w http.ResponseWriter,r *http.Request){
-	type parameters struct{
-		OldPass string `json:"old_password"`
-		NewPass string `json:"new_password"`
-	}
-	decoder := json.NewDecoder(r.Body)
-	params := &parameters{}
-	err := decoder.Decode(params)
-	if err !=nil{
-		response.Error(w,400,"invalid params")	
+	err := encoder.Decode(r, params)
+	if err != nil {
+		response.Error(w, 400, "invalid params")
 		return
 	}
 
-	userID,ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
-	if !ok{
-		response.Error(w,500,"internal server error")
-		return	
+	userID, err := middleware.GetUserContextKey(r.Context())
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
 	}
-	updatedUser,err := h.userService.UpdatePassword(r.Context(),userID,params.OldPass,params.NewPass)
-	if err !=nil{
-		if err == NoUserFoundErr{
-			response.Error(w,404,"no user found error")
+
+	updatedUser, err := h.userService.UpdatePassword(r.Context(), *userID, params.OldPass, params.NewPass)
+	if err != nil {
+		if err == NoUserFoundErr {
+			response.Error(w, 404, "no user found error")
 			return
 		}
-		if err == auth.ErrPassNotMatch{
-			response.Error(w,401,"unauthorized")
+		if err == auth.ErrPassNotMatch {
+			response.Error(w, 401, "unauthorized")
 			return
 		}
 
-		response.Error(w,500,"Internal server error")
+		response.Error(w, 500, "Internal server error")
 		return
 	}
-	response.JSON(w,200,updatedUser)
-	
+	response.JSON(w, 200, updatedUser)
+
 }
 
+// func (h *UserHandler) UpdateUserInfo(w http.ResponseWriter, r *http.Request) {
+// 	userID, err := middleware.GetUserContextKey(r.Context())
+// 	if err != nil {
+// 		response.Error(w, 500, "internal server error")
+// 		return
+// 	}
+// }
 
-//can use the job for add friend
-func (h *UserHandler)AddFriend(w http.ResponseWriter,r *http.Request){
-	decoder := json.NewDecoder(r.Body)
+// can use the job for add friend
+func (h *UserHandler) AddFriend(w http.ResponseWriter, r *http.Request) {
 	payload := &StatusFriendParameters{}
-	err:= decoder.Decode(payload)
-	if err !=nil{
-		response.Error(w,400,"invalid parameters")
+	err := encoder.Decode(r, payload)
+	if err != nil {
+		response.Error(w, 400, "invalid parameters")
 		return
 	}
-	userID,ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
-	if !ok{
-		response.Error(w,500,"internal server error")
-		return	
-
+	userID, err := middleware.GetUserContextKey(r.Context())
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
 	}
-	friReqID ,err := uuid.NewV7();
-	if err !=nil{
+	friReqID, err := uuid.NewV7()
+	if err != nil {
 		log.Printf("failed to gen the friReqId something went wrong")
 	}
 
-	
-	err= h.userService.AddFriendSend(r.Context(),userID,payload.ToID,"pending",friReqID)		
-	if err !=nil{
-			log.Printf("failed to add frient req\n#%s#",err)
-			response.Error(w,500,"internal server error")
-			return	
+	err = h.userService.AddFriendSend(r.Context(), userID, payload.ToID, "pending", friReqID)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
 	}
 	w.WriteHeader(201)
-		
+
 }
 
-
-//refactor this later after you done this feature there is duplicate code
-func (h *UserHandler)UpdateReq(w http.ResponseWriter,r *http.Request){
-	stringReqID:= r.PathValue("request_id")	
-	if stringReqID == ""{
-		response.Error(w,400,"invalid request")
-		return
-	} 
-	reqID, err := uuid.Parse(stringReqID)
-	if err !=nil{
-		response.Error(w,400,"invalid request")
+// refactor this later after you done this feature there is duplicate code
+func (h *UserHandler) UpdateReq(w http.ResponseWriter, r *http.Request) {
+	reqID, err := middleware.GetPathValue("request_id", r)
+	if err != nil {
+		response.Error(w, 400, "invalid request")
 		return
 	}
-	decoder := json.NewDecoder(r.Body)
 	payload := &StatusFriendParameters{}
-	err= decoder.Decode(payload)
-	if err !=nil{
-		response.Error(w,400,"invalid parameters")
+	err = encoder.Decode(r, payload)
+	if err != nil {
+		response.Error(w, 400, "invalid parameters")
 		return
 	}
-	userID,ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
-	if !ok{
-		response.Error(w,500,"internal server error")
-		return	
+	userID, err := middleware.GetUserContextKey(r.Context())
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
 	}
-	switch payload.Status{
+	switch payload.Status {
 	case "confirm":
-		err= h.userService.ConfirmFriendReq(r.Context(),userID,reqID,"confirm")		
+		err = h.userService.ConfirmFriendReq(r.Context(), *userID, *reqID, "confirm")
 	case "cancel":
-		err=h.userService.CancelFriReq(r.Context(),userID,reqID)		
-	
-	case "delete":
-		err =h.userService.DeleteFirReq(r.Context(),userID,reqID)	
-		
+		err = h.userService.CancelFriReq(r.Context(), *userID, *reqID)
+
+	default:
+		err = errors.New("no supported status")
+
 	}
-	if err !=nil{
-			log.Printf("failed to do smth  friend req\n#%s#",err)
-			response.Error(w,500,"internal server error")
-			return	
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
 	}
-		w.WriteHeader(201)
+	w.WriteHeader(201)
 }
 
-
-func (h *UserHandler)GetPendingList(w http.ResponseWriter,r *http.Request){
-	userID,ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
-	if !ok{
-		response.Error(w,400,"invalid request")
-		return	
-	}		
-	list, err := h.userService.GetPendingList(r.Context(),userID)
-	if err !=nil{
-		log.Printf("failed to get the db \n #%s#",err)
-		response.Error(w,500,"internal server error")
+func (h *UserHandler) DeleteFriReq(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetUserContextKey(r.Context())
+	if err != nil {
+		response.Error(w, 500, "internal server error")
 		return
 	}
 
-	response.JSON(w,200,ResponseReqList{
-			PendingIDsList: *list.PendingIDsList,
-			RequestIDsList: *list.RequestIDsList,
-		})	
+	reqID, err := middleware.GetPathValue("request_id", r)
+	if err != nil {
+		response.Error(w, 400, "invalid request")
+		return
+	}
+
+	err = h.userService.DeleteFriReq(r.Context(), *userID, *reqID)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	w.WriteHeader(204)
 }
 
-func (h *UserHandler)GetFriendList(w http.ResponseWriter,r *http.Request){
-	userID, ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
-	if !ok{
-		response.Error(w,400,"invalid request")
+func (h *UserHandler) GetPendingList(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetUserContextKey(r.Context())
+	if err != nil {
+		response.Error(w, 400, "invalid request")
 		return
 	}
-	list, err := h.userService.GetFriendList(r.Context(),userID)
-	if err !=nil{
-		log.Printf("failed to get the user friend list \n #%s#",err)
-		response.Error(w,500,"internal server error")
+
+	list, err := h.userService.GetPendingList(r.Context(), *userID)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
 		return
 	}
-	response.JSON(w,200,ResponseFriListStruct{
+
+	response.JSON(w, 200, ResponseReqList{
+		PendingIDsList: *list.PendingIDsList,
+		RequestIDsList: *list.RequestIDsList,
+	})
+}
+
+func (h *UserHandler) GetFriendList(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetUserContextKey(r.Context())
+	if err != nil {
+		response.Error(w, 400, "invalid request")
+		return
+	}
+	list, err := h.userService.GetFriendList(r.Context(), *userID)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+	response.JSON(w, 200, ResponseFriListStruct{
 		FriendList: list,
 	})
 }
