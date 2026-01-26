@@ -1,12 +1,13 @@
 NOTE:: frontend need to make sure the duplicate member_id doesn't have in the member_list
-
-NOTE:: -- need to implement leave group and maybe user caching before that need
---to consider about redis caching or smth WARNING:still implementing this one
-
 NOTE:: -- need to abstract the business logic between service and worker
 //WARNING:still need to work on this
 
-WARNING: need to test the user cache and its new service ---
+NOTE:: userRoute/endpoints need to be fixed in RESTFUL way .
+--users/{user_id}/info --for update name and stuff with PATCH method(maybe for like bios and stuff)
+//i diff these too rather than using a single route for all the update
+--users/{user_id}/email/change -- for email update(POST)
+--users/{user_id}/email/verify -- for email verification(POST)
+--users/{user_id}/password --for password update with POST method
+-- need to rethink about the while caching and message queue
 
-WARNING: chatmodel need to to implement worker and have to refactor some ---
-code in chat and chatmodel
+
