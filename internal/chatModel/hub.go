@@ -1,58 +1,52 @@
 package chatmodel
 
 import (
-	"log"
 	"github.com/google/uuid"
+	"log"
 )
 
-
-
-
-type Hub struct{
+type Hub struct {
 	//contains all the chatId which the user register
 	UsertoChannel map[string]map[string]bool
 
 	//contains all the users id of the specific chat
 	ChatToUser map[string]map[string]bool
-	Clients map[string]*Client
-	//register and unregister are for the connection	
-	Register chan *Client
+	Clients    map[string]*Client
+	//register and unregister are for the connection
+	Register   chan *Client
 	Unregister chan *Client
 
 	//the client use this channel to broadcast the message onto the hub
 	Broadcast chan Message
 
 	//group sepcific channel
-	JoinChan chan GroupActionInfo
+	JoinChan  chan GroupActionInfo
 	LeaveChan chan GroupActionInfo
 }
 
-
-type JoinStruct struct{
-	userID uuid.UUID
+type JoinStruct struct {
+	userID  uuid.UUID
 	groupID uuid.UUID
-	role string
+	role    string
 }
 
-func NewHub()*Hub{
+func NewHub() *Hub {
 	return &Hub{
-		UsertoChannel:make(map[string]map[string]bool) ,
-		ChatToUser: make(map[string]map[string]bool),
-		Broadcast: make(chan Message),
-		Register: make(chan *Client),
-		Unregister: make(chan *Client),
-		Clients: make(map[string]*Client),
-		JoinChan: make(chan GroupActionInfo,256),
-		LeaveChan: make(chan GroupActionInfo, 256),
+		UsertoChannel: make(map[string]map[string]bool),
+		ChatToUser:    make(map[string]map[string]bool),
+		Broadcast:     make(chan Message),
+		Register:      make(chan *Client),
+		Unregister:    make(chan *Client),
+		Clients:       make(map[string]*Client),
+		JoinChan:      make(chan GroupActionInfo, 256),
+		LeaveChan:     make(chan GroupActionInfo, 256),
 	}
 }
 
-
-
-//this is getting bloated need to refactor later
-func (h *Hub)Run(){
+// this is getting bloated need to refactor later
+func (h *Hub) Run() {
 	for {
-		select{
+		select {
 		//stores the userID as key and its client as connection
 		case client := <-h.Register:
 			h.Clients[client.UserID.String()] = client
@@ -61,92 +55,92 @@ func (h *Hub)Run(){
 		// and delete the userId in that each of chattouser's chatidlist
 		//and then finally delete the userid from the usertochat
 
-		//when join update the user relation with the chat in both 
+		//when join update the user relation with the chat in both
 		//userToChat && chatToUser
 		case client := <-h.JoinChan:
 			userID := client.UserID.String()
 			groupID := client.GroupID.String()
-			if h.UsertoChannel[userID] == nil{
+			if h.UsertoChannel[userID] == nil {
 				h.UsertoChannel[userID] = make(map[string]bool)
 			}
 			h.UsertoChannel[userID][groupID] = true
-			if h.ChatToUser[groupID] == nil{
+			if h.ChatToUser[groupID] == nil {
 				h.ChatToUser[groupID] = make(map[string]bool)
 			}
 			h.ChatToUser[groupID][userID] = true
-					
+
 		//same thing just the opposite of the join
-		case client := <- h.LeaveChan:
+		case client := <-h.LeaveChan:
 			groupID := client.GroupID.String()
 			userID := client.UserID.String()
-			if usersIDList,ok := h.ChatToUser[groupID]; ok{
-				delete(usersIDList,userID)
-				if len(usersIDList)==0{
-					delete(h.ChatToUser,groupID)
+			if usersIDList, ok := h.ChatToUser[groupID]; ok {
+				delete(usersIDList, userID)
+				if len(usersIDList) == 0 {
+					delete(h.ChatToUser, groupID)
 				}
-			}	
-			if chatsIDList,ok := h.UsertoChannel[userID];ok{
-				delete(chatsIDList,groupID)
-				if len(chatsIDList)==0{
-					delete(h.UsertoChannel,userID)
-				}	
 			}
-			
+			if chatsIDList, ok := h.UsertoChannel[userID]; ok {
+				delete(chatsIDList, groupID)
+				if len(chatsIDList) == 0 {
+					delete(h.UsertoChannel, userID)
+				}
+			}
+
 		case client := <-h.Unregister:
-			if _,ok:= h.Clients[client.UserID.String()];ok{
-				delete(h.Clients,client.UserID.String())
+			if _, ok := h.Clients[client.UserID.String()]; ok {
+				delete(h.Clients, client.UserID.String())
 				close(client.Send)
 			}
-			if chatIds, ok := h.UsertoChannel[client.UserID.String()]; ok{
-				for chat := range chatIds{
-					if usersInChat,ok := h.ChatToUser[chat]; ok{
-						delete(usersInChat,client.UserID.String())	
-						if len(usersInChat)== 0{
-							delete(h.ChatToUser,chat)
+			if chatIds, ok := h.UsertoChannel[client.UserID.String()]; ok {
+				for chat := range chatIds {
+					if usersInChat, ok := h.ChatToUser[chat]; ok {
+						delete(usersInChat, client.UserID.String())
+						if len(usersInChat) == 0 {
+							delete(h.ChatToUser, chat)
 						}
 					}
 				}
 			}
-			delete(h.UsertoChannel,client.UserID.String())
-		
+			delete(h.UsertoChannel, client.UserID.String())
+
 		//basically stores the targetIds based on the type of the message
-		//if it is private you find in the clients and then write to it 
-		//if it is public/group you find the id in the chatTouser based on 
-		//the chat id and then write to the every single connection of those ids 
+		//if it is private you find in the clients and then write to it
+		//if it is public/group you find the id in the chatTouser based on
+		//the chat id and then write to the every single connection of those ids
 		//of that chat
 		case message := <-h.Broadcast:
-			var targetIds []string	
-			//update the cache first
-			switch message.Type{
-			//just for the sake of this i put the type in th msg struct	
+			var targetIds []string
+			//TODO:update the cache first here
+			switch message.Type {
+			//just for the sake of this i put the type in th msg struct
 			case "private":
 				targetIds = append(targetIds, message.ToID)
 			case "public":
-				log.Printf("userIds list and its chats #%v#",h.ChatToUser[message.ToID])
-				if userIdsInChat ,ok:= h.ChatToUser[message.ToID];ok{
-					for userID := range userIdsInChat{
+				log.Printf("userIds list and its chats #%v#", h.ChatToUser[message.ToID])
+				if userIdsInChat, ok := h.ChatToUser[message.ToID]; ok {
+					for userID := range userIdsInChat {
 						targetIds = append(targetIds, userID)
 					}
 				}
-			}	
-					
-			if len(targetIds)>0{
-				for _,clientID:= range targetIds{
+			}
+
+			if len(targetIds) > 0 {
+				for _, clientID := range targetIds {
 					//i need to implement mutex lock or smth
-					if _,ok:= h.Clients[clientID];ok{
-						log.Printf("the reciever is not online")
+					if _, ok := h.Clients[clientID]; ok {
 						select {
-						case h.Clients[clientID].Send<- []byte(message.Content):
-						default: 
-						close(h.Clients[clientID].Send)
-						delete(h.Clients,clientID)
-						}		
+						case h.Clients[clientID].Send <- []byte(message.Content):
+						default:
+							close(h.Clients[clientID].Send)
+							delete(h.Clients, clientID)
+						}
 					}
 
-					}
-				
+				}
+
+			} else {
+				log.Printf("the receier is not online")
 			}
 		}
-				}
+	}
 }
-

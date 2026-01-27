@@ -12,6 +12,7 @@ import (
 
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"RyanDev-21.com/Chirpy/pkg/auth"
+	"RyanDev-21.com/Chirpy/pkg/middleware"
 	"github.com/google/uuid"
 )
 
@@ -54,14 +55,29 @@ func NewUserService(userRepo UserRepo, userCache UserCacheItf, mainMq *mq.MainMQ
 
 // name check still have to be implemented
 func (s *userService) Register(ctx context.Context, name, email, password string) (*User, error) {
+
+	reqID, err := middleware.GetUserContextKey(ctx, "reqlog_id")
+	if err != nil {
+
+		s.logger.Error("failed to get the keyID")
+		return nil, err
+	}
 	hashpassword, err := auth.HashPassword(password)
 	if err != nil {
+		s.logger.Error("failed to hash the password for reqId: %v", reqID)
 		return nil, err
 	}
 	user, err := s.userRepo.Create(ctx, CreateUserInput{Name: name, Email: email, Password: hashpassword})
 	if err != nil {
+		if err == DuplicateKeyErr {
+			s.logger.Info("duplicate key constraint from db for reqID:%v", reqID)
+		}
+		if err == DuplicateNameKeyErr {
+			s.logger.Info("duplicate name key constraint from db for reqID:%v", reqID)
+		}
 		return nil, err
 	}
+	s.logger.Info("successfully created the user for reqID:%v", reqID)
 	return user, nil
 }
 
