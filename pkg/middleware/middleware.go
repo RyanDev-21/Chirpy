@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"RyanDev-21.com/Chirpy/pkg/auth"
@@ -33,12 +34,12 @@ func AuthMiddleWare(next http.HandlerFunc, secret string) http.Handler {
 	})
 }
 
-func GetUserContextKey(context context.Context) (*uuid.UUID, error) {
-	userID, ok := context.Value(USERCONTEXTKEY).(uuid.UUID)
+func GetUserContextKey(context context.Context,key string) (*uuid.UUID, error) {
+	keyID, ok := context.Value(key).(uuid.UUID)
 	if !ok {
 		return nil, errors.New("userID not found in context")
 	}
-	return &userID, nil
+	return &keyID, nil
 }
 
 func GetPathValue(pathName string, req *http.Request) (*uuid.UUID, error) {
@@ -53,11 +54,22 @@ func GetPathValue(pathName string, req *http.Request) (*uuid.UUID, error) {
 	return &pathID, nil
 }
 
-// func MiddleWareLog(next http.HandlerFunc) http.Handler {
-// 	Logger := slog.Default()
-// 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-// 		reqID := uuid.New().String()
-// 		Logger = Logger.With("req_id", reqID)
-// 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "logger", Logger)))
-// 	})
-// }
+//	func MiddleWareLog(next http.HandlerFunc) http.Handler {
+//		Logger := slog.Default()
+//		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//			reqID := uuid.New().String()
+//			Logger = Logger.With("req_id", reqID)
+//			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "logger", Logger)))
+//		})
+//	}
+func MiddelWareLog(next http.HandlerFunc) http.Handler {
+	reqRandomID := uuid.New()	
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method := r.Method
+		path := r.URL.Path
+		slog.Info("reqId:%v,making %v request for path %v",reqRandomID,method,path)	
+		ctx := context.WithValue(r.Context(),"reqlog_id", reqRandomID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	}
+}
