@@ -115,7 +115,7 @@ func (h *UserHandler) AddFriend(w http.ResponseWriter, r *http.Request) {
 		log.Printf("failed to gen the friReqId something went wrong")
 	}
 
-	err = h.userService.AddFriendSend(r.Context(), userID, payload.ToID, "pending", friReqID)
+	err = h.userService.AddFriendSend(r.Context(), *userID, payload.ToID, "pending", friReqID)
 	if err != nil {
 		response.Error(w, 500, "internal server error")
 		return
