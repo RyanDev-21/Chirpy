@@ -8,6 +8,6 @@ NOTE:: userRoute/endpoints need to be fixed in RESTFUL way .
 --users/{user_id}/email/change -- for email update(POST)
 --users/{user_id}/email/verify -- for email verification(POST)
 --users/{user_id}/password --for password update with POST method
--- need to rethink about the while caching and message queue
+-- need to rethink about this while caching and message queue
 
 

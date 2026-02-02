@@ -17,13 +17,24 @@ type createGroupRequest struct{
 	MaxMems int16 `json:"max_mems"`
 }
 
+type createGroupStruct struct{
+	GroupID uuid.UUID
+	GroupName string
+	Description string
+	MaxMems int16
+	CurrentMem int16	
+	Members []uuid.UUID
+}
+
 type GroupInfo struct{
 	ChatID uuid.UUID `json:"chat_id"`
 }
 
 type GroupPublish struct{
-	GroupID GroupInfo `json:"chat_id"`	
-	GroupInfo createGroupRequest `json:"group_info"`	
+	GroupID GroupInfo 	
+	CreatorID uuid.UUID
+	GroupInfo createGroupStruct 	
+	Role string
 }
 
 type creatorPublishStruct struct{

@@ -45,39 +45,40 @@ type userService struct {
 	logger    *slog.Logger
 }
 
-func NewUserService(userRepo UserRepo, userCache UserCacheItf, mainMq *mq.MainMQ) UserService {
+func NewUserService(userRepo UserRepo, userCache UserCacheItf, mainMq *mq.MainMQ,logger *slog.Logger) UserService {
 	return &userService{
 		userRepo:  userRepo,
 		userCache: userCache,
 		mainMq:    mainMq,
+		logger: logger,
 	}
 }
 
 // name check still have to be implemented
 func (s *userService) Register(ctx context.Context, name, email, password string) (*User, error) {
 
-	reqID, err := middleware.GetUserContextKey(ctx, "reqlog_id")
+	reqID, err := middleware.GetContextKey(ctx,"request")
 	if err != nil {
 
-		s.logger.Error("failed to get the keyID")
+		s.logger.Error("failed to get the ID")
 		return nil, err
 	}
 	hashpassword, err := auth.HashPassword(password)
 	if err != nil {
-		s.logger.Error("failed to hash the password for reqId: %v", reqID)
+		s.logger.Error("hash function failed","reqID", reqID)
 		return nil, err
 	}
 	user, err := s.userRepo.Create(ctx, CreateUserInput{Name: name, Email: email, Password: hashpassword})
 	if err != nil {
 		if err == DuplicateKeyErr {
-			s.logger.Info("duplicate key constraint from db for reqID:%v", reqID)
+			s.logger.Info("duplicate key constraint","reqID",reqID);
 		}
 		if err == DuplicateNameKeyErr {
-			s.logger.Info("duplicate name key constraint from db for reqID:%v", reqID)
+			s.logger.Info("duplicate name key constraint ","reqID", reqID);
 		}
 		return nil, err
 	}
-	s.logger.Info("successfully created the user for reqID:%v", reqID)
+	s.logger.Info("successfully created the user","reqID", reqID);
 	return user, nil
 }
 
@@ -260,13 +261,13 @@ func (s *userService) GetFriendList(ctx context.Context, userID uuid.UUID) ([]uu
 	//first need to get from the cache first
 	list := s.userCache.GetUserFriList(userID) //maybe should just check whether the user exist or not first
 	if list == nil {
-		s.logger.Info("fetching from db because cache miss", userID)
+		s.logger.Info("fetching from db because cache miss","userID", userID)
 		list, err := s.userRepo.GetUserFriListByID(ctx, userID)
 		if err != nil {
 			s.logger.Error("failed to get friend list from db", err)
 			return nil, err
 		}
-		s.logger.Info("successfully fetched from db", userID)
+		s.logger.Info("successfully fetched from db","userID", userID)
 		return *list, nil
 	}
 	return *list, nil
@@ -280,7 +281,7 @@ func (s *userService) GetPendingList(ctx context.Context, userID uuid.UUID) (*Ge
 	}
 	check := s.userCache.GetUserRs(userID)
 	if !check {
-		s.logger.Debug("fetching from db because cache miss", userID)
+		s.logger.Debug("fetching from db because cache miss","userID", userID)
 		reqList, err := s.userRepo.GetMyFriReqList(ctx, userID)
 		if err != nil {
 			if err != sql.ErrNoRows {
@@ -328,6 +329,8 @@ func (s *userService) GetPendingList(ctx context.Context, userID uuid.UUID) (*Ge
 	return &list, nil
 }
 
+
+//tempory thing for mq fail
 func saveIntoLog(jobName string, job interface{}, logger *slog.Logger) {
 	saveLog := []byte(fmt.Sprintf("jobName:%v;jobDescrioption:%v;\n", jobName, job))
 	path := filepath.Join("../../", "consistency_log.txt")

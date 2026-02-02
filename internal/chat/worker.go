@@ -11,6 +11,7 @@ import (
 
 //parentId is string type from json
 //we need to make it nil so that the db will not take this value
+//cuz in db i make the parentID optional
 //NOTE::maybe there is a better way to do this 
 func ParentIdIdentifier(parentID string)*uuid.UUID{
 	var fakeID *uuid.UUID

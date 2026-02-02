@@ -2,7 +2,7 @@ package groups
 
 import (
 	"context"
-//	"log"
+	"log"
 	// "database/sql"
 	// "errors"
 

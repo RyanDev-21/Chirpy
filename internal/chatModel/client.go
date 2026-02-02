@@ -5,7 +5,6 @@ import (
 	"log"
 	"time"
 
-	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
@@ -26,18 +25,14 @@ type Client struct {
 	Conn   *websocket.Conn
 	Send   chan []byte
 	UserID uuid.UUID
-	MsgQ   *mq.MainMQ
-	Cache  ChatRepoCache
 }
 
-func NewClient(hub *Hub, conn *websocket.Conn, send chan []byte, userID uuid.UUID, msgQ *mq.MainMQ, redisCache ChatRepoCache) *Client {
+func NewClient(hub *Hub, conn *websocket.Conn, send chan []byte, userID uuid.UUID) *Client {
 	return &Client{
 		Hub:    hub,
 		Conn:   conn,
 		Send:   send,
 		UserID: userID,
-		MsgQ:   msgQ,
-		Cache:  redisCache,
 	}
 }
 
@@ -62,7 +57,8 @@ func (c *Client) ReadPump() {
 	var msg Message
 
 	for {
-
+		//maybe consider only accepting the msg.Content
+		//NOTE::this read json as we are writing json maybe consider writing raw bytes
 		err := c.Conn.ReadJSON(&msg)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
@@ -71,20 +67,25 @@ func (c *Client) ReadPump() {
 			}
 			break
 		}
+	
+		//NOTE::this logic has shifted into chat service
 		//the toID should be uuid.UUID only
-		parseID, err := uuid.Parse(msg.ToID)
-		if err != nil {
-			log.Println("parsing the uuid failed")
-		}
-		switch msg.Type {
-		case "private":
-			HandlePrivateMsg(c, &msg, parseID)
-		case "public":
-			HandlePublicMsg(c, &msg)
-
-		default:
-			log.Printf("invalid type of msg in readpump ")
-		}
+		// parseID, err := uuid.Parse(msg.ToID)
+		// if err != nil {
+		// 	log.Println("parsing the uuid failed")
+		// } 
+		//
+		// // maybe upload the job here
+		// switch msg.Type {
+		// case "private":
+		// 	handlePrivateMsg(c, &msg, parseID)
+		// 	publishJobHelper("privateMsg",&msg,c.MsgQ)		
+		// case "public":
+		// 	handlePublicMsg(c, &msg)
+		// 	publishJobHelper("publicMsg",&msg,c.MsgQ)
+		// default:
+		// 	log.Printf("invalid type of msg in readpump ")
+		// }
 		//the last parameters takes how many you wanna replace if <0 there is no limit
 		//as we don't read the message type anymore
 		//msg= bytes.TrimSpace(bytes.Replace(message,newline,space,-1))

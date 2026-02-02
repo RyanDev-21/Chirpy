@@ -31,21 +31,23 @@ type AddMemberListParams struct {
 }
 
 const createGroup = `-- name: CreateGroup :one
-INSERT INTO chat_groups(id,name,description,max_member)
+INSERT INTO chat_groups(id,name,description,max_member,current_member)
 VALUES(
     $1,
     $2,
     $3,
-    $4
+    $4,
+    $5
 )
 RETURNING id, name, description, max_member, created_at, updated_at, current_member
 `
 
 type CreateGroupParams struct {
-	ID          uuid.UUID
-	Name        string
-	Description string
-	MaxMember   int16
+	ID            uuid.UUID
+	Name          string
+	Description   string
+	MaxMember     int16
+	CurrentMember int16
 }
 
 func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) (ChatGroup, error) {
@@ -54,6 +56,7 @@ func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) (ChatG
 		arg.Name,
 		arg.Description,
 		arg.MaxMember,
+		arg.CurrentMember,
 	)
 	var i ChatGroup
 	err := row.Scan(
@@ -162,6 +165,28 @@ func (q *Queries) GetGroupInfoByID(ctx context.Context, id uuid.UUID) (ChatGroup
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CurrentMember,
+	)
+	return i, err
+}
+
+const getMemFromGroup = `-- name: GetMemFromGroup :one
+SELECT id, group_id, member_id, joined_at, role FROM member_table WHERE group_id = $1 AND member_id = $2
+`
+
+type GetMemFromGroupParams struct {
+	GroupID  uuid.UUID
+	MemberID uuid.UUID
+}
+
+func (q *Queries) GetMemFromGroup(ctx context.Context, arg GetMemFromGroupParams) (MemberTable, error) {
+	row := q.db.QueryRow(ctx, getMemFromGroup, arg.GroupID, arg.MemberID)
+	var i MemberTable
+	err := row.Scan(
+		&i.ID,
+		&i.GroupID,
+		&i.MemberID,
+		&i.JoinedAt,
+		&i.Role,
 	)
 	return i, err
 }

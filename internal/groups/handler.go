@@ -38,14 +38,18 @@ func (h *groupHandler)CreateGroup(w http.ResponseWriter,r *http.Request){
 	}
 
 
-	createrID, ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
-	if !ok{
+	createrID, err:=middleware.GetContextKey(r.Context(),"user") 
+	if err!= nil{
 		response.Error(w,401,"not authorized")
 		return
 	}
 	
 	//will return the common chatID
-	responseStruct, err := h.groupService.createGroup(r.Context(),createrID,&parameters)
+	responseStruct, err := h.groupService.createGroup(r.Context(),*createrID,&createGroupStruct{
+		GroupName: parameters.GroupName,
+		Description: parameters.Description,
+		MaxMems: parameters.MaxMems,
+	})
 	if err !=nil{
 		log.Printf("failed to create a group in the db #%s#",err)
 		if err == ErrDuplicateName{
@@ -72,13 +76,13 @@ func (h *groupHandler)JoinGroup(w http.ResponseWriter, r *http.Request){
 	}
 
 
-	userID, ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
-	if !ok{
+	userID, err := middleware.GetContextKey(r.Context(),"user")
+	if err!=nil{
 		response.Error(w,401,"not authorized")
 		return
 	}
 
-	err = h.groupService.joinGroup(r.Context(),groupID,userID)
+	err = h.groupService.joinGroup(r.Context(),groupID,*userID)
 	if err !=nil{
 		response.Error(w,500,"something went wrong")
 		return
@@ -100,13 +104,13 @@ func (h *groupHandler)LeaveGroup(w http.ResponseWriter, r *http.Request){
 	}
 
 
-	userID, ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
-	if !ok{
+	userID, err := middleware.GetContextKey(r.Context(),"user")
+	if err!=nil{
 		response.Error(w,401,"not authorized")
 		return
 	}
 
-	err = h.groupService.leaveGroup(r.Context(),groupID,userID)
+	err = h.groupService.leaveGroup(r.Context(),groupID,*userID)
 	if err !=nil{
 		response.Error(w,500,"something went wrong")
 		return

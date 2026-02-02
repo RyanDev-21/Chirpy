@@ -85,5 +85,5 @@ type UserRelationship struct {
 	Label       string
 	Status      string
 	CreatedAt   pgtype.Timestamp
-	UpdatedAt   time.time
+	UpdatedAt   time.Time
 }

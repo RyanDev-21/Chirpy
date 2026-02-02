@@ -1,3 +1,13 @@
+You receive a selection in neovim that you need to replace with new code.
+The selection's contents may contain notes, incorporate the notes every time if there are some.
+consider the context of the selection and what you are suppose to be implementing
+<SELECTION_LOCATION>
+range(point(61,23),point(61,33))
+</SELECTION_LOCATION>
+<SELECTION_CONTENT>
+createGrou
+</SELECTION_CONTENT>
+<FILE_CONTAINING_SELECTION>
 package groups
 
 import (
@@ -20,12 +30,12 @@ import (
 
 
 type GroupService interface{
-	createGroup(ctx context.Context,createrID uuid.UUID,groupMembers *createGroupStruct)(*GroupInfo,error)
+	createGroup(ctx context.Context,createrID uuid.UUID,groupMembers *createGroupRequest)(*GroupInfo,error)
 	joinGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error
 	leaveGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error
 	//need to abstract out worker logic from service	
 	StartWorkerForCreateGroup(channel chan *mq.Channel)
-//	StartWorkerForCreateGroupLeader(channel chan *mq.Channel)
+	StartWorkerForCreateGroupLeader(channel chan *mq.Channel)
 	StartWorkerForAddMemberList(channel chan *mq.Channel)
 	StartWorkerForAddMember(channel chan *mq.Channel)
 	StartWorkerForLeaveMember(channel chan *mq.Channel)
@@ -58,7 +68,7 @@ func NewGroupService(groupRepo GroupRepo,hub *chatmodel.Hub,mq *mq.MainMQ,groupC
 //get new chatID and store it in the db and return the groupInfo struct
 //need to fix this one when the group has the same name it is kinda returning the new id
 //NOTE:: have to rethink about the createGroup right now if user create a group then his id got added to the mem-table with role("Leader")
-func (s *groupService)createGroup(ctx context.Context,createrID uuid.UUID,groupInfo *createGroupStruct)(*GroupInfo,error){
+func (s *groupService)createGroup(ctx context.Context,createrID uuid.UUID,groupInfo *createGroupRequest)(*GroupInfo,error){
 	chatID, err := uuid.NewUUID()
 	if err !=nil{
 		return nil,err
@@ -74,17 +84,19 @@ func (s *groupService)createGroup(ctx context.Context,createrID uuid.UUID,groupI
 		return nil,ErrDuplicateName
 	}
 	//updated group member count
-	memCount := int16(len(groupInfo.Members))+1;//the creator id should count too +1
-	groupInfo.CurrentMem= memCount	
+	memCount := int16(groupInfo.MaxMems)+1;//the creator id should count too +1
+
+	groupInfo.MaxMems = memCount	
 	//update the metadata in the cache	
-	go func(groupID uuid.UUID,groupInfo *createGroupStruct){
+	go func(groupID uuid.UUID,groupInfo *createGroupRequest){
 		s.groupCache.groupMuLock.Lock()
 		s.groupCache.GroupCache[chatID] = &CacheGroupInfo{
 		 Name: groupInfo.GroupName,
-		 TotalMem: groupInfo.CurrentMem,	
+		 TotalMem: groupInfo.MaxMems,	
 		MaxMem: groupInfo.MaxMems,
 		}	
 		s.groupCache.groupMuLock.Unlock()
+		
 	}(chatID,groupInfo)
 	//need to add the creatorId into the memberIds 	
 	updatedMemList :=append(groupInfo.Members,createrID);
@@ -98,13 +110,16 @@ func (s *groupService)createGroup(ctx context.Context,createrID uuid.UUID,groupI
 
 	payload  :=GroupPublish{
 		GroupID: GroupInfo{chatID},
-		 CreatorID:createrID,
 		GroupInfo: *groupInfo,
-		Role: "Leader",
 	}
 	
 	//create three job for db operations
 	s.mq.Publish("createGroup",payload)
+	s.mq.Publish("addCreator",creatorPublishStruct{
+		GroupID: chatID,	
+		UserID: createrID,
+		Role: "Leader",
+	})	
 	s.mq.Publish("addChunkMembers",membersPubStruct{
 		UserIds: updatedMemList,
 		GroupId: chatID,
@@ -130,20 +145,20 @@ func (s *groupService)joinGroup(ctx context.Context,groupID uuid.UUID,userID uui
 	//first check whether the gp is full or not
 	if groupInfo.TotalMem ==groupInfo.MaxMem{
 		return ErrGroupFull	
-	}
-		//update the group member list
-		//NOTE::maybe should check about the dupli err in cache before processing
-	go func(groupID,userID uuid.UUID){
-			s.groupCache.memMuLock.Lock();
-			memberLists := s.groupCache.MemberCache[groupID]
-			*s.groupCache.MemberCache[groupID] = append(*memberLists,userID)
-			s.groupCache.groupMuLock.Unlock();
-	}(groupID,userID)
-		
+	}	
 	//update the group's metadata
 	go func(groupID,userID uuid.UUID){
 		s.groupCache.groupMuLock.Lock();
 		s.groupCache.GroupCache[groupID].TotalMem +=1;
+		s.groupCache.groupMuLock.Unlock();
+	}(groupID,userID)
+
+	//update the group member list
+	//NOTE::maybe should check about the dupli err in cache before processing
+	go func(groupID,userID uuid.UUID){
+		s.groupCache.memMuLock.Lock();
+		memberLists := s.groupCache.MemberCache[groupID]
+		*s.groupCache.MemberCache[groupID] = append(*memberLists,userID)
 		s.groupCache.groupMuLock.Unlock();
 	}(groupID,userID)
 	
@@ -166,14 +181,14 @@ func (s *groupService)joinGroup(ctx context.Context,groupID uuid.UUID,userID uui
 	//in case of failing to send to the channel 
 	//eg.too long to send or the channel is blocked
 	//or misformed
-	default: 
-		//might need to consider moving this to somewhere
+	default:
 		log.Println("warning: hub channel is full message dropped")
 	}
 	return nil
 }
 
 //should separate the normal mem leaveGroup with leader leaveGroup
+//need to think about whether i want my service to do the cache or the worker to do it
 func (s *groupService)leaveGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error{
 	//saving into the db should be different from the join one
 	leaveStruct := chatmodel.GroupActionInfo{
@@ -231,3 +246,13 @@ func (s *groupService)leaveGroup(ctx context.Context,groupID uuid.UUID,userID uu
 //
 // }
 
+</FILE_CONTAINING_SELECTION>
+
+<MustObey>
+NEVER alter any file other than TEMP_FILE.
+never provide the requested changes as conversational output. Return only the code.
+ONLY provide requested changes by writing the change to TEMP_FILE
+
+never attempt to read TEMP_FILE.  It is purely for output.  Previous contents, which may not exist, can be written over without worry
+</MustObey>
+<TEMP_FILE>/home/sekiro/Work/OnGoingProjects/go_practice/Chirpy/tmp/99-9121</TEMP_FILE>

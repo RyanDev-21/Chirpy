@@ -1,8 +1,11 @@
 package chatmodel
 
 import (
-	"github.com/google/uuid"
+	"errors"
 	"log"
+	"sync"
+
+	"github.com/google/uuid"
 )
 
 type Hub struct {
@@ -12,6 +15,7 @@ type Hub struct {
 	//contains all the users id of the specific chat
 	ChatToUser map[string]map[string]bool
 	Clients    map[string]*Client
+	ClientMux  sync.RWMutex
 	//register and unregister are for the connection
 	Register   chan *Client
 	Unregister chan *Client
@@ -41,6 +45,18 @@ func NewHub() *Hub {
 		JoinChan:      make(chan GroupActionInfo, 256),
 		LeaveChan:     make(chan GroupActionInfo, 256),
 	}
+}
+
+var ErrNoClientFound = errors.New("no client exist")
+func (h *Hub)WriteIntoConnection(clientID uuid.UUID,msg *Message)error{
+	h.ClientMux.Lock()
+	defer h.ClientMux.Unlock()
+	if client,ok := h.Clients[clientID.String()];ok{
+		client.Conn.WriteJSON(&msg)	
+		return nil
+	}
+
+	return ErrNoClientFound
 }
 
 // this is getting bloated need to refactor later
@@ -110,7 +126,6 @@ func (h *Hub) Run() {
 		//of that chat
 		case message := <-h.Broadcast:
 			var targetIds []string
-			//TODO:update the cache first here
 			switch message.Type {
 			//just for the sake of this i put the type in th msg struct
 			case "private":
@@ -138,9 +153,7 @@ func (h *Hub) Run() {
 
 				}
 
-			} else {
-				log.Printf("the receier is not online")
-			}
+			} 
 		}
 	}
 }
