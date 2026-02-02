@@ -11,11 +11,19 @@ import (
 	"github.com/google/uuid"
 )
 
-type contextKey string
+type ContextKey string
 
-const USERCONTEXTKEY contextKey = "user_id"
+//need to refactor this
+const USERCONTEXTKEY ContextKey = "user_id"
+const REQCONTEXTKEY ContextKey = "reqlog_id"
+const PAYLOADCONTEXT ContextKey = "paylodContext"
 
-func AuthMiddleWare(next http.HandlerFunc, secret string) http.Handler {
+type payload struct{
+	userContext uuid.UUID
+	reqContext uuid.UUID
+}
+
+func AuthMiddleWare(next http.HandlerFunc, secret string,logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, err := auth.GetBearerToken(r.Header)
 		if err != nil {
@@ -27,19 +35,48 @@ func AuthMiddleWare(next http.HandlerFunc, secret string) http.Handler {
 		if err != nil {
 			response.Error(w, 403, "unauthorized")
 			return
+		} 
+		var contextStruct payload
+		reqID,err:= getReqContextKey(r.Context())
+		if err!=nil {
+			logger.Warn("failed to get the req id")
+			contextStruct =payload{
+				userContext:userID ,
+			}
+		}else{
+				contextStruct = payload{
+					userContext: userID,
+					reqContext: reqID,
+				}
 		}
-		ctx := context.WithValue(r.Context(), USERCONTEXTKEY, userID)
+		
+		ctx := context.WithValue(r.Context(),PAYLOADCONTEXT,contextStruct)
 		next.ServeHTTP(w, r.WithContext(ctx))
 
 	})
 }
 
-func GetUserContextKey(context context.Context,key string) (*uuid.UUID, error) {
-	keyID, ok := context.Value(key).(uuid.UUID)
+func GetContextKey(context context.Context,field string) (*uuid.UUID, error) {
+	payload, ok := context.Value(PAYLOADCONTEXT).(payload)
 	if !ok {
-		return nil, errors.New("userID not found in context")
+		return nil, errors.New("userkey not found in context")
 	}
-	return &keyID, nil
+	switch field{
+	case "user":
+		return &payload.userContext, nil
+	case "request": 
+		return &payload.reqContext, nil
+
+	}
+	return nil,errors.New("no supported field")
+}
+func getReqContextKey(context context.Context)(uuid.UUID,error){
+	reqID,ok:= context.Value(REQCONTEXTKEY).(uuid.UUID)
+	if !ok{
+		return reqID,errors.New("failed to get the request key")
+
+	}
+	return reqID,nil
 }
 
 func GetPathValue(pathName string, req *http.Request) (*uuid.UUID, error) {
@@ -63,13 +100,15 @@ func GetPathValue(pathName string, req *http.Request) (*uuid.UUID, error) {
 //		})
 //	}
 func MiddelWareLog(next http.HandlerFunc) http.Handler {
-	reqRandomID := uuid.New()	
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqRandomID := uuid.New()	
 		method := r.Method
 		path := r.URL.Path
-		slog.Info("reqId:%v,making %v request for path %v",reqRandomID,method,path)	
-		ctx := context.WithValue(r.Context(),"reqlog_id", reqRandomID)
+		slog.Info("incoming req from ","reqID",reqRandomID,"method",method,"path",path);
+		ctx := context.WithValue(r.Context(),PAYLOADCONTEXT, payload{
+			reqContext: reqRandomID,
+		})
 		next.ServeHTTP(w, r.WithContext(ctx))
-	}
+	});
 }
