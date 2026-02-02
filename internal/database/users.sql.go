@@ -7,10 +7,10 @@ package database
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
-	"time"
 )
 
 const addSendReq = `-- name: AddSendReq :exec
@@ -39,7 +39,7 @@ UPDATE user_relationships SET status = 'cancel',updated_at = $2 WHERE id = $1
 
 type CancelFriReqStatusParams struct {
 	ID        uuid.UUID
-	UpdatedAt time.time
+	UpdatedAt time.Time
 }
 
 func (q *Queries) CancelFriReqStatus(ctx context.Context, arg CancelFriReqStatusParams) error {

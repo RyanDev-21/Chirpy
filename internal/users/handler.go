@@ -65,7 +65,7 @@ func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := middleware.GetUserContextKey(r.Context())
+	userID, err := middleware.GetContextKey(r.Context(),"user")
 	if err != nil {
 		response.Error(w, 500, "internal server error")
 		return
@@ -90,7 +90,7 @@ func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // func (h *UserHandler) UpdateUserInfo(w http.ResponseWriter, r *http.Request) {
-// 	userID, err := middleware.GetUserContextKey(r.Context())
+// 	userID, err := middleware.GetContextKey(r.Context())
 // 	if err != nil {
 // 		response.Error(w, 500, "internal server error")
 // 		return
@@ -105,7 +105,7 @@ func (h *UserHandler) AddFriend(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, 400, "invalid parameters")
 		return
 	}
-	userID, err := middleware.GetUserContextKey(r.Context())
+	userID, err := middleware.GetContextKey(r.Context(),"user")
 	if err != nil {
 		response.Error(w, 500, "internal server error")
 		return
@@ -137,7 +137,7 @@ func (h *UserHandler) UpdateReq(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, 400, "invalid parameters")
 		return
 	}
-	userID, err := middleware.GetUserContextKey(r.Context())
+	userID, err := middleware.GetContextKey(r.Context(),"user")
 	if err != nil {
 		response.Error(w, 500, "internal server error")
 		return
@@ -160,7 +160,7 @@ func (h *UserHandler) UpdateReq(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) DeleteFriReq(w http.ResponseWriter, r *http.Request) {
-	userID, err := middleware.GetUserContextKey(r.Context())
+	userID, err := middleware.GetContextKey(r.Context(),"user")
 	if err != nil {
 		response.Error(w, 500, "internal server error")
 		return
@@ -181,7 +181,7 @@ func (h *UserHandler) DeleteFriReq(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) GetPendingList(w http.ResponseWriter, r *http.Request) {
-	userID, err := middleware.GetUserContextKey(r.Context())
+	userID, err := middleware.GetContextKey(r.Context(),"user")
 	if err != nil {
 		response.Error(w, 400, "invalid request")
 		return
@@ -200,7 +200,7 @@ func (h *UserHandler) GetPendingList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) GetFriendList(w http.ResponseWriter, r *http.Request) {
-	userID, err := middleware.GetUserContextKey(r.Context())
+	userID, err := middleware.GetContextKey(r.Context(),"user")
 	if err != nil {
 		response.Error(w, 400, "invalid request")
 		return

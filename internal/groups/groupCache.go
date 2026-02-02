@@ -18,9 +18,6 @@ type CacheGroupInfo struct{
 	TotalMem int16
 	MaxMem int16
 }
-
-
-
 type Cache struct{
 
 	//in case this need concurrent read and write
@@ -30,7 +27,6 @@ type Cache struct{
 	memMuLock sync.Mutex
 	groupRepo GroupRepo
 }
-
 func FormatDbModel(dbModel *database.ChatGroup)*CacheGroupInfo{
 	return &CacheGroupInfo{
 		TotalMem: dbModel.CurrentMember,
@@ -114,7 +110,9 @@ func (cache *Cache)GetFromGroup(groupID uuid.UUID)(*CacheGroupInfo,error){
 //this will give the memberids list in the group
 func (cache *Cache)GetFromMember(groupID uuid.UUID)(*[]uuid.UUID,error){
 	var info *[]uuid.UUID
-	if v,ok := cache.MemberCache[groupID]; !ok{
+	cache.memMuLock.Lock()
+	defer cache.memMuLock.Unlock()
+	if v,ok := cache.MemberCache[groupID]; !ok{//cache miss
 		context , cancel := context.WithTimeout(context.Background(),1*time.Second)
 		defer cancel()
 		groupMems,err := cache.groupRepo.getMemsByID(context,groupID)
@@ -124,12 +122,20 @@ func (cache *Cache)GetFromMember(groupID uuid.UUID)(*[]uuid.UUID,error){
 			}
 			return nil,err
 		}
+		//udpate the cache with the list from db
+		*cache.MemberCache[groupID] = *groupMems 
 		return groupMems,nil
 	}else{
-		info = v
+		info = v //cache hit
 	}
 	return info,nil
 }
+//decided not to do this and let the db handle it (eg.on conflict do nothing)
+// func (cache *Cache)CheckMemberFromGroup(groupID,memID uuid.UUID)(bool,error){
+// 	cache.memMuLock.Lock()
+// 	defer cache.memMuLock.Unlock()
+//
+// }
 
 func (cache *Cache)CheckGroupNameFromCache(name string)(bool,error){
 	for _,v := range cache.GroupCache{

@@ -3,10 +3,13 @@ package auth
 import (
 	"context"
 	"errors"
-	"time"
 	"log"
+	"log/slog"
+	"time"
+
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/pkg/auth"
+	"RyanDev-21.com/Chirpy/pkg/middleware"
 	"github.com/google/uuid"
 )
 
@@ -24,33 +27,48 @@ type authService struct{
 	authRepo AuthRepo
 	userRepo users.UserRepo
 	secret string
+	logger *slog.Logger
 }
 
-func NewAuthService(userRepo users.UserRepo,authRepo AuthRepo,secret string)AuthService{
+func NewAuthService(userRepo users.UserRepo,authRepo AuthRepo,secret string,logger *slog.Logger)AuthService{
 	return &authService{
 		authRepo : authRepo,
 		userRepo: userRepo,
 		secret: secret,
+		logger: logger,
 	}
 }
 
 func (s *authService)Login(ctx context.Context,email,password string)(accessToken,refreshToken string,user *users.User,err error){
+	reqID, err:= middleware.GetContextKey(ctx,"request")
+	if err!=nil {
+		s.logger.Warn("failed to get the reqID")
+	}
 	dbUser,hashPassword,err:= s.userRepo.GetUserByEmail(ctx,email)
 	if err !=nil{
 		if err == users.NoUserFoundErr{
+			s.logger.Info("no user found ","reqID",reqID);
 			return "","",nil,users.NoUserFoundErr
-		}
+		} 
+		s.logger.Error("failed to hit the db","reqID",reqID);
 		return "","",nil,InvalidCredentailErr
 	}
 
 	valid, err := auth.CheckPassword(password,hashPassword)
-	if err !=nil || !valid{
-		return "","",nil,InvalidCredentailErr
+	if err !=nil {
+		s.logger.Error("the password check funtion failed","reqID",reqID);
+		return "","",nil,err
+	}
+	if !valid{
+		s.logger.Info("the match password check failed","reqID",reqID);
+		return "","",nil,InvalidCredentailErr	
 	}
 	accessToken,refreshToken,err =s.generateTokens(ctx,dbUser.ID)
 	if err !=nil{
+		s.logger.Error("generateTokens function failed","reqID",reqID);
 		return "","",nil,err
 	}
+	s.logger.Info("the user logged in success","reqID",reqID);
 	return accessToken,refreshToken,dbUser,nil
 }
 

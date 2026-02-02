@@ -2,7 +2,11 @@ package groups
 
 import (
 	"context"
-//	"database/sql"
+//	"log"
+	// "database/sql"
+	// "errors"
+
+	//	"database/sql"
 	"time"
 
 	"RyanDev-21.com/Chirpy/internal/database"
@@ -10,7 +14,7 @@ import (
 )
 
 type GroupRepo interface {
-	createGroup(groupID uuid.UUID,groupInfo createGroupRequest)error
+	createGroup(groupID uuid.UUID,groupInfo createGroupStruct)error
 	createGroupLeader(payload creatorPublishStruct)error
 	getGroupInfoByName(ctx context.Context,name string)error
 getGroupInfoByID(ctx context.Context,id uuid.UUID)(*database.ChatGroup,error)
@@ -20,6 +24,8 @@ getGroupInfoByID(ctx context.Context,id uuid.UUID)(*database.ChatGroup,error)
 	addMemberList(ctx context.Context,payload *[]database.AddMemberListParams)error
 	addMember(ctx context.Context,payload *database.AddMemberParams)error
 	deleteMember(ctx context.Context,payload *database.DeleteMemFromGroupParams)error
+	//getMemFromGroup(ctx context.Context,payload database.GetMemFromGroupParams)error
+
 }
 
 type groupRepo struct {
@@ -37,7 +43,7 @@ func NewGroupRepo(queries *database.Queries)GroupRepo{
 // 	fmt.Println("saved into db")
 // 	return nil
 // }
-func (r *groupRepo)createGroup(groupID uuid.UUID,groupInfo createGroupRequest)error{
+func (r *groupRepo)createGroup(groupID uuid.UUID,groupInfo createGroupStruct)error{
 	context,cancel := context.WithTimeout(context.Background(),5*time.Second)
 	defer cancel()
 	_,err := r.queries.CreateGroup(context,database.CreateGroupParams{
@@ -45,6 +51,7 @@ func (r *groupRepo)createGroup(groupID uuid.UUID,groupInfo createGroupRequest)er
 		Name: groupInfo.GroupName,
 		Description: groupInfo.Description,
 		MaxMember: groupInfo.MaxMems,
+		CurrentMember:groupInfo.CurrentMem,
 	})
 	if err !=nil{
 		return err
@@ -130,3 +137,14 @@ func (r *groupRepo)deleteMember(ctx context.Context,payload *database.DeleteMemF
 	err:= r.queries.DeleteMemFromGroup(ctx,*payload)
 	return err
 }
+
+// func (r *groupRepo)getMemFromGroup(ctx context.Context,payload database.GetMemFromGroupParams)error{
+// 	_,err := r.queries.GetMemFromGroup(ctx,payload)
+// 	if err !=nil{
+// 		if err == sql.ErrNoRows{
+// 			return errors.New("not found")
+// 		}
+// 		return err
+// 	}
+// 	return errors.New("already exist")
+// }

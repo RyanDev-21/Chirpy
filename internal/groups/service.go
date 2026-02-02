@@ -3,6 +3,7 @@ package groups
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
 
 	//	"fmt"
@@ -14,16 +15,17 @@ import (
 	//rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"github.com/google/uuid"
 )
+
 //WARNING:need to abstract out the caching function
 
 
 type GroupService interface{
-	createGroup(ctx context.Context,createrID uuid.UUID,groupMembers *createGroupRequest)(*GroupInfo,error)
+	createGroup(ctx context.Context,createrID uuid.UUID,groupMembers *createGroupStruct)(*GroupInfo,error)
 	joinGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error
 	leaveGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error
 	//need to abstract out worker logic from service	
 	StartWorkerForCreateGroup(channel chan *mq.Channel)
-	StartWorkerForCreateGroupLeader(channel chan *mq.Channel)
+//	StartWorkerForCreateGroupLeader(channel chan *mq.Channel)
 	StartWorkerForAddMemberList(channel chan *mq.Channel)
 	StartWorkerForAddMember(channel chan *mq.Channel)
 	StartWorkerForLeaveMember(channel chan *mq.Channel)
@@ -38,27 +40,30 @@ type groupService struct{
 	groupRepo GroupRepo
 	hub *chatmodel.Hub
 	mq *mq.MainMQ
+	logger *slog.Logger
 }
 
 
 
-func NewGroupService(groupRepo GroupRepo,hub *chatmodel.Hub,mq *mq.MainMQ,groupCache *Cache)GroupService{
+func NewGroupService(groupRepo GroupRepo,hub *chatmodel.Hub,mq *mq.MainMQ,groupCache *Cache,logger *slog.Logger)GroupService{
 	return &groupService{
 		groupRepo: groupRepo,
 		hub : hub,
 		mq: mq,
 		groupCache: groupCache,
+		logger: logger,	
 	}
 }
 
 //get new chatID and store it in the db and return the groupInfo struct
 //need to fix this one when the group has the same name it is kinda returning the new id
 //NOTE:: have to rethink about the createGroup right now if user create a group then his id got added to the mem-table with role("Leader")
-func (s *groupService)createGroup(ctx context.Context,createrID uuid.UUID,groupInfo *createGroupRequest)(*GroupInfo,error){
+func (s *groupService)createGroup(ctx context.Context,createrID uuid.UUID,groupInfo *createGroupStruct)(*GroupInfo,error){
 	chatID, err := uuid.NewUUID()
 	if err !=nil{
 		return nil,err
 	}
+	
 	//check the name first 
 	valid,err := s.groupCache.CheckGroupNameFromCache(groupInfo.GroupName)
 	if err !=nil {
@@ -68,16 +73,18 @@ func (s *groupService)createGroup(ctx context.Context,createrID uuid.UUID,groupI
 	if valid{
 		return nil,ErrDuplicateName
 	}
+	//updated group member count
+	memCount := int16(len(groupInfo.Members))+1;//the creator id should count too +1
+	groupInfo.CurrentMem= memCount	
 	//update the metadata in the cache	
-	go func(groupID uuid.UUID,groupInfo *createGroupRequest){
+	go func(groupID uuid.UUID,groupInfo *createGroupStruct){
 		s.groupCache.groupMuLock.Lock()
 		s.groupCache.GroupCache[chatID] = &CacheGroupInfo{
 		 Name: groupInfo.GroupName,
-		 TotalMem: int16(len(groupInfo.Members))+1,//the creator id should count too +1
-		 MaxMem: groupInfo.MaxMems,
+		 TotalMem: groupInfo.CurrentMem,	
+		MaxMem: groupInfo.MaxMems,
 		}	
 		s.groupCache.groupMuLock.Unlock()
-		
 	}(chatID,groupInfo)
 	//need to add the creatorId into the memberIds 	
 	updatedMemList :=append(groupInfo.Members,createrID);
@@ -88,21 +95,16 @@ func (s *groupService)createGroup(ctx context.Context,createrID uuid.UUID,groupI
 		s.groupCache.memMuLock.Unlock()
 	}(chatID,&updatedMemList)
 
+
 	payload  :=GroupPublish{
 		GroupID: GroupInfo{chatID},
+		 CreatorID:createrID,
 		GroupInfo: *groupInfo,
-	}
-	if err !=nil{
-		return nil,err
+		Role: "Leader",
 	}
 	
 	//create three job for db operations
 	s.mq.Publish("createGroup",payload)
-	s.mq.Publish("addCreator",creatorPublishStruct{
-		GroupID: chatID,	
-		UserID: createrID,
-		Role: "Leader",
-	})	
 	s.mq.Publish("addChunkMembers",membersPubStruct{
 		UserIds: updatedMemList,
 		GroupId: chatID,
@@ -128,20 +130,20 @@ func (s *groupService)joinGroup(ctx context.Context,groupID uuid.UUID,userID uui
 	//first check whether the gp is full or not
 	if groupInfo.TotalMem ==groupInfo.MaxMem{
 		return ErrGroupFull	
-	}	
+	}
+		//update the group member list
+		//NOTE::maybe should check about the dupli err in cache before processing
+	go func(groupID,userID uuid.UUID){
+			s.groupCache.memMuLock.Lock();
+			memberLists := s.groupCache.MemberCache[groupID]
+			*s.groupCache.MemberCache[groupID] = append(*memberLists,userID)
+			s.groupCache.groupMuLock.Unlock();
+	}(groupID,userID)
+		
 	//update the group's metadata
 	go func(groupID,userID uuid.UUID){
 		s.groupCache.groupMuLock.Lock();
 		s.groupCache.GroupCache[groupID].TotalMem +=1;
-		s.groupCache.groupMuLock.Unlock();
-	}(groupID,userID)
-
-	//update the group member list
-	//NOTE::maybe should check about the dupli err in cache before processing
-	go func(groupID,userID uuid.UUID){
-		s.groupCache.memMuLock.Lock();
-		memberLists := s.groupCache.MemberCache[groupID]
-		*s.groupCache.MemberCache[groupID] = append(*memberLists,userID)
 		s.groupCache.groupMuLock.Unlock();
 	}(groupID,userID)
 	
@@ -164,14 +166,14 @@ func (s *groupService)joinGroup(ctx context.Context,groupID uuid.UUID,userID uui
 	//in case of failing to send to the channel 
 	//eg.too long to send or the channel is blocked
 	//or misformed
-	default:
+	default: 
+		//might need to consider moving this to somewhere
 		log.Println("warning: hub channel is full message dropped")
 	}
 	return nil
 }
 
 //should separate the normal mem leaveGroup with leader leaveGroup
-//need to think about whether i want my service to do the cache or the worker to do it
 func (s *groupService)leaveGroup(ctx context.Context,groupID uuid.UUID,userID uuid.UUID)error{
 	//saving into the db should be different from the join one
 	leaveStruct := chatmodel.GroupActionInfo{
