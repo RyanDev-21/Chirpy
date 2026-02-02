@@ -15,20 +15,32 @@ import (
 //NOTE::you really need centralized encoder and decoder
 //there is a code duplication in this fucntion
 //the channel will be blocked if there is no value in the channel
-//so as long as they have value in it each worker will try to get that and 
+//so as long as they have value in it each worker will try to get that an 
 //then process it
 func (s *groupService)StartWorkerForCreateGroup(channel chan *mq.Channel){
 	for chen := range channel{
 		msg := chen.Msg.(GroupPublish)
 		groupID := msg.GroupID.ChatID
 		groupInfo := msg.GroupInfo
-		err := s.groupRepo.createGroup(groupID,createGroupRequest{
+		err := s.groupRepo.createGroup(groupID,createGroupStruct{
 			GroupName: groupInfo.GroupName,
 			Description: groupInfo.Description,
-			MaxMems: groupInfo.MaxMems ,
+			MaxMems: groupInfo.MaxMems,
+			CurrentMem: groupInfo.CurrentMem,
 		})
-
 		if err !=nil{
+			log.Printf("failed to create the group %v",err)
+				chen.RetriesCount ++
+		 s.mq.Republish(chen,chen.RetriesCount)		
+			continue	
+		}	
+		err = s.groupRepo.createGroupLeader(creatorPublishStruct{
+			GroupID: msg.GroupID.ChatID,
+			UserID: msg.CreatorID,
+			Role: msg.Role,
+		})
+		if err !=nil{
+		
 		log.Printf("failed to create the group #%s#",err)
 			chen.RetriesCount ++
 		 s.mq.Republish(chen,chen.RetriesCount)		
@@ -38,25 +50,7 @@ func (s *groupService)StartWorkerForCreateGroup(channel chan *mq.Channel){
 	}	
 
 }
-func (s *groupService)StartWorkerForCreateGroupLeader(channel chan *mq.Channel){
-	for chen := range channel{
-		msg := chen.Msg.(creatorPublishStruct)	
-		err := s.groupRepo.createGroupLeader(creatorPublishStruct{
-				GroupID: msg.GroupID,
-				UserID: msg.UserID,
-				Role: msg.Role,
-		})
 
-		if err !=nil{
-			log.Printf("failed to create a creator: %v",err)
-			chen.RetriesCount ++
-		 s.mq.Republish(chen,chen.RetriesCount)		
-			continue	
-		}
-		log.Printf("Doned the group leader worker %v",chen.LocalTag)
-	}	
-
-}
 
 //worker should only have to worry about the i/o operation
 func (s *groupService)StartWorkerForAddMemberList(channel chan *mq.Channel){

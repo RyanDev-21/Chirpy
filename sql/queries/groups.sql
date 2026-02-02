@@ -1,10 +1,11 @@
 -- name: CreateGroup :one
-INSERT INTO chat_groups(id,name,description,max_member)
+INSERT INTO chat_groups(id,name,description,max_member,current_member)
 VALUES(
     $1,
     $2,
     $3,
-    $4
+    $4,
+    $5
 )
 RETURNING *;
 
@@ -50,4 +51,6 @@ INSERT INTO member_table(group_id,member_id) VALUES($1,$2);
 -- name: DeleteMemFromGroup :exec
 DELETE FROM member_table WHERE group_id = $1 AND member_id = $2;
 
+-- name: GetMemFromGroup :one
+SELECT * FROM member_table WHERE group_id = $1 AND member_id = $2;
 

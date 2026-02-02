@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -626,7 +627,7 @@ func main() {
 	}
 
 	rediscache := rediscache.NewRedisCacheImpl(cacheClient)
-	chatCache := chatmodel.NewChatRepoCache(rediscache)
+	chatCache := chat.NewChatCache(rediscache)
 	//Create Repositories
 	userRepo := users.NewUserRepo(dbQueries)
 	authRepo := authClient.NewAuthRepo(dbQueries)
@@ -638,11 +639,18 @@ func main() {
 	//set up user cache
 	userCache := users.NewUserCache(userRepo)
 	go userCache.Load()
+
+	//initiate logger
+	logger := slog.Default();
+
 	//Create Services
-	userService := users.NewUserService(userRepo, userCache, mq)
-	authService := authClient.NewAuthService(userRepo, authRepo, apicfg.secret)
+	userService := users.NewUserService(userRepo, userCache, mq,logger)
+	authService := authClient.NewAuthService(userRepo, authRepo, apicfg.secret,logger)
 	chatService := chat.NewChatService(chatRepo, hub, mq, chatCache)
-	groupService := groups.NewGroupService(groupRepo, hub, mq, groupCache)
+	groupService := groups.NewGroupService(groupRepo, hub, mq, groupCache,logger)
+	
+
+
 
 	//Create Hanlders
 	userHandler := users.NewUserHandler(userService)
@@ -650,13 +658,15 @@ func main() {
 	chatHandler := chat.NewChatHandler(chatService)
 	groupHandler := groups.NewGroupHandler(groupService)
 
+	
+
 	//startup workers for each event
 	// run the message queue
 
 	//right now the topic name for job are hand coded should change that later
 	go mq.Run()
 	go mq.ListeningForTheChannels("createGroup", 100, groupService.StartWorkerForCreateGroup)
-	go mq.ListeningForTheChannels("addCreator", 100, groupService.StartWorkerForCreateGroupLeader)
+//	go mq.ListeningForTheChannels("addCreator", 100, groupService.StartWorkerForCreateGroupLeader)
 	go mq.ListeningForTheChannels("addMemberList", 100, groupService.StartWorkerForAddMember)
 	go mq.ListeningForTheChannels("addMember", 100, groupService.StartWorkerForAddMemberList)
 	go mq.ListeningForTheChannels("removeGroupMember", 100, groupService.StartWorkerForLeaveMember)
@@ -665,6 +675,8 @@ func main() {
 	go mq.ListeningForTheChannels(users.DeleteFriReq, 100, userService.StartWorkerForDeleteReq)
 	go mq.ListeningForTheChannels(users.CancelReq, 100, userService.StartWorkerForCancelReq)
 
+	go mq.ListeningForTheChannels("privateMsg",1000,chatService.StartWorkerForAddPrivateMessage)
+	go mq.ListeningForTheChannels("publicMsg",1000,chatService.StartWorkerForAddPublicMessage)
 	//Main app route
 	mux.Handle("/app/", middleWareLog(finalHanlder))
 	//Asset route
@@ -681,9 +693,9 @@ func main() {
 	//POST route
 	mux.HandleFunc("POST /admin/metrics/reset", apicfg.ResetHandle)
 	mux.HandleFunc("POST /api/chirps", apicfg.ChirpHandle)
-	mux.HandleFunc("POST /api/users", userHandler.Register)
+	mux.Handle("POST /api/users", middleware.MiddelWareLog(userHandler.Register))
 	mux.HandleFunc("POST /admin/reset", apicfg.UserResetHandle)
-	mux.HandleFunc("POST /api/login", authHandler.Login)
+	mux.Handle("POST /api/login", middleware.MiddelWareLog(authHandler.Login))
 	mux.HandleFunc("POST /api/refresh", authHandler.RefreshToken)
 	mux.HandleFunc("POST /api/revoke", authHandler.Revoke)
 
@@ -701,23 +713,24 @@ func main() {
 
 	//UpdatePassword route
 	//uses middleware to parse the userID
-	mux.Handle("POST /api/users/password", middleware.AuthMiddleWare(userHandler.UpdatePassword, apicfg.secret))
+	mux.Handle("POST /api/users/password", middleware.AuthMiddleWare(userHandler.UpdatePassword, apicfg.secret,logger))
 
 	//DELETE route
 	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apicfg.ChirpDeleteHandle)
 
 	//Maybe endpoint for chat
-	mux.Handle("GET /api/chats", middleware.AuthMiddleWare(chatHandler.ServeWs, apicfg.secret))
+	//WARN: why is this method get maybe consider smth
+	mux.Handle("GET /api/chats", middleware.AuthMiddleWare(chatHandler.ServeWs, apicfg.secret,logger))
 
 	//create a group
-	mux.Handle("POST /api/chats/groups", middleware.AuthMiddleWare(groupHandler.CreateGroup, apicfg.secret))
+	mux.Handle("POST /api/chats/groups", middleware.AuthMiddleWare(groupHandler.CreateGroup, apicfg.secret,logger))
 
 	//need to update these dummy function
 	//join group
-	mux.Handle("POST /api/chats/groups/{group_id}/members", middleware.AuthMiddleWare(groupHandler.JoinGroup, apicfg.secret))
+	mux.Handle("POST /api/chats/groups/{group_id}/members", middleware.AuthMiddleWare(groupHandler.JoinGroup, apicfg.secret,logger))
 
 	//leave group
-	mux.Handle("DELETE /api/chats/groups/{group_id}/members", middleware.AuthMiddleWare(groupHandler.LeaveGroup, apicfg.secret))
+	mux.Handle("DELETE /api/chats/groups/{group_id}/members", middleware.AuthMiddleWare(groupHandler.LeaveGroup, apicfg.secret,logger))
 
 	//TODO::still have to write this one
 	//kick or add the user from or to the group
@@ -730,13 +743,18 @@ func main() {
 	//NOTE:: i should really consider making the server as my own config and graceful shutdown
 
 	//ednpoint for add friend
-	mux.Handle("POST /api/friends/requests", middleware.AuthMiddleWare(userHandler.AddFriend, apicfg.secret))
+	mux.Handle("POST /api/friends/requests", middleware.AuthMiddleWare(userHandler.AddFriend, apicfg.secret,logger))
 
-	mux.Handle("GET /api/friends/requests", middleware.AuthMiddleWare(userHandler.GetPendingList, apicfg.secret))
-	mux.Handle("PUT /api/friends/requests/{request_id}/", middleware.AuthMiddleWare(userHandler.UpdateReq, apicfg.secret))
-	mux.Handle("DELETE /api/friends/requests/{request_id}/", middleware.AuthMiddleWare(userHandler.AddFriend, apicfg.secret))
+	mux.Handle("GET /api/friends/requests", middleware.AuthMiddleWare(userHandler.GetPendingList, apicfg.secret,logger))
+	mux.Handle("PUT /api/friends/requests/{request_id}/", middleware.AuthMiddleWare(userHandler.UpdateReq, apicfg.secret,logger))
+	mux.Handle("DELETE /api/friends/requests/{request_id}/", middleware.AuthMiddleWare(userHandler.AddFriend, apicfg.secret,logger))
 	mux.Handle("GET /api/friends", middleware.AuthMiddleWare(
-		userHandler.GetFriendList, apicfg.secret))
+		userHandler.GetFriendList, apicfg.secret,logger))
+
+
+	//endpoint for send message
+	//maybe need to consider about making the chatID	
+	mux.Handle("POST /api/chat/",middleware.AuthMiddleWare(chatHandler.SendMessage,apicfg.secret,logger))//dummy function for now
 
 	server := http.Server{
 		Addr:    Port,
