@@ -88,12 +88,18 @@ func (s *groupService)StartWorkerForAddMember(channel chan *mq.Channel){
 	for chen := range channel{
 		msg := chen.Msg.(ManageGroupPublishStruct)		
 		//the reason i didn't check the map and its existent is this endpoint will be only available when there is a group
-		contex,cancel := context.WithTimeout(context.Background(),1*time.Second)
-		defer cancel()
-		err := s.groupRepo.addMember(contex,&database.AddMemberParams{
-	GroupID: msg.GroupId,
-	MemberID: msg.UserID,
-		})	
+			
+		err :=func ()error{
+		
+			contex,cancel := context.WithTimeout(context.Background(),1*time.Second)
+			defer cancel()	
+			err := s.groupRepo.addMember(contex,&database.AddMemberParams{
+				GroupID: msg.GroupId,
+				MemberID: msg.UserID,
+			})
+			return err
+		}()
+
 		if err !=nil{
 			log.Printf("failed to add member: %v",err)
 			chen.RetriesCount ++

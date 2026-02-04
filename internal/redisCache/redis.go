@@ -28,6 +28,7 @@ type RedisCacheImpl interface{
 	HDel(ctx context.Context, key, field string) error
 	RPush(ctx context.Context, key string, val interface{}) error
 	LRange(ctx context.Context, key string, start, stop int64) ([]string, error)
+	XAdd(ctx context.Context,key string,values ...interface{})error	
 }
 
 func NewRedisClient()(redis.UniversalClient,error) {
@@ -53,6 +54,10 @@ func NewRedisCacheImpl(rdb redis.UniversalClient)RedisCacheImpl{
 	return &RedisCache{
 		redis: rdb,
 	}
+}
+
+func (rc *RedisCache)XAdd(ctx context.Context,key string,values ...interface{})error{
+	return rc.redis.HSet(ctx, key, values).Err()
 }
 
 func (rc *RedisCache)Get(ctx context.Context,key string,dst interface{})(bool,error){
