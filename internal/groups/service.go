@@ -131,20 +131,23 @@ func (s *groupService)joinGroup(ctx context.Context,groupID uuid.UUID,userID uui
 	if groupInfo.TotalMem ==groupInfo.MaxMem{
 		return ErrGroupFull	
 	}
+
+		
 		//update the group member list
 		//NOTE::maybe should check about the dupli err in cache before processing
 	go func(groupID,userID uuid.UUID){
 			s.groupCache.memMuLock.Lock();
-			memberLists := s.groupCache.MemberCache[groupID]
+			defer s.groupCache.memMuLock.Unlock();	
+		memberLists := s.groupCache.MemberCache[groupID]
 			*s.groupCache.MemberCache[groupID] = append(*memberLists,userID)
-			s.groupCache.groupMuLock.Unlock();
+			
 	}(groupID,userID)
 		
 	//update the group's metadata
 	go func(groupID,userID uuid.UUID){
 		s.groupCache.groupMuLock.Lock();
+		defer s.groupCache.groupMuLock.Unlock()
 		s.groupCache.GroupCache[groupID].TotalMem +=1;
-		s.groupCache.groupMuLock.Unlock();
 	}(groupID,userID)
 	
 

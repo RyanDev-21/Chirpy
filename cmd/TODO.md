@@ -10,4 +10,9 @@ NOTE:: userRoute/endpoints need to be fixed in RESTFUL way .
 --users/{user_id}/password --for password update with POST method
 -- need to rethink about this while caching and message queue
 
+NOTE:: need to use redis steam for messages cache
+-- need to implement function for generate key for chatID (for both public and
+private) like usersID:chatID(chatID = otherUserID+userID when private)
+-- need to update storing the message id too should only store what returns id
+from xadding into redis stream 
 
