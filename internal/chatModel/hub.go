@@ -59,6 +59,15 @@ func (h *Hub)WriteIntoConnection(clientID uuid.UUID,msg *Message)error{
 	return ErrNoClientFound
 }
 
+// func (h *Hub)CheckOnline(clientID uuid.UUID)bool{
+// 	h.ClientMux.RLock()
+// 	defer h.ClientMux.RUnlock()
+// 	if _,ok:= h.Clients[clientID.String()];ok{
+// 		return true
+// 	}
+// 	return false
+// }
+
 // this is getting bloated need to refactor later
 func (h *Hub) Run() {
 	for {

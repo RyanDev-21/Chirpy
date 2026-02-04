@@ -106,6 +106,10 @@ func (cache *Cache)GetFromGroup(groupID uuid.UUID)(*CacheGroupInfo,error){
 	return info,nil
 }
 
+// func (cache *Cache)GetMemListFromGroup(groupID uuid.UUID)*[]uuid.UUID{
+// 	if v,ok:=cache.MemberCache[groupID]	
+// }
+
 
 //this will give the memberids list in the group
 func (cache *Cache)GetFromMember(groupID uuid.UUID)(*[]uuid.UUID,error){

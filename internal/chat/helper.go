@@ -13,13 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-func getChatKey(firstID,secondID uuid.UUID)string{
-	if firstID.String()<secondID.String(){
-		return fmt.Sprintf("%v_%v",firstID,secondID)
-	}	
-	return fmt.Sprintf("%v_%v",secondID,firstID)
-}
-
 func getPayload(msgId ,userID uuid.UUID,msg *chatmodel.Message)*chatmodel.MessageMetaData{ 
 	return &chatmodel.MessageMetaData{
 		ID: msgId,
@@ -32,41 +25,49 @@ func getPayload(msgId ,userID uuid.UUID,msg *chatmodel.Message)*chatmodel.Messag
 
 //gen the unique msgID and store in cache and db
 //this one needs a parseID as the chatID need to generate and stuff
-func handlePrivateMsg(clientID,parseID uuid.UUID,msg *chatmodel.Message,cache ChatRepoCache){
+func handlePrivateMsg(clientID,parseID uuid.UUID,msg *chatmodel.Message,cache ChatRepoCache)error{
 	context,cancel := context.WithTimeout(context.Background(),1*time.Second)
 		defer cancel()
 	//generate  for the chatID
-		key := getChatKey(clientID,parseID)
+		key := cache.getChatKey(clientID,parseID)
 		//has to generate the uuid for the messageId
 		msgID,err := uuid.NewV7()	
 		if err !=nil{
-			log.Fatal("failed to get the uuidv7")
-		}
+			log.Print("failed to get the uuidv7")
+			return err	
+	}
 
 		payload :=getPayload(msgID,clientID,msg)
 		//first need to update the cache
-		err=cache.AddMessage(context,key,payload)	
-		if err !=nil{
-		log.Fatal("failed to stroe into the cache \n #%s#",err)
+		err=cache.addMessage(context,key,payload)	
+	if err !=nil{
+		log.Printf("failed to store into the cache \n #%s#",err)
+		return err	
 	}
-	
+	//need to send into hub sent 
+	return nil	
 }
 
 //gen msgID and store it in cache and group db
-func handlePublicMsg(clientID uuid.UUID,msg *chatmodel.Message,cache ChatRepoCache){
+func handlePublicMsg(clientID uuid.UUID,msg *chatmodel.Message,cache ChatRepoCache)error{
 	context, cancel:=context.WithTimeout(context.Background(),1*time.Second)
 	defer cancel()
 	chatID :=msg.ToID
 	msgID,err := uuid.NewV7()	
 		if err !=nil{
-			log.Fatal("failed to get the uuidv7")
+			log.Print("failed to get the uuidv7")
+			return err
 		}
 	payload :=getPayload(msgID,clientID,msg)
-	err=cache.AddMessage(context,chatID,payload)	
+	err=cache.addMessage(context,chatID,payload)	
 		if err !=nil{
-		log.Fatal("failed to stor into the cache \n #%s#",err)
+		log.Printf("failed to stor into the cache \n #%s#",err)
+		return err
 	}
-}
+	return nil
+} 
+
+//this is just helper fucntion to pub the job with context
 func publishJobHelper(job string,payload interface{},msgQ *mq.MainMQ){
 	//dummy logger for now
 	logger := slog.Default()
