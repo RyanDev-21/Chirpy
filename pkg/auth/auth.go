@@ -120,7 +120,7 @@ func MakeRefreshToken() (string, error) {
 
 // get both access and refresh and do the thing need to be doing (storing and stuff)
 func GetAccessTokenAndRefreshToken(ctx context.Context, userID uuid.UUID, secret string, queries *database.Queries) (string, string, error) {
-	expireIn := 15 * time.Minute
+	expireIn := 30 * time.Minute
 	accessToken, err := MakeJWT(userID, secret, expireIn)
 	if err != nil {
 		log.Printf("failed to make accessToken %s", err)
