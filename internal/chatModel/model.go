@@ -27,8 +27,20 @@ type MessageCache struct {
 	Msg    Message
 	FromID uuid.UUID
 }
+type MessageList struct {
+	MsgList *[]MessageMetaData
+}
 
+type MessageListRes struct {
+	ChatID  string               `json:"chat_id"`
+	MsgList []MessageMetaDataRes `json:"msgList"`
+}
 type MessageMetaData struct {
 	ID      uuid.UUID
 	MsgInfo *MessageCache
+}
+
+type MessageMetaDataRes struct {
+	ID      uuid.UUID    `json:"message_id"`
+	MsgInfo MessageCache `json:"message_info"`
 }

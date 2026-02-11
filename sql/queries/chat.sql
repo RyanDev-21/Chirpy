@@ -19,3 +19,9 @@ VALUES(
 )
 RETURNING *;
 
+-- name: GetMessagesForPrivate :many
+SELECT * FROM message WHERE from_id = $1 AND  to_id = $2 OR from_id = $2 AND to_id= $1;
+
+
+-- name: GetMessagesForPublic :many
+SELECT * FROM GroupMessage WHERE group_id = $1;

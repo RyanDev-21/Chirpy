@@ -72,3 +72,19 @@ func (h *chatHandler)SendMessage(w http.ResponseWriter,r *http.Request){
 	}	
 	w.WriteHeader(201)
 }
+
+//
+// func (h *chatHandler)GetMesagesForID(w http.ResponseWriter,r *http.Request){
+// 	userID,err:=middleware.GetContextKey(r.Context(),"user")
+// 	if err !=nil{
+// 		log.Printf("failed to get the id")
+// 		response.Error(w,401,"unauthorized")
+// 		return
+// 	}
+// 	chatID:=r.PathValue("chat_id")
+// 	if chatID==""{
+// 		response.Error(w,400,"invalid request")
+// 	}
+// 	msgList,err:=h.chatService.fetchMessagePrivate()
+//
+// }
