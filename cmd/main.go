@@ -700,7 +700,7 @@ func main() {
 	mux.Handle("POST /api/users/password", middleware.AuthMiddleWare(userHandler.UpdatePassword, apicfg.secret, logger))
 
 	// DELETE route
-	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apicfg.ChirpDeleteHandle)
+	mpux.HandleFunc("DELETE /api/chirps/{chirpID}", apicfg.ChirpDeleteHandle)
 
 	// Maybe endpoint for chat
 	// WARN: why is this method get maybe consider smth

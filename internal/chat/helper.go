@@ -2,44 +2,47 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
 	"time"
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
-	mq "RyanDev-21.com/Chirpy/internal/customMq"
+	"RyanDev-21.com/Chirpy/internal/database"
 	"RyanDev-21.com/Chirpy/pkg/helper"
 	"github.com/google/uuid"
 )
 
-func getPayload(msgId ,userID uuid.UUID,msg *chatmodel.Message)*chatmodel.MessageMetaData{ 
+func getChatKey(firstID,secondID  uuid.UUID)string{
+	if firstID.String()<secondID.String(){
+		return fmt.Sprintf("%v_%v",firstID,secondID)
+	}	
+	return fmt.Sprintf("%v_%v",secondID,firstID)
+}
+
+// func updateChatCache(msgList *[]chatmodel.MessageMetaData)error{
+// 	for 	
+// 	return nil
+// }
+
+
+func getPayload(userID,msgID uuid.UUID,msg *chatmodel.Message)*chatmodel.MessageMetaData{
 	return &chatmodel.MessageMetaData{
-		ID: msgId,
+		ID: msgID,
 		MsgInfo: &chatmodel.MessageCache{
-			Msg: *msg,
 			FromID: userID,
+			Msg: *msg,
 		},
 	}
 }
 
 //gen the unique msgID and store in cache and db
 //this one needs a parseID as the chatID need to generate and stuff
-func handlePrivateMsg(clientID,parseID uuid.UUID,msg *chatmodel.Message,cache ChatRepoCache)error{
-	context,cancel := context.WithTimeout(context.Background(),1*time.Second)
-		defer cancel()
-	//generate  for the chatID
-		key := cache.getChatKey(clientID,parseID)
-		//has to generate the uuid for the messageId
-		msgID,err := uuid.NewV7()	
-		if err !=nil{
-			log.Print("failed to get the uuidv7")
-			return err	
-	}
-
-		payload :=getPayload(msgID,clientID,msg)
-		//first need to update the cache
-		err=cache.addMessage(context,key,payload)	
+func (s *chatService)handlePrivateMsg(ctx context.Context,userID,parseID uuid.UUID,msg *chatmodel.MessageMetaData)error{
+		key := getChatKey(userID,parseID)
+		redisKey := s.rediscache.generateRedisKey(userID,key)	
+	err:=s.rediscache.addMessage(ctx,redisKey,msg)
 	if err !=nil{
 		log.Printf("failed to store into the cache \n #%s#",err)
 		return err	
@@ -49,17 +52,10 @@ func handlePrivateMsg(clientID,parseID uuid.UUID,msg *chatmodel.Message,cache Ch
 }
 
 //gen msgID and store it in cache and group db
-func handlePublicMsg(clientID uuid.UUID,msg *chatmodel.Message,cache ChatRepoCache)error{
-	context, cancel:=context.WithTimeout(context.Background(),1*time.Second)
-	defer cancel()
-	chatID :=msg.ToID
-	msgID,err := uuid.NewV7()	
-		if err !=nil{
-			log.Print("failed to get the uuidv7")
-			return err
-		}
-	payload :=getPayload(msgID,clientID,msg)
-	err=cache.addMessage(context,chatID,payload)	
+func (s *chatService)handlePublicMsg(ctx context.Context,userID uuid.UUID,msg *chatmodel.MessageMetaData)error{
+	chatID :=msg.MsgInfo.Msg.ToID
+	key := s.rediscache.generateRedisKey(userID,chatID)
+	err:=s.rediscache.addMessage(ctx,key,msg)	
 		if err !=nil{
 		log.Printf("failed to stor into the cache \n #%s#",err)
 		return err
@@ -68,14 +64,72 @@ func handlePublicMsg(clientID uuid.UUID,msg *chatmodel.Message,cache ChatRepoCac
 } 
 
 //this is just helper fucntion to pub the job with context
-func publishJobHelper(job string,payload interface{},msgQ *mq.MainMQ){
+func (s *chatService)publishJobHelper(job string,payload interface{}){
 	//dummy logger for now
 	logger := slog.Default()
 	context,cancel := context.WithTimeout(context.Background(),1*time.Second)
 	defer cancel()
-	err:=msgQ.PublishWithContext(context,job,payload)	
+	err:=s.mq.PublishWithContext(context,job,payload)	
 	if err !=nil{
 		helper.SaveIntoLog(job,payload,logger)	
 	}
 
+}
+
+
+func convertFromMessageToMeta(msg database.Message)*chatmodel.MessageMetaData{
+	return &chatmodel.MessageMetaData{
+		ID: msg.ID,
+		MsgInfo: &chatmodel.MessageCache{
+			FromID: uuid.UUID(msg.FromID.Bytes),	
+			Msg: chatmodel.Message{
+				ToID: msg.ToID.String(),
+				Content: msg.Content.String,
+				ParendID: msg.Parentid.String(),
+				Type: "private",
+			},	
+		},	
+	}
+}
+func convertFromGroupMessageToMeta(msg database.Groupmessage)*chatmodel.MessageMetaData{
+	return &chatmodel.MessageMetaData{
+		ID: msg.ID,
+		MsgInfo:&chatmodel.MessageCache{
+			FromID: uuid.UUID(msg.FromID.Bytes),	
+			Msg: chatmodel.Message{
+				ToID: msg.GroupID.String(),
+				Content: msg.Content.String,
+				ParendID: msg.ParentID.String(),
+				Type: "public",
+			},	
+		},	
+	}
+}
+
+func convertToMsgMetaList[T any](msgList *[]T)(*chatmodel.MessageListRes,error){
+	var msgMetaList []chatmodel.MessageMetaDataRes
+	for _,v := range *msgList{
+		var payload *chatmodel.MessageMetaDataRes
+		switch value:=any(v).(type){
+		case database.Message:
+			msgMetaData:=convertFromMessageToMeta(value)
+			payload = &chatmodel.MessageMetaDataRes{
+				ID: msgMetaData.ID,
+				MsgInfo: *msgMetaData.MsgInfo,
+			}
+		case database.Groupmessage:
+			msgMetaData:= convertFromGroupMessageToMeta(value)
+			payload = &chatmodel.MessageMetaDataRes{
+				ID: msgMetaData.ID,
+				MsgInfo: *msgMetaData.MsgInfo,
+			}
+		default:
+			return nil,errors.New("not supported type")
+		}	
+		msgMetaList=append(msgMetaList,*payload)
+		}
+	
+	return &chatmodel.MessageListRes{
+		MsgList:msgMetaList,
+	},nil
 }

@@ -53,8 +53,8 @@ CREATE TABLE member_table(
 -- +goose Down
 DROP TABLE message;
 DROP TABLE GroupMessage;
-DROP TABLE chat_groups;
 DROP TABLE member_table;
+DROP TABLE chat_groups;
 
 
 

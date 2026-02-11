@@ -94,3 +94,74 @@ func (q *Queries) AddMessagePublic(ctx context.Context, arg AddMessagePublicPara
 	)
 	return i, err
 }
+
+const getMessagesForPrivate = `-- name: GetMessagesForPrivate :many
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at FROM message WHERE from_id = $1 AND  to_id = $2 OR from_id = $2 AND to_id= $1
+`
+
+type GetMessagesForPrivateParams struct {
+	FromID pgtype.UUID
+	ToID   pgtype.UUID
+}
+
+func (q *Queries) GetMessagesForPrivate(ctx context.Context, arg GetMessagesForPrivateParams) ([]Message, error) {
+	rows, err := q.db.Query(ctx, getMessagesForPrivate, arg.FromID, arg.ToID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.Parentid,
+			&i.FromID,
+			&i.ToID,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getMessagesForPublic = `-- name: GetMessagesForPublic :many
+SELECT id, content, group_id, from_id, parent_id, created_at, updated_at, deleted_at FROM GroupMessage WHERE id = $1
+`
+
+func (q *Queries) GetMessagesForPublic(ctx context.Context, id uuid.UUID) ([]Groupmessage, error) {
+	rows, err := q.db.Query(ctx, getMessagesForPublic, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Groupmessage
+	for rows.Next() {
+		var i Groupmessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.GroupID,
+			&i.FromID,
+			&i.ParentID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

@@ -14,8 +14,8 @@ func marshallBinary(payload interface{})([]byte,error){
 	return buff.Bytes(),err
 }
 
-func unmarshalBinary(bytesArray []byte)(*chatmodel.MessageMetaData,error){
-	var payload *chatmodel.MessageMetaData
+func unmarshalBinary(bytesArray []byte)(*chatmodel.MessageCache,error){
+	var payload *chatmodel.MessageCache
 	var buff bytes.Buffer
 	dec :=gob.NewDecoder(&buff)
 
