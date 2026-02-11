@@ -11,74 +11,85 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-//need to implement get set and hget and hset and stuff
-//for only chat messages
-type RedisCache struct{
+// need to implement get set and hget and hset and stuff
+// for only chat messages
+type RedisCache struct {
 	redis redis.UniversalClient
 }
 
-type RedisCacheImpl interface{
-	Get(ctx context.Context,key string,dst interface{})(bool,error)
-	Set(ctx context.Context,key string,val interface{})error
-	Delete(ctx context.Context,key string)error
-	HGet(ctx context.Context,key,field string,dst interface{})(bool,error)
+type RedisCacheImpl interface {
+	Get(ctx context.Context, key string, dst interface{}) (bool, error)
+	Set(ctx context.Context, key string, val interface{}) error
+	Delete(ctx context.Context, key string) error
+	HGet(ctx context.Context, key, field string, dst interface{}) (bool, error)
 	HMGet(ctx context.Context, key string, fields []string) ([]interface{}, error)
 	HGetAll(ctx context.Context, key string) (map[string]string, error)
 	HSet(ctx context.Context, key string, values ...interface{}) error
 	HDel(ctx context.Context, key, field string) error
 	RPush(ctx context.Context, key string, val interface{}) error
 	LRange(ctx context.Context, key string, start, stop int64) ([]string, error)
-	XAdd(ctx context.Context,key string,values ...interface{})error	
+	XAdd(ctx context.Context, stream string, values ...interface{})  error
+	XRangeN(ctx context.Context,key string)([]redis.XMessage,error)
 }
 
-func NewRedisClient()(redis.UniversalClient,error) {
+func NewRedisClient() (redis.UniversalClient, error) {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     "redis-10979.c292.ap-southeast-1-1.ec2.cloud.redislabs.com:10979",
 		Username: "default",
 		Password: "dKtoeF3RH6WhCU34GmXj6whNDGXlrWEC",
 		DB:       0,
 	})
-	
+
 	context := context.Background()
-	_,err:=rdb.Ping(context).Result()	
-	if err == redis.Nil || err !=nil{
-		return nil,err
+	_, err := rdb.Ping(context).Result()
+	if err == redis.Nil || err != nil {
+		return nil, err
 	}
-	if err = redisotel.InstrumentTracing(rdb); err!=nil{
-		return nil,err
+	if err = redisotel.InstrumentTracing(rdb); err != nil {
+		return nil, err
 	}
-	return rdb,nil
+	return rdb, nil
 }
 
-func NewRedisCacheImpl(rdb redis.UniversalClient)RedisCacheImpl{
+func NewRedisCacheImpl(rdb redis.UniversalClient) RedisCacheImpl {
 	return &RedisCache{
 		redis: rdb,
 	}
 }
 
-func (rc *RedisCache)XAdd(ctx context.Context,key string,values ...interface{})error{
-	return rc.redis.HSet(ctx, key, values).Err()
+func(rc *RedisCache)XRangeN(ctx context.Context,key string)([]redis.XMessage,error){
+	cmd:= rc.redis.XRangeN(ctx,key,"+","-",50)
+	return cmd.Result()
 }
 
-func (rc *RedisCache)Get(ctx context.Context,key string,dst interface{})(bool,error){
-	val, err:= rc.redis.Get(ctx,key).Result()
-	if err !=nil{
-		if err == redis.Nil{
-			return false,nil
+func (rc *RedisCache) XAdd(ctx context.Context, key string, values ...interface{})  error {
+	_, err := rc.redis.XAdd(ctx, &redis.XAddArgs{
+		Stream: key,
+		MaxLen: 100,
+		Values: map[string]interface{}{
+			"message_id": values[0],
+			"payload":values[1],
+		},
+	}).Result()
+	return err
+}
+
+func (rc *RedisCache) Get(ctx context.Context, key string, dst interface{}) (bool, error) {
+	val, err := rc.redis.Get(ctx, key).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return false, nil
 		}
-		return false,err
+		return false, err
 	}
-	if err = json.Unmarshal([]byte(val),dst);err!=nil{
-		return false,err
+	if err = json.Unmarshal([]byte(val), dst); err != nil {
+		return false, err
 	}
-	return true,nil
+	return true, nil
 }
-
-
-
 
 func (rc *RedisCache) Set(ctx context.Context, key string, val interface{}) error {
-	if err := rc.redis.Set(ctx, key, val,10*time.Hour).Err(); err != nil {
+	if err := rc.redis.Set(ctx, key, val, 10*time.Hour).Err(); err != nil {
 		return err
 	}
 	return nil

@@ -5,7 +5,8 @@ import (
 	"time"
 
 	"RyanDev-21.com/Chirpy/internal/database"
-//	rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
+	"github.com/google/uuid"
+	// rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
 )
 
 
@@ -17,6 +18,8 @@ type chatRepo struct{
 type ChatRepo interface{
 	AddMessagePrivate(payload *database.AddMessagePrivateParams)(*database.Message,error)
 	AddMessagePublic(payload *database.AddMessagePublicParams)(*database.Groupmessage,error)
+	GetMessagesForPrivate(ctx context.Context,fromID,toID uuid.UUID)(*[]database.Message,error)
+	GetMessagesForPublic(ctx context.Context,toID uuid.UUID)(*[]database.Groupmessage,error)
 }
 
 
@@ -39,5 +42,26 @@ func (r *chatRepo)AddMessagePublic(payload *database.AddMessagePublicParams)(*da
 	res,err :=r.queries.AddMessagePublic(ctx,*payload)
 	return &res,err
 }
+
+func (r *chatRepo)GetMessagesForPrivate(ctx context.Context,fromID,toID uuid.UUID)(*[]database.Message,error){
+	message ,err := r.queries.GetMessagesForPrivate(ctx,database.GetMessagesForPrivateParams{
+		FromID: *GetUUIDType(fromID),
+		ToID: *GetUUIDType(toID),
+	})
+	if err!=nil{
+		return nil,err
+	}
+	return &message,nil
+}
+
+func (r *chatRepo)GetMessagesForPublic(ctx context.Context,toID uuid.UUID)(*[]database.Groupmessage,error){
+	message ,err := r.queries.GetMessagesForPublic(ctx,toID)
+	if err!=nil{
+		return nil,err
+	}
+	return &message,nil
+}
+
+
 
 
