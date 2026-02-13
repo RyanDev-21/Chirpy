@@ -134,11 +134,11 @@ func (q *Queries) GetMessagesForPrivate(ctx context.Context, arg GetMessagesForP
 }
 
 const getMessagesForPublic = `-- name: GetMessagesForPublic :many
-SELECT id, content, group_id, from_id, parent_id, created_at, updated_at, deleted_at FROM GroupMessage WHERE id = $1
+SELECT id, content, group_id, from_id, parent_id, created_at, updated_at, deleted_at FROM GroupMessage WHERE group_id = $1
 `
 
-func (q *Queries) GetMessagesForPublic(ctx context.Context, id uuid.UUID) ([]Groupmessage, error) {
-	rows, err := q.db.Query(ctx, getMessagesForPublic, id)
+func (q *Queries) GetMessagesForPublic(ctx context.Context, groupID pgtype.UUID) ([]Groupmessage, error) {
+	rows, err := q.db.Query(ctx, getMessagesForPublic, groupID)
 	if err != nil {
 		return nil, err
 	}

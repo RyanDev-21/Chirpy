@@ -635,7 +635,7 @@ func main() {
 	// Create Services
 	userService := users.NewUserService(userRepo, userCache, mq, logger)
 	authService := authClient.NewAuthService(userRepo, authRepo, apicfg.secret, logger)
-	chatService := chat.NewChatService(chatRepo, hub, mq, chatCache)
+	chatService := chat.NewChatService(chatRepo, hub, mq, chatCache, groupCache)
 	groupService := groups.NewGroupService(groupRepo, hub, mq, groupCache, logger)
 
 	// Create Hanlders
@@ -659,8 +659,8 @@ func main() {
 	go mq.ListeningForTheChannels(users.DeleteFriReq, 100, userService.StartWorkerForDeleteReq)
 	go mq.ListeningForTheChannels(users.CancelReq, 100, userService.StartWorkerForCancelReq)
 
-	go mq.ListeningForTheChannels("privateMsg", 1000, chatService.StartWorkerForAddPrivateMessage)
-	go mq.ListeningForTheChannels("publicMsg", 1000, chatService.StartWorkerForAddPublicMessage)
+	go mq.ListeningForTheChannels(chatmodel.PrivateMessageConstant, 1000, chatService.StartWorkerForAddPrivateMessage)
+	go mq.ListeningForTheChannels(chatmodel.PublicMessageConstant, 1000, chatService.StartWorkerForAddPublicMessage)
 	// Main app route
 	mux.Handle("/app/", middleWareLog(finalHanlder))
 	// Asset route
@@ -700,11 +700,11 @@ func main() {
 	mux.Handle("POST /api/users/password", middleware.AuthMiddleWare(userHandler.UpdatePassword, apicfg.secret, logger))
 
 	// DELETE route
-	mpux.HandleFunc("DELETE /api/chirps/{chirpID}", apicfg.ChirpDeleteHandle)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apicfg.ChirpDeleteHandle)
 
 	// Maybe endpoint for chat
 	// WARN: why is this method get maybe consider smth
-	mux.Handle("GET /api/chats", middleware.AuthMiddleWare(chatHandler.ServeWs, apicfg.secret, logger))
+	mux.Handle("GET /api/chats/ws", middleware.AuthMiddleWare(chatHandler.ServeWs, apicfg.secret, logger))
 
 	// create a group
 	mux.Handle("POST /api/chats/groups", middleware.AuthMiddleWare(groupHandler.CreateGroup, apicfg.secret, logger))
@@ -737,11 +737,14 @@ func main() {
 
 	// endpoint for send message
 	// maybe need to consider about making the chatID
-	mux.Handle("POST /api/chat/", middleware.AuthMiddleWare(chatHandler.SendMessage, apicfg.secret, logger))
+	mux.Handle("POST /api/chats/message", middleware.AuthMiddleWare(chatHandler.SendMessage, apicfg.secret, logger))
 	server := http.Server{
 		Addr:    Port,
 		Handler: mux,
 	}
+
+	mux.Handle("GET /api/chat/{otherUser_id}/messages", middleware.AuthMiddleWare(chatHandler.GetMesagesForPrivateID, apicfg.secret, logger))
+	mux.Handle("GET /api/chat/groups/{group_id}/messages", middleware.AuthMiddleWare(chatHandler.GetMesagesForPublicID, apicfg.secret, logger))
 	log.Printf("The server is running on %q\n", Port)
 	log.Fatal(server.ListenAndServe())
 }

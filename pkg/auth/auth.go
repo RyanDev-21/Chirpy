@@ -38,6 +38,7 @@ func HashPassword(password string) (string, error) {
 	}
 	return hash, nil
 }
+
 func CheckPassword(password string, hash string) (bool, error) {
 	valid, err := argon2id.ComparePasswordAndHash(password, hash)
 	if err != nil {
@@ -62,10 +63,10 @@ func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 	}
 	return accessToken, nil
 }
+
 func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	registerdClaims := &jwt.RegisteredClaims{}
 	token, err := jwt.ParseWithClaims(tokenString, registerdClaims, func(t *jwt.Token) (any, error) {
-
 		return []byte(tokenSecret), nil
 	})
 	if err != nil {
@@ -90,12 +91,10 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 		return uuid.Nil, err
 	}
 	return userID, nil
-
 }
 
 // Get Token From the header
 func GetBearerToken(headers http.Header) (string, error) {
-
 	tokenHeader := headers.Get("Authorization")
 	if tokenHeader == "" {
 
@@ -115,7 +114,6 @@ func MakeRefreshToken() (string, error) {
 	}
 	hexString := hex.EncodeToString(key)
 	return hexString, nil
-
 }
 
 // get both access and refresh and do the thing need to be doing (storing and stuff)
@@ -143,5 +141,4 @@ func GetAccessTokenAndRefreshToken(ctx context.Context, userID uuid.UUID, secret
 	}
 
 	return accessToken, refreshToken, nil
-
 }

@@ -31,7 +31,7 @@ type UserService interface {
 	CancelFriReq(ctx context.Context, userID, reqID uuid.UUID) error
 	DeleteFriReq(ctx context.Context, userID, reqID uuid.UUID) error
 	GetPendingList(ctx context.Context, userID uuid.UUID) (*GetReqList, error)
-	GetFriendList(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error)
+	GetFriendList(ctx context.Context, userID uuid.UUID) (*[]uuid.UUID, error)
 	StartWorkerForAddFri(channel chan *mq.Channel)
 	StartWorkerForConfirmFri(channel chan *mq.Channel)
 	StartWorkerForDeleteReq(channel chan *mq.Channel)
@@ -45,19 +45,18 @@ type userService struct {
 	logger    *slog.Logger
 }
 
-func NewUserService(userRepo UserRepo, userCache UserCacheItf, mainMq *mq.MainMQ,logger *slog.Logger) UserService {
+func NewUserService(userRepo UserRepo, userCache UserCacheItf, mainMq *mq.MainMQ, logger *slog.Logger) UserService {
 	return &userService{
 		userRepo:  userRepo,
 		userCache: userCache,
 		mainMq:    mainMq,
-		logger: logger,
+		logger:    logger,
 	}
 }
 
 // name check still have to be implemented
 func (s *userService) Register(ctx context.Context, name, email, password string) (*User, error) {
-
-	reqID, err := middleware.GetContextKey(ctx,"request")
+	reqID, err := middleware.GetContextKey(ctx, "request")
 	if err != nil {
 
 		s.logger.Error("failed to get the ID")
@@ -65,20 +64,20 @@ func (s *userService) Register(ctx context.Context, name, email, password string
 	}
 	hashpassword, err := auth.HashPassword(password)
 	if err != nil {
-		s.logger.Error("hash function failed","reqID", reqID)
+		s.logger.Error("hash function failed", "reqID", reqID)
 		return nil, err
 	}
 	user, err := s.userRepo.Create(ctx, CreateUserInput{Name: name, Email: email, Password: hashpassword})
 	if err != nil {
 		if err == DuplicateKeyErr {
-			s.logger.Info("duplicate key constraint","reqID",reqID);
+			s.logger.Info("duplicate key constraint", "reqID", reqID)
 		}
 		if err == DuplicateNameKeyErr {
-			s.logger.Info("duplicate name key constraint ","reqID", reqID);
+			s.logger.Info("duplicate name key constraint ", "reqID", reqID)
 		}
 		return nil, err
 	}
-	s.logger.Info("successfully created the user","reqID", reqID);
+	s.logger.Info("successfully created the user", "reqID", reqID)
 	return user, nil
 }
 
@@ -112,13 +111,13 @@ func (s *userService) UpdatePassword(ctx context.Context, userID uuid.UUID, oldP
 
 // will save  record with pending stauts
 func (s *userService) AddFriendSend(ctx context.Context, senderID, receiveID uuid.UUID, label string, friReqID uuid.UUID) error {
-	//udpate the current user cache
+	// udpate the current user cache
 	s.userCache.UpdateUserRs(CacheUpdateStruct{
 		UserID: senderID,
 		ReqID:  friReqID,
 		Lable:  "send",
 	})
-	//this update the opp user
+	// this update the opp user
 	s.userCache.UpdateUserRs(CacheUpdateStruct{
 		UserID: receiveID,
 		ReqID:  friReqID,
@@ -143,26 +142,26 @@ func (s *userService) AddFriendSend(ctx context.Context, senderID, receiveID uui
 
 // this need to return error for failed case didn't do any of that
 func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.UUID, status string) error {
-	//this gets the opp userID  of the current one
+	// this gets the opp userID  of the current one
 	toID := s.userCache.GetOtherUserIDByReqID(fromID, reqID, "pending")
 	if toID == nil {
 		s.logger.Warn("failed to get the toID from cache", errors.New("toID is nil"))
 	}
-	//this update the pending guy
+	// this update the pending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
 		UserID: fromID,
 		ReqID:  reqID,
 		Lable:  "pending",
 	})
 
-	//this update the sending guy
+	// this update the sending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
 		UserID: *toID,
 		ReqID:  reqID,
 		Lable:  "send",
 	})
 
-	//this update the pending guy
+	// this update the pending guy
 	s.userCache.UpdateUserRs(CacheUpdateFriStruct{
 		UserID: fromID,
 		ToID:   *toID,
@@ -195,14 +194,14 @@ func (s *userService) CancelFriReq(ctx context.Context, userID, reqID uuid.UUID)
 	if toID == nil {
 		s.logger.Warn("faield to get the toID from cache", errors.New("toID is nil"))
 	}
-	//this update the pending guy
+	// this update the pending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
 		UserID: userID,
 		ReqID:  reqID,
 		Lable:  "pending",
 	})
 
-	//this update the sending guy
+	// this update the sending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
 		UserID: *toID,
 		ReqID:  reqID,
@@ -228,14 +227,14 @@ func (s *userService) DeleteFriReq(ctx context.Context, userID, reqID uuid.UUID)
 	if toID == nil {
 		s.logger.Warn("faield to get the toID from cache", errors.New("toID is nil"))
 	}
-	//this update the sending guy
+	// this update the sending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
 		UserID: userID,
 		ReqID:  reqID,
 		Lable:  "send",
 	})
 
-	//this update the pending guy
+	// this update the pending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
 		UserID: *toID,
 		ReqID:  reqID,
@@ -257,20 +256,22 @@ func (s *userService) DeleteFriReq(ctx context.Context, userID, reqID uuid.UUID)
 
 // WARN: need to rethink about this
 // need to update the cache after finding from the db
-func (s *userService) GetFriendList(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
-	//first need to get from the cache first
-	list := s.userCache.GetUserFriList(userID) //maybe should just check whether the user exist or not first
+// i didn't  handle the no row error
+// need to update the cache after successfull db fetch
+func (s *userService) GetFriendList(ctx context.Context, userID uuid.UUID) (*[]uuid.UUID, error) {
+	// first need to get from the cache first
+	list := s.userCache.GetUserFriList(userID) // maybe should just check whether the user exist or not first
 	if list == nil {
-		s.logger.Info("fetching from db because cache miss","userID", userID)
+		s.logger.Info("fetching from db because cache miss", "userID", userID)
 		list, err := s.userRepo.GetUserFriListByID(ctx, userID)
 		if err != nil {
 			s.logger.Error("failed to get friend list from db", err)
 			return nil, err
 		}
-		s.logger.Info("successfully fetched from db","userID", userID)
-		return *list, nil
+		s.logger.Info("successfully fetched from db", "userID", userID)
+		return list, nil
 	}
-	return *list, nil
+	return list, nil
 }
 
 // WARN:need to update the cache after fetching from db
@@ -281,7 +282,7 @@ func (s *userService) GetPendingList(ctx context.Context, userID uuid.UUID) (*Ge
 	}
 	check := s.userCache.GetUserRs(userID)
 	if !check {
-		s.logger.Debug("fetching from db because cache miss","userID", userID)
+		s.logger.Debug("fetching from db because cache miss", "userID", userID)
 		reqList, err := s.userRepo.GetMyFriReqList(ctx, userID)
 		if err != nil {
 			if err != sql.ErrNoRows {
@@ -308,7 +309,6 @@ func (s *userService) GetPendingList(ctx context.Context, userID uuid.UUID) (*Ge
 			for _, v := range *reqSendList {
 				listTwo[v.ID] = v.OtheruserID
 			}
-
 		}
 		list.PendingIDsList = &listOne
 		list.RequestIDsList = &listTwo
@@ -329,17 +329,16 @@ func (s *userService) GetPendingList(ctx context.Context, userID uuid.UUID) (*Ge
 	return &list, nil
 }
 
-
-//tempory thing for mq fail
+// tempory thing for mq fail
 func saveIntoLog(jobName string, job interface{}, logger *slog.Logger) {
 	saveLog := []byte(fmt.Sprintf("jobName:%v;jobDescrioption:%v;\n", jobName, job))
 	path := filepath.Join("../../", "consistency_log.txt")
-	f, err := os.Create(path) //create the path
+	f, err := os.Create(path) // create the path
 	defer f.Close()
 	if err != nil {
 		logger.Error("file create failed", err)
 	}
-	err = os.WriteFile(path, saveLog, 0644)
+	err = os.WriteFile(path, saveLog, 0o644)
 	if err != nil {
 		logger.Error("file wirte process failed", err)
 	}
