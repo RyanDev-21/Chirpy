@@ -1,6 +1,6 @@
 package users
 
-//NOTE::if have time,refactor the code and abstract the decode and encode
+// NOTE::if have time,refactor the code and abstract the decode and encode
 
 import (
 	//"fmt"
@@ -25,6 +25,7 @@ func NewUserHandler(userService UserService) *UserHandler {
 		userService: userService,
 	}
 }
+
 func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	params := &DefaultUsersParameters{}
@@ -65,7 +66,7 @@ func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := middleware.GetContextKey(r.Context(),"user")
+	userID, err := middleware.GetContextKey(r.Context(), "user")
 	if err != nil {
 		response.Error(w, 500, "internal server error")
 		return
@@ -86,7 +87,6 @@ func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.JSON(w, 200, updatedUser)
-
 }
 
 // func (h *UserHandler) UpdateUserInfo(w http.ResponseWriter, r *http.Request) {
@@ -105,7 +105,7 @@ func (h *UserHandler) AddFriend(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, 400, "invalid parameters")
 		return
 	}
-	userID, err := middleware.GetContextKey(r.Context(),"user")
+	userID, err := middleware.GetContextKey(r.Context(), "user")
 	if err != nil {
 		response.Error(w, 500, "internal server error")
 		return
@@ -121,7 +121,6 @@ func (h *UserHandler) AddFriend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(201)
-
 }
 
 // refactor this later after you done this feature there is duplicate code
@@ -137,7 +136,7 @@ func (h *UserHandler) UpdateReq(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, 400, "invalid parameters")
 		return
 	}
-	userID, err := middleware.GetContextKey(r.Context(),"user")
+	userID, err := middleware.GetContextKey(r.Context(), "user")
 	if err != nil {
 		response.Error(w, 500, "internal server error")
 		return
@@ -160,7 +159,7 @@ func (h *UserHandler) UpdateReq(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) DeleteFriReq(w http.ResponseWriter, r *http.Request) {
-	userID, err := middleware.GetContextKey(r.Context(),"user")
+	userID, err := middleware.GetContextKey(r.Context(), "user")
 	if err != nil {
 		response.Error(w, 500, "internal server error")
 		return
@@ -181,7 +180,7 @@ func (h *UserHandler) DeleteFriReq(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) GetPendingList(w http.ResponseWriter, r *http.Request) {
-	userID, err := middleware.GetContextKey(r.Context(),"user")
+	userID, err := middleware.GetContextKey(r.Context(), "user")
 	if err != nil {
 		response.Error(w, 400, "invalid request")
 		return
@@ -200,7 +199,7 @@ func (h *UserHandler) GetPendingList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) GetFriendList(w http.ResponseWriter, r *http.Request) {
-	userID, err := middleware.GetContextKey(r.Context(),"user")
+	userID, err := middleware.GetContextKey(r.Context(), "user")
 	if err != nil {
 		response.Error(w, 400, "invalid request")
 		return
@@ -210,8 +209,9 @@ func (h *UserHandler) GetFriendList(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, 500, "internal server error")
 		return
 	}
+
 	response.JSON(w, 200, ResponseFriListStruct{
-		FriendList: list,
+		FriendList: *list,
 	})
 }
 

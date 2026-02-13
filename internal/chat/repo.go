@@ -9,59 +9,52 @@ import (
 	// rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
 )
 
-
-type chatRepo struct{
-	queries *database.Queries	
+type chatRepo struct {
+	queries *database.Queries
 }
 
-
-type ChatRepo interface{
-	AddMessagePrivate(payload *database.AddMessagePrivateParams)(*database.Message,error)
-	AddMessagePublic(payload *database.AddMessagePublicParams)(*database.Groupmessage,error)
-	GetMessagesForPrivate(ctx context.Context,fromID,toID uuid.UUID)(*[]database.Message,error)
-	GetMessagesForPublic(ctx context.Context,toID uuid.UUID)(*[]database.Groupmessage,error)
+type ChatRepo interface {
+	AddMessagePrivate(payload *database.AddMessagePrivateParams) (*database.Message, error)
+	AddMessagePublic(payload *database.AddMessagePublicParams) (*database.Groupmessage, error)
+	GetMessagesForPrivate(ctx context.Context, fromID, toID uuid.UUID) (*[]database.Message, error)
+	GetMessagesForPublic(ctx context.Context, toID uuid.UUID) (*[]database.Groupmessage, error)
 }
 
-
-func NewChatRepo(queries *database.Queries)ChatRepo{
+func NewChatRepo(queries *database.Queries) ChatRepo {
 	return &chatRepo{
 		queries: queries,
 	}
 }
 
-func (r *chatRepo)AddMessagePrivate(payload *database.AddMessagePrivateParams)(*database.Message,error){
-	ctx,cancel := context.WithTimeout(context.Background(),1*time.Second)	
+func (r *chatRepo) AddMessagePrivate(payload *database.AddMessagePrivateParams) (*database.Message, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	res, err:= r.queries.AddMessagePrivate(ctx,*payload)
-	return &res,err	
+	res, err := r.queries.AddMessagePrivate(ctx, *payload)
+	return &res, err
 }
 
-func (r *chatRepo)AddMessagePublic(payload *database.AddMessagePublicParams)(*database.Groupmessage,error){
-	ctx,cancel := context.WithTimeout(context.Background(),1*time.Second)
+func (r *chatRepo) AddMessagePublic(payload *database.AddMessagePublicParams) (*database.Groupmessage, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	res,err :=r.queries.AddMessagePublic(ctx,*payload)
-	return &res,err
+	res, err := r.queries.AddMessagePublic(ctx, *payload)
+	return &res, err
 }
 
-func (r *chatRepo)GetMessagesForPrivate(ctx context.Context,fromID,toID uuid.UUID)(*[]database.Message,error){
-	message ,err := r.queries.GetMessagesForPrivate(ctx,database.GetMessagesForPrivateParams{
+func (r *chatRepo) GetMessagesForPrivate(ctx context.Context, fromID, toID uuid.UUID) (*[]database.Message, error) {
+	message, err := r.queries.GetMessagesForPrivate(ctx, database.GetMessagesForPrivateParams{
 		FromID: *GetUUIDType(fromID),
-		ToID: *GetUUIDType(toID),
+		ToID:   *GetUUIDType(toID),
 	})
-	if err!=nil{
-		return nil,err
+	if err != nil {
+		return nil, err
 	}
-	return &message,nil
+	return &message, nil
 }
 
-func (r *chatRepo)GetMessagesForPublic(ctx context.Context,toID uuid.UUID)(*[]database.Groupmessage,error){
-	message ,err := r.queries.GetMessagesForPublic(ctx,toID)
-	if err!=nil{
-		return nil,err
+func (r *chatRepo) GetMessagesForPublic(ctx context.Context, toID uuid.UUID) (*[]database.Groupmessage, error) {
+	message, err := r.queries.GetMessagesForPublic(ctx, *GetUUIDType(toID))
+	if err != nil {
+		return nil, err
 	}
-	return &message,nil
+	return &message, nil
 }
-
-
-
-

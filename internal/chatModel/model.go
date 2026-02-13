@@ -5,6 +5,8 @@ import (
 	// "fmt"
 	// "time"
 
+	"errors"
+
 	"github.com/google/uuid"
 )
 
@@ -44,3 +46,16 @@ type MessageMetaDataRes struct {
 	ID      uuid.UUID    `json:"message_id"`
 	MsgInfo MessageCache `json:"message_info"`
 }
+
+// var (
+//
+//	ErrUpdateCache         = errors.New("failed to update the cache")
+//	ErrRedisCacheSetFailed = errors.New("failed to set the redis cache")
+//
+// )
+var ErrNotAuthorized = errors.New("not in group")
+
+const (
+	PrivateMessageConstant = "addPrivateMessage"
+	PublicMessageConstant  = "addPublicMessage"
+)

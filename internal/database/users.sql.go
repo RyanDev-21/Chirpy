@@ -201,7 +201,7 @@ SELECT
     WHEN user_id = $1 THEN otherUser_id
     WHEN otherUser_id = $1 THEN user_id
     END AS friend_id 
-FROM user_relationships WHERE status == 'confirm'
+FROM user_relationships WHERE status = 'confirm'
 `
 
 func (q *Queries) GetUserFriListByID(ctx context.Context, userID uuid.UUID) ([]interface{}, error) {

@@ -13,10 +13,10 @@ import (
 )
 
 var (
-	NoUserFoundErr  = errors.New("no user found")
-	DuplicateKeyErr = errors.New("duplicate error")
+	NoUserFoundErr      = errors.New("no user found")
+	DuplicateKeyErr     = errors.New("duplicate error")
 	DuplicateNameKeyErr = errors.New("duplicate name error")
-	NoRecordFoundErr = errors.New("no row found")
+	NoRecordFoundErr    = errors.New("no row found")
 )
 
 type UserRepo interface {
@@ -24,15 +24,15 @@ type UserRepo interface {
 	GetUserByEmail(ctx context.Context, email string) (*User, string, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (*User, string, error)
 	UpdateUserPassword(ctx context.Context, payload UpdateUserPassword) (*User, error)
-	GetAllUsers(ctx context.Context)(*[]database.User,error)
-	GetAllUsersRs(ctx context.Context)(*[]database.UserRelationship,error)
-	SendFriendRequest(fromID,toID,friReqID uuid.UUID)error
-	GetMyFriReqList(ctx context.Context,userID uuid.UUID)(*[]database.UserRelationship,error)	
-	GetMySendFirReqList(ctx context.Context,userID uuid.UUID)(*[]database.UserRelationship,error)
-	UpdateFriReq(reqID uuid.UUID)error //this one confirm the fri req
-	GetUserFriListByID(ctx context.Context,userID uuid.UUID)(*[]uuid.UUID,error)
-	CancelFriReq(reqID uuid.UUID,updateTime time.Time)error //this one cancel the req
-	DeleteFriReq(reqID uuid.UUID)error //delete the record
+	GetAllUsers(ctx context.Context) (*[]database.User, error)
+	GetAllUsersRs(ctx context.Context) (*[]database.UserRelationship, error)
+	SendFriendRequest(fromID, toID, friReqID uuid.UUID) error
+	GetMyFriReqList(ctx context.Context, userID uuid.UUID) (*[]database.UserRelationship, error)
+	GetMySendFirReqList(ctx context.Context, userID uuid.UUID) (*[]database.UserRelationship, error)
+	UpdateFriReq(reqID uuid.UUID) error // this one confirm the fri req
+	GetUserFriListByID(ctx context.Context, userID uuid.UUID) (*[]uuid.UUID, error)
+	CancelFriReq(reqID uuid.UUID, updateTime time.Time) error // this one cancel the req
+	DeleteFriReq(reqID uuid.UUID) error                       // delete the record
 }
 
 type userRepo struct {
@@ -62,9 +62,9 @@ func (r *userRepo) Create(ctx context.Context, input CreateUserInput) (*User, er
 		Password: input.Password,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "unique constraint" ) {
-			if strings.Contains(err.Error(),"\"users_name_key\""){
-				return nil,DuplicateNameKeyErr
+		if strings.Contains(err.Error(), "unique constraint") {
+			if strings.Contains(err.Error(), "\"users_name_key\"") {
+				return nil, DuplicateNameKeyErr
 			}
 			return nil, DuplicateKeyErr
 		}
@@ -113,97 +113,96 @@ func (r *userRepo) GetUserByID(ctx context.Context, userID uuid.UUID) (*User, st
 	return toUserFormat(user), user.Password, nil
 }
 
-
-//this function is for the sake of upading the cache so no neeed to format
-func (r *userRepo)GetAllUsers(ctx context.Context)(*[]database.User,error){
-	userList, err :=r.queries.GetAllUser(ctx)
-	if err !=nil{
-		if err == sql.ErrNoRows{
-			return nil,NoUserFoundErr
+// this function is for the sake of upading the cache so no neeed to format
+func (r *userRepo) GetAllUsers(ctx context.Context) (*[]database.User, error) {
+	userList, err := r.queries.GetAllUser(ctx)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, NoUserFoundErr
 		}
-		return nil,err
+		return nil, err
 	}
-	return &userList ,nil
+	return &userList, nil
 }
 
-func (r *userRepo)GetAllUsersRs(ctx context.Context)(*[]database.UserRelationship,error){
-	rsList,err:=r.queries.GetAllUserRs(ctx)
-	if err !=nil{
-		return nil,err
+func (r *userRepo) GetAllUsersRs(ctx context.Context) (*[]database.UserRelationship, error) {
+	rsList, err := r.queries.GetAllUserRs(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return &rsList,nil 
+	return &rsList, nil
 }
 
-func (r *userRepo)SendFriendRequest(fromID,toID,friReqID uuid.UUID)error{
-	ctx,cancel := context.WithTimeout(context.Background(),1*time.Second)
+func (r *userRepo) SendFriendRequest(fromID, toID, friReqID uuid.UUID) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	err :=r.queries.AddSendReq(ctx,database.AddSendReqParams{
-		ID: friReqID,	
-		UserID: fromID,
+	err := r.queries.AddSendReq(ctx, database.AddSendReqParams{
+		ID:          friReqID,
+		UserID:      fromID,
 		OtheruserID: toID,
 	})
 	return err
 }
 
-func (r *userRepo)GetMyFriReqList(ctx context.Context,userID uuid.UUID)(*[]database.UserRelationship,error){
-	list , err := r.queries.GetFriReqList(ctx,userID)
-	if err !=nil{
-		if err == sql.ErrNoRows{
-			return nil,NoRecordFoundErr
+func (r *userRepo) GetMyFriReqList(ctx context.Context, userID uuid.UUID) (*[]database.UserRelationship, error) {
+	list, err := r.queries.GetFriReqList(ctx, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, NoRecordFoundErr
 		}
-		return nil,err
+		return nil, err
 	}
-	return &list,nil
+	return &list, nil
 }
 
-func (r *userRepo)GetMySendFirReqList(ctx context.Context,userID uuid.UUID)(*[]database.UserRelationship,error){
-	list ,err := r.queries.GetYourSendReqList(ctx,userID)
-	if err !=nil{
-		if err == sql.ErrNoRows{
-			return nil,NoRecordFoundErr
+func (r *userRepo) GetMySendFirReqList(ctx context.Context, userID uuid.UUID) (*[]database.UserRelationship, error) {
+	list, err := r.queries.GetYourSendReqList(ctx, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, NoRecordFoundErr
 		}
-		return nil,err
+		return nil, err
 	}
-	return &list,nil
+	return &list, nil
 }
 
-func(r *userRepo)UpdateFriReq(reqID uuid.UUID)error{
-	ctx,cancel := context.WithTimeout(context.Background(),1*time.Second)
+func (r *userRepo) UpdateFriReq(reqID uuid.UUID) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	err:= r.queries.UpdateSendReq(ctx,reqID)	
+	err := r.queries.UpdateSendReq(ctx, reqID)
 	return err
 }
 
-//NOTE:the db returns interface type so need to type assert every element in the list
-func (r *userRepo)GetUserFriListByID(ctx context.Context,userID uuid.UUID)(*[]uuid.UUID,error){
-	list, err :=r.queries.GetUserFriListByID(ctx,userID)
-	if err !=nil{
-		return nil,err
-	}	
-	var uuidList []uuid.UUID
-	for _,v := range list{
-		if _,ok:= v.(uuid.UUID); ok{
-			uuidList = append(uuidList,v.(uuid.UUID))	
-		}else{
-			log.Printf("cannot assert the value :%v",v)
+// NOTE:the db returns interface type so need to type assert every element in the list
+func (r *userRepo) GetUserFriListByID(ctx context.Context, userID uuid.UUID) (*[]uuid.UUID, error) {
+	list, err := r.queries.GetUserFriListByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	uuidList := make([]uuid.UUID, 0)
+	for _, v := range list {
+		if _, ok := v.(uuid.UUID); ok {
+			uuidList = append(uuidList, v.(uuid.UUID))
+		} else {
+			log.Printf("cannot assert the value :%v", v)
 		}
 	}
-	return &uuidList,nil
+	return &uuidList, nil
 }
 
-
-func (r *userRepo)CancelFriReq(reqID uuid.UUID,updateTime time.Time)error{
-	context ,cancel := context.WithTimeout(context.Background(),1 * time.Second)
+func (r *userRepo) CancelFriReq(reqID uuid.UUID, updateTime time.Time) error {
+	context, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	err :=	r.queries.CancelFriReqStatus(context,database.CancelFriReqStatusParams{
-		ID: reqID,
+	err := r.queries.CancelFriReqStatus(context, database.CancelFriReqStatusParams{
+		ID:        reqID,
 		UpdatedAt: updateTime,
 	})
 	return err
 }
-func (r *userRepo)DeleteFriReq(reqID uuid.UUID)error{
-	ctx,cancel := context.WithTimeout(context.Background(),1*time.Second)
+
+func (r *userRepo) DeleteFriReq(reqID uuid.UUID) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	err :=	r.queries.DeleteFriReq(ctx,reqID)
+	err := r.queries.DeleteFriReq(ctx, reqID)
 	return err
 }
