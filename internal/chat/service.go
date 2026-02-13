@@ -9,6 +9,7 @@ import (
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
+	"RyanDev-21.com/Chirpy/internal/groups"
 
 	// rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"github.com/google/uuid"
@@ -36,6 +37,7 @@ type chatService struct {
 	hub        *chatmodel.Hub
 	mq         *mq.MainMQ
 	rediscache ChatRepoCache
+	groupCache *groups.Cache
 }
 
 var (
@@ -43,12 +45,13 @@ var (
 	ErrNOtFoundClient      = errors.New("not found client")
 )
 
-func NewChatService(chatRepo ChatRepo, hub *chatmodel.Hub, mq *mq.MainMQ, cache ChatRepoCache) ChatService {
+func NewChatService(chatRepo ChatRepo, hub *chatmodel.Hub, mq *mq.MainMQ, cache ChatRepoCache, groupCache *groups.Cache) ChatService {
 	return &chatService{
 		chatRepo:   chatRepo,
 		hub:        hub,
 		mq:         mq,
 		rediscache: cache,
+		groupCache: groupCache,
 	}
 }
 
@@ -69,6 +72,7 @@ func (s *chatService) upgradeWebsocket(w http.ResponseWriter, r *http.Request) (
 }
 
 // send the message struct based on the toId
+// WARN : should consider validating the toID
 func (s *chatService) sendMessage(ctx context.Context, userID uuid.UUID, payload *chatmodel.Message) error {
 	toID, err := uuid.Parse(payload.ToID)
 	if err != nil {
@@ -102,7 +106,7 @@ func (s *chatService) sendMessage(ctx context.Context, userID uuid.UUID, payload
 		if err != nil {
 			return err
 		}
-		s.publishJobHelper("addPrivateMessage", msgMeta) // upadate the db
+		s.publishJobHelper(chatmodel.PrivateMessageConstant, *msgMeta) // upadate the db
 
 	case "public":
 		err := s.handlePublicMsg(ctx, userID, msgMeta)
@@ -110,7 +114,7 @@ func (s *chatService) sendMessage(ctx context.Context, userID uuid.UUID, payload
 			return err
 		}
 
-		s.publishJobHelper("addPublicMessage", msgMeta)
+		s.publishJobHelper(chatmodel.PublicMessageConstant, *msgMeta)
 
 	default:
 		return ErrNotSupportedTypeMsg
@@ -123,25 +127,24 @@ func (s *chatService) fetchMessagePrivate(ctx context.Context, userID, toID uuid
 	redisKey := s.rediscache.generateRedisKey(userID, key)
 	msgList, err := s.rediscache.getMessages(ctx, redisKey)
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
+		if errors.Is(err, redis.Nil) { // if miss,db hit
 			// need to fetchMessage from db
 			message, err := s.chatRepo.GetMessagesForPrivate(ctx, userID, toID)
 			if err != nil {
 				return nil, err
 			}
+			// update the cache
 			for _, v := range *message {
-				err:=s.rediscache.addMessage(ctx, redisKey, convertFromMessageToMeta(v))
-				if err!=nil{
-					return nil,errors.New("failed to update the cache")
+				err := s.rediscache.addMessage(ctx, redisKey, convertFromMessageToMeta(v))
+				if err != nil {
+					return nil, err
 				}
 			}
+			// type convertion to return
 			msgMetaList, err := convertToMsgMetaList(message)
 			if err != nil {
 				return nil, err
 			}
-
-			// update cache here again
-
 			return msgMetaList, nil
 
 		}
@@ -152,26 +155,34 @@ func (s *chatService) fetchMessagePrivate(ctx context.Context, userID, toID uuid
 	}, nil
 }
 
+// need a way to check the member in the group or not
 func (s *chatService) fetchMessagePublic(ctx context.Context, userID, toID uuid.UUID) (*chatmodel.MessageListRes, error) {
+	valid := s.groupCache.CheckNameFromGroup(toID, userID)
+	if !valid {
+		return nil, chatmodel.ErrNotAuthorized
+	}
 	rediskey := s.rediscache.generateRedisKey(userID, toID.String())
 	msgList, err := s.rediscache.getMessages(ctx, rediskey)
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
+		if errors.Is(err, redis.Nil) { // if miss ,db hit
+			// fetch from db
 			message, err := s.chatRepo.GetMessagesForPublic(ctx, toID)
 			if err != nil {
 				return nil, err
 			}
-		for _, v := range *message {
-				err:=s.rediscache.addMessage(ctx, rediskey, convertFromGroupMessageToMeta(v))
-				if err!=nil{
-					return nil,errors.New("failed to update the cache")
+			// update the cache
+			for _, v := range *message {
+				err := s.rediscache.addMessage(ctx, rediskey, convertFromGroupMessageToMeta(v))
+				if err != nil {
+					return nil, err
 				}
 			}
+			// convert to list type
 			msgMetaList, err := convertToMsgMetaList(message)
 			if err != nil {
 				return nil, err
 			}
-			// update cache here again
+
 			return msgMetaList, nil
 		}
 	}
