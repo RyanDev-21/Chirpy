@@ -6,7 +6,7 @@ CREATE TABLE message(
    from_id UUID REFERENCES users(id)ON DELETE SET NULL,
    to_id UUID REFERENCES users(id)ON DELETE SET NULL,
    --  soft delete
-    deleted_at TIMESTAMP DEFAULT NULL,
+   deleted_at TIMESTAMP DEFAULT NULL,
    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );

@@ -2,7 +2,7 @@ package chat
 
 import (
 	"context"
-	"errors"
+	//	"errors"
 	"fmt"
 	"log"
 
@@ -18,7 +18,7 @@ type chatCache struct {
 type ChatRepoCache interface {
 	addMessage(ctx context.Context, key string, payload *chatmodel.MessageMetaData) error
 	generateRedisKey(userID uuid.UUID, chatID string) string
-		getMessages(ctx context.Context,key string)(*[]chatmodel.MessageMetaDataRes,error)
+	getMessages(ctx context.Context, key string) (*[]chatmodel.MessageMetaDataRes, error)
 }
 
 func NewChatCache(rediscache rediscache.RedisCacheImpl) ChatRepoCache {
@@ -31,37 +31,37 @@ func (c *chatCache) generateRedisKey(userID uuid.UUID, chatID string) string {
 	return fmt.Sprintf("%v:%v", userID, chatID)
 }
 
-func (c *chatCache) addMessage(ctx context.Context,key string, payload *chatmodel.MessageMetaData)  error {
+func (c *chatCache) addMessage(ctx context.Context, key string, payload *chatmodel.MessageMetaData) error {
 	payloadBytes, err := marshallBinary(payload.MsgInfo)
 	if err != nil {
 		log.Printf("failed to marshal into binary #%s#", err)
-		return  err
+		return err
 	}
-	err = c.rediscache.XAdd(ctx, key,payload.ID.String(),payloadBytes)
+	err = c.rediscache.XAdd(ctx, key, payload.ID.String(), payloadBytes)
 	if err != nil {
 		log.Printf("failed to set in the cache #%s#", err)
-		return errors.New("failed to set in the cache")
+		return err
 	}
 	return nil
 }
 
-func (c *chatCache) getMessages(ctx context.Context,key string) (*[]chatmodel.MessageMetaDataRes, error) {
+func (c *chatCache) getMessages(ctx context.Context, key string) (*[]chatmodel.MessageMetaDataRes, error) {
 	var messageList []chatmodel.MessageMetaDataRes
 	list, err := c.rediscache.XRangeN(ctx, key)
 	if err != nil {
 		return nil, err
 	}
-	for _,v  := range list{
-		for k,v := range v.Values{
-			payload,err:= unmarshalBinary(v.([]byte))
-			if err != nil{
-				return nil,err
+	for _, v := range list {
+		for k, v := range v.Values {
+			payload, err := unmarshalBinary(v.([]byte))
+			if err != nil {
+				return nil, err
 			}
-			messageList= append(messageList, chatmodel.MessageMetaDataRes{
-				ID:uuid.MustParse(k),
-				MsgInfo:*payload,
+			messageList = append(messageList, chatmodel.MessageMetaDataRes{
+				ID:      uuid.MustParse(k),
+				MsgInfo: *payload,
 			})
-		}	
+		}
 	}
-	return &messageList,nil
+	return &messageList, nil
 }

@@ -1,8 +1,8 @@
--- -- +goose Up
--- ALTER TABLE message ALTER COLUMN parentId SET DEFAULT '';
--- ALTER TABLE GroupMessage ALTER COLUMN parent_id SET DEFAULT '';
---
---
--- -- +goose Down
--- ALTER TABLE message ALTER COLUMN parentId DROP DEFAULT;
--- ALTER TABLE GroupMessage ALTER COLUMN parent_id DROP DEFAULT;
+-- +goose Up
+ALTER TABLE message ALTER COLUMN parentId SET DEFAULT NULL;
+ALTER TABLE GroupMessage ALTER COLUMN parent_id SET DEFAULT NULL;
+
+
+-- +goose Dow
+ALTER TABLE message ALTER COLUMN parentId DROP DEFAULT;
+ALTER TABLE GroupMessage ALTER COLUMN parent_id DROP DEFAULT;
