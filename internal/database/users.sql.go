@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const addSendReq = `-- name: AddSendReq :exec
@@ -132,18 +133,29 @@ func (q *Queries) GetAllUser(ctx context.Context) ([]User, error) {
 }
 
 const getAllUserRs = `-- name: GetAllUserRs :many
-SELECT id, user_id, otheruser_id, label, status, created_at, updated_at FROM user_relationships WHERE status != 'pending'
+SELECT ur.id, ur.user_id, ur.otheruser_id, ur.label, ur.status, ur.created_at, ur.updated_at,u.name FROM user_relationships ur LEFT JOIN users  u ON ur.otherUser_id = u.id  WHERE status != 'pending'
 `
 
-func (q *Queries) GetAllUserRs(ctx context.Context) ([]UserRelationship, error) {
+type GetAllUserRsRow struct {
+	ID          uuid.UUID
+	UserID      uuid.UUID
+	OtheruserID uuid.UUID
+	Label       string
+	Status      string
+	CreatedAt   pgtype.Timestamp
+	UpdatedAt   time.Time
+	Name        pgtype.Text
+}
+
+func (q *Queries) GetAllUserRs(ctx context.Context) ([]GetAllUserRsRow, error) {
 	rows, err := q.db.Query(ctx, getAllUserRs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []UserRelationship
+	var items []GetAllUserRsRow
 	for rows.Next() {
-		var i UserRelationship
+		var i GetAllUserRsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -152,6 +164,7 @@ func (q *Queries) GetAllUserRs(ctx context.Context) ([]UserRelationship, error) 
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Name,
 		); err != nil {
 			return nil, err
 		}
@@ -164,27 +177,25 @@ func (q *Queries) GetAllUserRs(ctx context.Context) ([]UserRelationship, error) 
 }
 
 const getFriReqList = `-- name: GetFriReqList :many
-SELECT id, user_id, otheruser_id, label, status, created_at, updated_at  FROM user_relationships WHERE otherUser_id = $1 AND status != 'confirm'
+SELECT ur.id,ur.user_id,u.name  FROM user_relationships ur  LEFT JOIN users u ON u.id = ur.user_id WHERE ur.otherUser_id = $1 AND ur.status != 'confirm'
 `
 
-func (q *Queries) GetFriReqList(ctx context.Context, otheruserID uuid.UUID) ([]UserRelationship, error) {
+type GetFriReqListRow struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+	Name   pgtype.Text
+}
+
+func (q *Queries) GetFriReqList(ctx context.Context, otheruserID uuid.UUID) ([]GetFriReqListRow, error) {
 	rows, err := q.db.Query(ctx, getFriReqList, otheruserID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []UserRelationship
+	var items []GetFriReqListRow
 	for rows.Next() {
-		var i UserRelationship
-		if err := rows.Scan(
-			&i.ID,
-			&i.UserID,
-			&i.OtheruserID,
-			&i.Label,
-			&i.Status,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
+		var i GetFriReqListRow
+		if err := rows.Scan(&i.ID, &i.UserID, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -195,28 +206,93 @@ func (q *Queries) GetFriReqList(ctx context.Context, otheruserID uuid.UUID) ([]U
 	return items, nil
 }
 
-const getUserFriListByID = `-- name: GetUserFriListByID :many
+const getOtherUserInfoByReqID = `-- name: GetOtherUserInfoByReqID :one
 SELECT 
-    CASE 
-    WHEN user_id = $1 THEN otherUser_id
-    WHEN otherUser_id = $1 THEN user_id
-    END AS friend_id 
-FROM user_relationships WHERE status = 'confirm'
+	u.id,
+	u.email,
+	u.name,
+	u.created_at,
+	u.updated_at
+FROM user_relationships ur LEFT JOIN
+users u ON u.id  = (
+	CASE 
+		WHEN ur.user_id = $1 THEN ur.otherUser_id
+		WHEN ur.otherUser_id = $1 THEN ur.user_id
+	END
+)
+WHERE ur.id = $2
 `
 
-func (q *Queries) GetUserFriListByID(ctx context.Context, userID uuid.UUID) ([]interface{}, error) {
+type GetOtherUserInfoByReqIDParams struct {
+	UserID uuid.UUID
+	ID     uuid.UUID
+}
+
+type GetOtherUserInfoByReqIDRow struct {
+	ID        pgtype.UUID
+	Email     pgtype.Text
+	Name      pgtype.Text
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (q *Queries) GetOtherUserInfoByReqID(ctx context.Context, arg GetOtherUserInfoByReqIDParams) (GetOtherUserInfoByReqIDRow, error) {
+	row := q.db.QueryRow(ctx, getOtherUserInfoByReqID, arg.UserID, arg.ID)
+	var i GetOtherUserInfoByReqIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getUserFriListByID = `-- name: GetUserFriListByID :many
+
+SELECT 
+	ur.id,
+	ur.otherUser_id,
+	u.name
+FROM user_relationships ur LEFT JOIN 
+users u ON u.id = (
+	CASE 
+	WHEN ur.user_id = $1 THEN ur.otherUser_id
+	WHEN ur.otherUser_id = $1 THEN ur.user_id
+	END
+)
+WHERE ur.status = 'confirm' AND ($1 IN (ur.user_id,ur.otherUser_id))
+`
+
+type GetUserFriListByIDRow struct {
+	ID          uuid.UUID
+	OtheruserID uuid.UUID
+	Name        pgtype.Text
+}
+
+// -- name: GetUserFriListByID :many
+// SELECT
+//
+//	CASE
+//	WHEN user_id = $1 THEN otherUser_id
+//	WHEN otherUser_id = $1 THEN user_id
+//	END AS friend_id
+//
+// FROM user_relationships WHERE status = 'confirm';
+func (q *Queries) GetUserFriListByID(ctx context.Context, userID uuid.UUID) ([]GetUserFriListByIDRow, error) {
 	rows, err := q.db.Query(ctx, getUserFriListByID, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []interface{}
+	var items []GetUserFriListByIDRow
 	for rows.Next() {
-		var friend_id interface{}
-		if err := rows.Scan(&friend_id); err != nil {
+		var i GetUserFriListByIDRow
+		if err := rows.Scan(&i.ID, &i.OtheruserID, &i.Name); err != nil {
 			return nil, err
 		}
-		items = append(items, friend_id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -263,27 +339,25 @@ func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, erro
 }
 
 const getYourSendReqList = `-- name: GetYourSendReqList :many
-SELECT id, user_id, otheruser_id, label, status, created_at, updated_at FROM user_relationships WHERE user_id = $1 AND status!= 'confirm'
+SELECT ur.id,ur.otherUser_id,u.name FROM user_relationships ur LEFT JOIN users u ON u.id = ur.otherUser_id WHERE ur.user_id = $1 AND ur.status!= 'confirm'
 `
 
-func (q *Queries) GetYourSendReqList(ctx context.Context, userID uuid.UUID) ([]UserRelationship, error) {
+type GetYourSendReqListRow struct {
+	ID          uuid.UUID
+	OtheruserID uuid.UUID
+	Name        pgtype.Text
+}
+
+func (q *Queries) GetYourSendReqList(ctx context.Context, userID uuid.UUID) ([]GetYourSendReqListRow, error) {
 	rows, err := q.db.Query(ctx, getYourSendReqList, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []UserRelationship
+	var items []GetYourSendReqListRow
 	for rows.Next() {
-		var i UserRelationship
-		if err := rows.Scan(
-			&i.ID,
-			&i.UserID,
-			&i.OtheruserID,
-			&i.Label,
-			&i.Status,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
+		var i GetYourSendReqListRow
+		if err := rows.Scan(&i.ID, &i.OtheruserID, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
