@@ -3,9 +3,7 @@ package users
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -20,19 +18,19 @@ import (
 // need to fix the logging part
 // centralized function for Mq failed logger
 func handleMqFail(jobName string, jobStruct interface{}, err error, logger *slog.Logger) {
-	logger.Warn("failed to upbload the job to mq", err)
+	logger.Warn("failed to upbload the job to mq", "error", err)
 	saveIntoLog(jobName, jobStruct, logger)
 }
 
 type UserService interface {
 	Register(ctx context.Context, name, email, password string) (*User, error)
 	UpdatePassword(ctx context.Context, userID uuid.UUID, oldPass string, newPass string) (*User, error)
-	AddFriendSend(ctx context.Context, sendID, recieveID uuid.UUID, label string, friReqID uuid.UUID) error
+	AddFriendSend(ctx context.Context, sendID uuid.UUID, recieverID uuid.UUID, label string) (uuid.UUID, error)
 	ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.UUID, status string) error
 	CancelFriReq(ctx context.Context, userID, reqID uuid.UUID) error
 	DeleteFriReq(ctx context.Context, userID, reqID uuid.UUID) error
 	GetPendingList(ctx context.Context, userID uuid.UUID) (*GetReqList, error)
-	GetFriendList(ctx context.Context, userID uuid.UUID) (*[]uuid.UUID, error)
+	GetFriendList(ctx context.Context, userID uuid.UUID) (*[]FriendMetaData, error)
 	StartWorkerForAddFri(channel chan *mq.Channel)
 	StartWorkerForConfirmFri(channel chan *mq.Channel)
 	StartWorkerForDeleteReq(channel chan *mq.Channel)
@@ -113,47 +111,101 @@ func (s *userService) UpdatePassword(ctx context.Context, userID uuid.UUID, oldP
 
 // you should not store both the req and otherUserID
 // will save  record with pending stauts
-func (s *userService) AddFriendSend(ctx context.Context, senderID, receiveID uuid.UUID, label string, friReqID uuid.UUID) error {
-	// udpate the current user cache
-	log.Printf("userID :%v, toID :%v", senderID, receiveID)
+func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, recieverID uuid.UUID, label string) (uuid.UUID, error) {
+	reqID, _ := middleware.GetContextKey(ctx, "request")
+
+	s.logger.Info("add friend request started", "reqID", reqID, "senderID", senderID, "receiverID", recieverID)
+
+	friReqID, err := uuid.NewV7()
+	if err != nil {
+		s.logger.Error("failed to generate friend request ID", "reqID", reqID, "error", err)
+		return friReqID, err
+	}
+
+	userName := s.userCache.GetUserNameByID(senderID)
+	if userName == "" {
+		s.logger.Warn("sender name not found in cache", "reqID", reqID, "senderID", senderID)
+	}
+
+	otherUserName := s.userCache.GetUserNameByID(recieverID)
+	if otherUserName == "" {
+		s.logger.Info("receiver not in cache, fetching from DB", "reqID", reqID, "receiverID", recieverID)
+		user, _, err := s.userRepo.GetUserByID(ctx, recieverID)
+		if err != nil {
+			s.logger.Error("failed to get receiver from DB", "reqID", reqID, "error", err)
+			return friReqID, err
+		}
+		s.userCache.UpdateUserCache(user)
+		otherUserName = user.Name
+	}
+	// otherUserName :=s.userCache.GetUserNameByID(receiveID)
+	// if other
 
 	s.userCache.UpdateUserRs(CacheUpdateStruct{
-		UserID:      senderID,
-		OtherUserID: receiveID,
-		ReqID:       friReqID,
-		Lable:       "send",
+		UserID: senderID,
+		OtherUserInfo: FriendMetaData{
+			UserID: recieverID,
+			Name:   otherUserName,
+		},
+		ReqID: friReqID,
+		Lable: "send",
 	})
 	// this update the opp user
 	s.userCache.UpdateUserRs(CacheUpdateStruct{
-		UserID:      receiveID,
-		OtherUserID: senderID,
-		ReqID:       friReqID,
-		Lable:       "pending",
+		UserID: recieverID,
+		OtherUserInfo: FriendMetaData{
+			UserID: senderID,
+			Name:   userName,
+		},
+		ReqID: friReqID,
+		Lable: "pending",
 	})
 	publishCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
 
+	s.logger.Info("publishing friend request to MQ", "reqID", reqID, "friReqID", friReqID)
+
 	job := &FriendReq{
 		ReqID:  friReqID,
 		FromID: senderID,
-		ToID:   receiveID,
+		ToID:   recieverID,
 	}
 	//	need to publish the job for db
-	err := s.mainMq.PublishWithContext(publishCtx, SendRequest, job)
+	err = s.mainMq.PublishWithContext(publishCtx, SendRequest, job)
 	if err != nil {
+		s.logger.Error("failed to publish friend request to MQ", "reqID", reqID, "error", err)
 		handleMqFail(SendRequest, job, err, s.logger)
-		return err
+		return friReqID, err
 	}
-	return nil
+
+	s.logger.Info("friend request sent successfully", "reqID", reqID, "friReqID", friReqID)
+	return friReqID, nil
 }
 
 // this need to return error for failed case didn't do any of that
 func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.UUID, status string) error {
+	reqIDVal, _ := middleware.GetContextKey(ctx, "request")
+
+	s.logger.Info("confirm friend request started", "reqID", reqIDVal, "fromID", fromID, "reqID", reqID)
+
 	// this gets the opp userID  of the current one
 	toID := s.userCache.GetOtherUserIDByReqID(fromID, reqID, "pending")
 	if toID == nil {
-		s.logger.Warn("failed to get the toID from cache", errors.New("toID is nil"))
+		s.logger.Warn("cache miss for confirm friend request, fetching from DB", "reqID", reqIDVal, "fromID", fromID, "reqID", reqID)
+		// cache miss db fetch
+		user, err := s.userRepo.GetOtherUserIDByReqID(ctx, fromID, reqID)
+		if err != nil {
+			return err
+		}
+		s.userCache.UpdateUserCache(user) // update the cache
+		toID = &FriendMetaData{
+			UserID: user.ID,
+			Name:   user.Name,
+		}
+
 	}
+	s.logger.Info("cleaning up pending/send requests and adding friends", "reqID", reqIDVal, "fromID", fromID, "toID", toID.UserID)
+
 	// this update the pending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
 		UserID: fromID,
@@ -163,7 +215,7 @@ func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.U
 
 	// this update the sending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
-		UserID: *toID,
+		UserID: toID.UserID,
 		ReqID:  reqID,
 		Lable:  "send",
 	})
@@ -174,11 +226,17 @@ func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.U
 		ToID:   *toID,
 		Lable:  "friend",
 	})
-
+	getFromName := s.userCache.GetUserNameByID(fromID)
+	if getFromName == "" {
+		s.logger.Warn("sender name not found in cache during confirm", "reqID", reqIDVal, "fromID", fromID)
+	}
 	s.userCache.UpdateUserRs(CacheUpdateFriStruct{
-		UserID: *toID,
-		ToID:   fromID,
-		Lable:  "friend",
+		UserID: toID.UserID,
+		ToID: FriendMetaData{
+			UserID: fromID,
+			Name:   getFromName,
+		},
+		Lable: "friend",
 	})
 
 	context, cancel := context.WithTimeout(ctx, 1*time.Second)
@@ -199,7 +257,16 @@ func (s *userService) CancelFriReq(ctx context.Context, userID, reqID uuid.UUID)
 	toID := s.userCache.GetOtherUserIDByReqID(userID, reqID, "pending")
 
 	if toID == nil {
-		s.logger.Warn("faield to get the toID from cache", errors.New("toID is nil"))
+		s.logger.Warn("faield to get the toID from cache", "error", "toID is nil")
+		user, err := s.userRepo.GetOtherUserIDByReqID(ctx, userID, reqID)
+		if err != nil {
+			return err
+		}
+		s.userCache.UpdateUserCache(user) // update the cache
+		toID = &FriendMetaData{
+			UserID: user.ID,
+			Name:   user.Name,
+		}
 	}
 	// this update the pending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
@@ -210,7 +277,7 @@ func (s *userService) CancelFriReq(ctx context.Context, userID, reqID uuid.UUID)
 
 	// this update the sending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
-		UserID: *toID,
+		UserID: toID.UserID,
 		ReqID:  reqID,
 		Lable:  "send",
 	})
@@ -232,7 +299,16 @@ func (s *userService) CancelFriReq(ctx context.Context, userID, reqID uuid.UUID)
 func (s *userService) DeleteFriReq(ctx context.Context, userID, reqID uuid.UUID) error {
 	toID := s.userCache.GetOtherUserIDByReqID(userID, reqID, "send")
 	if toID == nil {
-		s.logger.Warn("faield to get the toID from cache", errors.New("toID is nil"))
+		s.logger.Warn("faield to get the toID from cache", "error", "toID is nil")
+		user, err := s.userRepo.GetOtherUserIDByReqID(ctx, userID, reqID)
+		if err != nil {
+			return err
+		}
+		s.userCache.UpdateUserCache(user) // update the cache
+		toID = &FriendMetaData{
+			UserID: user.ID,
+			Name:   user.Name,
+		}
 	}
 	// this update the sending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
@@ -243,7 +319,7 @@ func (s *userService) DeleteFriReq(ctx context.Context, userID, reqID uuid.UUID)
 
 	// this update the pending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
-		UserID: *toID,
+		UserID: toID.UserID,
 		ReqID:  reqID,
 		Lable:  "pending",
 	})
@@ -265,18 +341,35 @@ func (s *userService) DeleteFriReq(ctx context.Context, userID, reqID uuid.UUID)
 // need to update the cache after finding from the db
 // i didn't  handle the no row error
 // need to update the cache after successfull db fetch
-func (s *userService) GetFriendList(ctx context.Context, userID uuid.UUID) (*[]uuid.UUID, error) {
+func (s *userService) GetFriendList(ctx context.Context, userID uuid.UUID) (*[]FriendMetaData, error) {
 	// first need to get from the cache first
 	list := s.userCache.GetUserFriList(userID) // maybe should just check whether the user exist or not first
 	if list == nil {
 		s.logger.Info("fetching from db because cache miss", "userID", userID)
 		list, err := s.userRepo.GetUserFriListByID(ctx, userID)
 		if err != nil {
-			s.logger.Error("failed to get friend list from db", err)
+			s.logger.Error("failed to get friend list from db", "error", err)
 			return nil, err
 		}
+		var friendList []FriendMetaData
+		if list != nil && len(*list) > 0 {
+			for _, v := range *list {
+				s.userCache.UpdateUserRs(CacheUpdateFriStruct{
+					UserID: userID,
+					ToID: FriendMetaData{
+						UserID: v.OtheruserID,
+						Name:   v.Name.String,
+					},
+					Lable: "friend",
+				})
+				friendList = append(friendList, FriendMetaData{
+					UserID: v.OtheruserID,
+					Name:   v.Name.String,
+				})
+			}
+		}
 		s.logger.Info("successfully fetched from db", "userID", userID)
-		return list, nil
+		return &friendList, nil
 	}
 	return list, nil
 }
@@ -284,8 +377,8 @@ func (s *userService) GetFriendList(ctx context.Context, userID uuid.UUID) (*[]u
 // WARN:need to update the cache after fetching from db
 func (s *userService) GetPendingList(ctx context.Context, userID uuid.UUID) (*GetReqList, error) {
 	list := GetReqList{
-		PendingIDsList: &map[uuid.UUID]uuid.UUID{},
-		RequestIDsList: &map[uuid.UUID]uuid.UUID{},
+		PendingIDsList: &map[uuid.UUID]FriendMetaData{},
+		RequestIDsList: &map[uuid.UUID]FriendMetaData{},
 	}
 	check := s.userCache.GetUserRs(userID)
 	if !check {
@@ -293,7 +386,7 @@ func (s *userService) GetPendingList(ctx context.Context, userID uuid.UUID) (*Ge
 		reqList, err := s.userRepo.GetMyFriReqList(ctx, userID)
 		if err != nil {
 			if err != sql.ErrNoRows {
-				s.logger.Error("failed to get pending list from db", err)
+				s.logger.Error("failed to get pending list from db", "error", err)
 				return nil, err
 			}
 		}
@@ -301,32 +394,57 @@ func (s *userService) GetPendingList(ctx context.Context, userID uuid.UUID) (*Ge
 		listOne := *list.PendingIDsList
 		if reqList != nil {
 			for _, v := range *reqList {
-				listOne[v.ID] = v.UserID
+				listOne[v.ID] = FriendMetaData{
+					UserID: v.UserID,
+					Name:   v.Name.String,
+				}
+				s.userCache.UpdateUserRs(CacheUpdateStruct{
+					UserID: userID,
+					ReqID:  v.ID,
+					OtherUserInfo: FriendMetaData{
+						UserID: v.UserID,
+						Name:   v.Name.String,
+					},
+					Lable: "pending",
+				})
 			}
 		}
 		reqSendList, err := s.userRepo.GetMySendFirReqList(ctx, userID)
 		if err != nil {
 			if err != sql.ErrNoRows {
-				s.logger.Error("failed to get request send list from db", err)
+				s.logger.Error("failed to get request send list from db", "error", err)
 				return nil, err
 			}
 		}
 		listTwo := *list.RequestIDsList
 		if reqSendList != nil {
 			for _, v := range *reqSendList {
-				listTwo[v.ID] = v.OtheruserID
+				listTwo[v.ID] = FriendMetaData{
+					UserID: v.OtheruserID,
+					Name:   v.Name.String,
+				}
+				s.userCache.UpdateUserRs(CacheUpdateStruct{
+					UserID: userID,
+					ReqID:  v.ID,
+					OtherUserInfo: FriendMetaData{
+						UserID: v.OtheruserID,
+						Name:   v.Name.String,
+					},
+					Lable: "send",
+				})
 			}
 		}
 		list.PendingIDsList = &listOne
 		list.RequestIDsList = &listTwo
+
 		return &list, nil
 	}
-	s.logger.Debug("fetching from cache", userID)
+	s.logger.Debug("fetching from cache", "userID", userID)
 	pendingList := s.userCache.GetUserReqList(userID)
 	if pendingList != nil {
 		list.PendingIDsList = pendingList
 		for k, v := range *list.PendingIDsList {
-			s.logger.Debug("pending list", slog.String("reqID", k.String()), slog.String("fromID", v.String()))
+			s.logger.Debug("pending list", slog.String("reqID", k.String()), slog.String("fromID", v.UserID.String()))
 		}
 	}
 	reqList := s.userCache.GetUserSendReqList(userID)
@@ -343,10 +461,10 @@ func saveIntoLog(jobName string, job interface{}, logger *slog.Logger) {
 	f, err := os.Create(path) // create the path
 	defer f.Close()
 	if err != nil {
-		logger.Error("file create failed", err)
+		logger.Error("file create failed", "error", err)
 	}
 	err = os.WriteFile(path, saveLog, 0o644)
 	if err != nil {
-		logger.Error("file wirte process failed", err)
+		logger.Error("file wirte process failed", "error", err)
 	}
 }

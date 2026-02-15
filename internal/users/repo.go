@@ -4,11 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log"
+	//	"log"
 	"strings"
 	"time"
 
 	"RyanDev-21.com/Chirpy/internal/database"
+	//"RyanDev-21.com/Chirpy/pkg/encoder"
 	"github.com/google/uuid"
 )
 
@@ -25,19 +26,26 @@ type UserRepo interface {
 	GetUserByID(ctx context.Context, id uuid.UUID) (*User, string, error)
 	UpdateUserPassword(ctx context.Context, payload UpdateUserPassword) (*User, error)
 	GetAllUsers(ctx context.Context) (*[]database.User, error)
-	GetAllUsersRs(ctx context.Context) (*[]database.UserRelationship, error)
+	GetAllUsersRs(ctx context.Context) (*[]database.GetAllUserRsRow, error)
 	SendFriendRequest(fromID, toID, friReqID uuid.UUID) error
-	GetMyFriReqList(ctx context.Context, userID uuid.UUID) (*[]database.UserRelationship, error)
-	GetMySendFirReqList(ctx context.Context, userID uuid.UUID) (*[]database.UserRelationship, error)
+	GetMyFriReqList(ctx context.Context, userID uuid.UUID) (*[]database.GetFriReqListRow, error)
+	GetMySendFirReqList(ctx context.Context, userID uuid.UUID) (*[]database.GetYourSendReqListRow, error)
 	UpdateFriReq(reqID uuid.UUID) error // this one confirm the fri req
-	GetUserFriListByID(ctx context.Context, userID uuid.UUID) (*[]uuid.UUID, error)
+	GetUserFriListByID(ctx context.Context, userID uuid.UUID) (*[]database.GetUserFriListByIDRow, error)
 	CancelFriReq(reqID uuid.UUID, updateTime time.Time) error // this one cancel the req
 	DeleteFriReq(reqID uuid.UUID) error                       // delete the record
+	GetOtherUserIDByReqID(ctx context.Context, userID uuid.UUID, reqID uuid.UUID) (*User, error)
 }
 
 type userRepo struct {
 	queries *database.Queries
 }
+
+//
+// type FriendMetaDataItf interface {
+// 	GetID() uuid.UUID
+// 	GetName() string
+// }
 
 func toUserFormat(dbUser database.User) *User {
 	return &User{
@@ -48,6 +56,28 @@ func toUserFormat(dbUser database.User) *User {
 		IsRED:     dbUser.IsChirpyRed.Bool,
 	}
 }
+
+func toUserFormatForOtherUserInfo(dbUser database.GetOtherUserInfoByReqIDRow) *User {
+	return &User{
+		ID:        uuid.MustParse(dbUser.ID.String()),
+		Email:     dbUser.Email.String,
+		Name:      dbUser.Name.String,
+		CreatedAt: dbUser.CreatedAt,
+		UpdatedAt: dbUser.UpdatedAt,
+	}
+}
+
+// func toFriendMetaDataFormat[T FriendMetaDataItf](dbRow *[]T) *[]FriendMetaData {
+// 	var list []FriendMetaData
+// 	for _, v := range *dbRow {
+// 		list = append(list, FriendMetaData{
+// 			UserID: v.GetID(),
+// 			Name:   v.GetName(),
+// 		})
+// 	}
+//
+// 	return &list
+// }
 
 func NewUserRepo(queries *database.Queries) UserRepo {
 	return &userRepo{
@@ -125,7 +155,7 @@ func (r *userRepo) GetAllUsers(ctx context.Context) (*[]database.User, error) {
 	return &userList, nil
 }
 
-func (r *userRepo) GetAllUsersRs(ctx context.Context) (*[]database.UserRelationship, error) {
+func (r *userRepo) GetAllUsersRs(ctx context.Context) (*[]database.GetAllUserRsRow, error) {
 	rsList, err := r.queries.GetAllUserRs(ctx)
 	if err != nil {
 		return nil, err
@@ -144,7 +174,7 @@ func (r *userRepo) SendFriendRequest(fromID, toID, friReqID uuid.UUID) error {
 	return err
 }
 
-func (r *userRepo) GetMyFriReqList(ctx context.Context, userID uuid.UUID) (*[]database.UserRelationship, error) {
+func (r *userRepo) GetMyFriReqList(ctx context.Context, userID uuid.UUID) (*[]database.GetFriReqListRow, error) {
 	list, err := r.queries.GetFriReqList(ctx, userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -155,7 +185,7 @@ func (r *userRepo) GetMyFriReqList(ctx context.Context, userID uuid.UUID) (*[]da
 	return &list, nil
 }
 
-func (r *userRepo) GetMySendFirReqList(ctx context.Context, userID uuid.UUID) (*[]database.UserRelationship, error) {
+func (r *userRepo) GetMySendFirReqList(ctx context.Context, userID uuid.UUID) (*[]database.GetYourSendReqListRow, error) {
 	list, err := r.queries.GetYourSendReqList(ctx, userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -174,20 +204,13 @@ func (r *userRepo) UpdateFriReq(reqID uuid.UUID) error {
 }
 
 // NOTE:the db returns interface type so need to type assert every element in the list
-func (r *userRepo) GetUserFriListByID(ctx context.Context, userID uuid.UUID) (*[]uuid.UUID, error) {
+func (r *userRepo) GetUserFriListByID(ctx context.Context, userID uuid.UUID) (*[]database.GetUserFriListByIDRow, error) {
 	list, err := r.queries.GetUserFriListByID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	uuidList := make([]uuid.UUID, 0)
-	for _, v := range list {
-		if _, ok := v.(uuid.UUID); ok {
-			uuidList = append(uuidList, v.(uuid.UUID))
-		} else {
-			log.Printf("cannot assert the value :%v", v)
-		}
-	}
-	return &uuidList, nil
+
+	return &list, nil
 }
 
 func (r *userRepo) CancelFriReq(reqID uuid.UUID, updateTime time.Time) error {
@@ -205,4 +228,15 @@ func (r *userRepo) DeleteFriReq(reqID uuid.UUID) error {
 	defer cancel()
 	err := r.queries.DeleteFriReq(ctx, reqID)
 	return err
+}
+
+func (r *userRepo) GetOtherUserIDByReqID(ctx context.Context, userID uuid.UUID, reqID uuid.UUID) (*User, error) {
+	user, err := r.queries.GetOtherUserInfoByReqID(ctx, database.GetOtherUserInfoByReqIDParams{
+		UserID: userID,
+		ID:     reqID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return toUserFormatForOtherUserInfo(user), nil
 }

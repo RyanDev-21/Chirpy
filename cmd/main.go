@@ -27,6 +27,7 @@ import (
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
+	"RyanDev-21.com/Chirpy/pkg/ratelimit"
 	"RyanDev-21.com/Chirpy/pkg/response"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -644,6 +645,11 @@ func main() {
 	chatHandler := chat.NewChatHandler(chatService)
 	groupHandler := groups.NewGroupHandler(groupService)
 
+	// Rate limiters for friend endpoints
+	addFriendLimiter := ratelimit.NewRateLimiter(10, time.Minute)
+	confirmFriendLimiter := ratelimit.NewRateLimiter(30, time.Minute)
+	deleteFriendLimiter := ratelimit.NewRateLimiter(30, time.Minute)
+
 	// startup workers for each event
 	// run the message queue
 
@@ -727,11 +733,20 @@ func main() {
 	// NOTE:: i should really consider making the server as my own config and graceful shutdown
 
 	// ednpoint for add friend
-	mux.Handle("POST /api/friends/requests", middleware.AuthMiddleWare(userHandler.AddFriend, apicfg.secret, logger))
+	mux.Handle("POST /api/friends/requests",
+		middleware.AuthMiddleWare(
+			ratelimit.RateLimitMiddleware(addFriendLimiter, userHandler.AddFriend, logger),
+			apicfg.secret, logger))
 
 	mux.Handle("GET /api/friends/requests", middleware.AuthMiddleWare(userHandler.GetPendingList, apicfg.secret, logger))
-	mux.Handle("PUT /api/friends/requests/{request_id}/", middleware.AuthMiddleWare(userHandler.UpdateReq, apicfg.secret, logger))
-	mux.Handle("DELETE /api/friends/requests/{request_id}/", middleware.AuthMiddleWare(userHandler.AddFriend, apicfg.secret, logger))
+	mux.Handle("PUT /api/friends/requests/{request_id}/",
+		middleware.AuthMiddleWare(
+			ratelimit.RateLimitMiddleware(confirmFriendLimiter, userHandler.UpdateReq, logger),
+			apicfg.secret, logger))
+	mux.Handle("DELETE /api/friends/requests/{request_id}/",
+		middleware.AuthMiddleWare(
+			ratelimit.RateLimitMiddleware(deleteFriendLimiter, userHandler.DeleteFriReq, logger),
+			apicfg.secret, logger))
 	mux.Handle("GET /api/friends", middleware.AuthMiddleWare(
 		userHandler.GetFriendList, apicfg.secret, logger))
 

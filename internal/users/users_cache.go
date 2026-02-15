@@ -16,20 +16,21 @@ type UserCacheItf interface {
 	Load()
 	UpdateUserRs(payload interface{})
 	CleanUpUserRs(payload *CacheRsDeleteStruct)
-	GetUserFriList(userID uuid.UUID) *[]uuid.UUID
+	GetUserFriList(userID uuid.UUID) *[]FriendMetaData
 	GetUserRs(userID uuid.UUID) bool
-	GetUserReqList(userID uuid.UUID) *map[uuid.UUID]uuid.UUID
-	GetUserSendReqList(userID uuid.UUID) *map[uuid.UUID]uuid.UUID
-	GetOtherUserIDByReqID(userID, reqID uuid.UUID, lable string) *uuid.UUID
+	GetUserReqList(userID uuid.UUID) *map[uuid.UUID]FriendMetaData
+	GetUserSendReqList(userID uuid.UUID) *map[uuid.UUID]FriendMetaData
+	GetOtherUserIDByReqID(userID, reqID uuid.UUID, lable string) *FriendMetaData
 	UpdateUserCache(user *User)
+	GetUserNameByID(userID uuid.UUID) string
 }
 
 type Cache struct {
 	UserCache     map[uuid.UUID]*UserCache
 	UserMuLock    sync.Mutex
-	UserRsCache   map[uuid.UUID]map[string]*map[uuid.UUID]uuid.UUID
+	UserRsCache   map[uuid.UUID]map[string]*map[uuid.UUID]FriendMetaData
 	UserRsMuLock  sync.Mutex
-	UserFriCache  map[uuid.UUID]map[string]*[]uuid.UUID
+	UserFriCache  map[uuid.UUID]map[string]*[]FriendMetaData
 	UserFriMuLock sync.Mutex
 	UserRepo      UserRepo
 }
@@ -44,9 +45,9 @@ func NewUserCache(userRepo UserRepo) UserCacheItf {
 		UserCache:     make(map[uuid.UUID]*UserCache),
 		UserMuLock:    sync.Mutex{},
 		UserRepo:      userRepo,
-		UserRsCache:   make(map[uuid.UUID]map[string]*map[uuid.UUID]uuid.UUID),
+		UserRsCache:   make(map[uuid.UUID]map[string]*map[uuid.UUID]FriendMetaData),
 		UserRsMuLock:  sync.Mutex{},
-		UserFriCache:  make(map[uuid.UUID]map[string]*[]uuid.UUID),
+		UserFriCache:  make(map[uuid.UUID]map[string]*[]FriendMetaData),
 		UserFriMuLock: sync.Mutex{},
 	}
 }
@@ -82,7 +83,16 @@ func (c *Cache) UpdateUserCache(user *User) {
 	log.Printf("userCache :%v", c.UserCache[user.ID])
 }
 
-func (c *Cache) GetOtherUserIDByReqID(userID, reqID uuid.UUID, lable string) *uuid.UUID {
+func (c *Cache) GetUserNameByID(userID uuid.UUID) string {
+	c.UserMuLock.Lock()
+	defer c.UserMuLock.Unlock()
+	if v, ok := c.UserCache[userID]; ok {
+		return v.Info.Name
+	}
+	return ""
+}
+
+func (c *Cache) GetOtherUserIDByReqID(userID, reqID uuid.UUID, lable string) *FriendMetaData {
 	c.UserRsMuLock.Lock()
 	defer c.UserRsMuLock.Unlock()
 	if _, ok := c.UserRsCache[userID]; ok {
@@ -96,7 +106,7 @@ func (c *Cache) GetOtherUserIDByReqID(userID, reqID uuid.UUID, lable string) *uu
 	return nil
 }
 
-func (c *Cache) GetUserReqList(userID uuid.UUID) *map[uuid.UUID]uuid.UUID {
+func (c *Cache) GetUserReqList(userID uuid.UUID) *map[uuid.UUID]FriendMetaData {
 	c.UserRsMuLock.Lock()
 	defer c.UserRsMuLock.Unlock()
 	if v, ok := c.UserRsCache[userID]["pending"]; ok {
@@ -105,7 +115,7 @@ func (c *Cache) GetUserReqList(userID uuid.UUID) *map[uuid.UUID]uuid.UUID {
 	return nil
 }
 
-func (c *Cache) GetUserFriList(userID uuid.UUID) *[]uuid.UUID {
+func (c *Cache) GetUserFriList(userID uuid.UUID) *[]FriendMetaData {
 	c.UserFriMuLock.Lock()
 	defer c.UserFriMuLock.Unlock()
 	if v, ok := c.UserFriCache[userID]["friend"]; ok {
@@ -114,7 +124,7 @@ func (c *Cache) GetUserFriList(userID uuid.UUID) *[]uuid.UUID {
 	return nil
 }
 
-func (c *Cache) GetUserSendReqList(userID uuid.UUID) *map[uuid.UUID]uuid.UUID {
+func (c *Cache) GetUserSendReqList(userID uuid.UUID) *map[uuid.UUID]FriendMetaData {
 	c.UserRsMuLock.Lock()
 	defer c.UserRsMuLock.Unlock()
 	if v, ok := c.UserRsCache[userID]["send"]; ok {
@@ -174,20 +184,26 @@ func (c *Cache) Load() {
 			for _, req := range *list {
 				// this one fetches the pending data
 				c.UpdateUserRs(CacheUpdateStruct{
-					UserID:      user.ID,
-					ReqID:       req.ID,
-					OtherUserID: req.UserID,
-					Lable:       "pending",
+					UserID: user.ID,
+					ReqID:  req.ID,
+					OtherUserInfo: FriendMetaData{
+						UserID: req.UserID,
+						Name:   req.Name.String,
+					},
+					Lable: "pending",
 				})
 			}
 
 			// update the cache for current user with send label
 			for _, req := range *sendList {
 				c.UpdateUserRs(CacheUpdateStruct{
-					UserID:      user.ID,
-					ReqID:       req.ID,
-					OtherUserID: req.OtheruserID,
-					Lable:       "send",
+					UserID: user.ID,
+					ReqID:  req.ID,
+					OtherUserInfo: FriendMetaData{
+						UserID: req.OtheruserID,
+						Name:   req.Name.String,
+					},
+					Lable: "send",
 				})
 			}
 
@@ -200,14 +216,20 @@ func (c *Cache) Load() {
 			// this update the first user
 			c.UpdateUserRs(CacheUpdateFriStruct{
 				UserID: userRs.UserID,
-				ToID:   userRs.OtheruserID,
-				Lable:  userRs.Label,
+				ToID: FriendMetaData{
+					UserID: userRs.OtheruserID,
+					Name:   userRs.Name.String,
+				},
+				Lable: userRs.Label,
 			})
 			// this update the other user
 			c.UpdateUserRs(CacheUpdateFriStruct{
 				UserID: userRs.OtheruserID,
-				ToID:   userRs.UserID,
-				Lable:  userRs.Label,
+				ToID: FriendMetaData{
+					UserID: userRs.OtheruserID,
+					Name:   userRs.Name.String,
+				},
+				Lable: userRs.Label,
 			})
 		}
 	}()
@@ -227,41 +249,37 @@ func (c *Cache) Load() {
 func (c *Cache) UpdateUserRs(payload interface{}) {
 	switch payload := payload.(type) {
 	case CacheUpdateStruct:
-		log.Printf("userID :%v,otherID :%v", payload.UserID, payload.OtherUserID)
-		c.updateRsCache(payload.UserID, payload.OtherUserID, payload.ReqID, payload.Lable)
-		log.Printf("updated cache for user: %v", c.UserRsCache[payload.UserID]["send"])
-		log.Printf("updated cache for otherUser :%v", c.UserRsCache[payload.OtherUserID]["pending"])
+		c.updateRsCache(payload.UserID, payload.OtherUserInfo, payload.ReqID, payload.Lable)
 	case CacheUpdateFriStruct:
 		c.updateFriCache(payload.UserID, payload.ToID, payload.Lable)
-		log.Printf("updated cache: %v", c.UserRsCache[payload.UserID]["friend"])
 	default:
 		log.Printf("not a valid struct you are passing")
 	}
 }
 
-func (c *Cache) updateRsCache(userID, otherID, reqID uuid.UUID, label string) {
+func (c *Cache) updateRsCache(userID uuid.UUID, otherUserInfo FriendMetaData, reqID uuid.UUID, label string) {
 	c.UserRsMuLock.Lock()
 	defer c.UserRsMuLock.Unlock()
 	if _, ok := c.UserRsCache[userID]; !ok {
-		c.UserRsCache[userID] = make(map[string]*map[uuid.UUID]uuid.UUID)
+		c.UserRsCache[userID] = make(map[string]*map[uuid.UUID]FriendMetaData)
 	}
-	log.Printf("otherID value :%v in updateRsCache", otherID)
-	c.UserRsCache[userID][label] = &map[uuid.UUID]uuid.UUID{
-		reqID: otherID,
+	log.Printf("otherID value :%v in updateRsCache", otherUserInfo.UserID)
+	c.UserRsCache[userID][label] = &map[uuid.UUID]FriendMetaData{
+		reqID: otherUserInfo,
 	}
 	log.Printf("req list after udpate :%v", c.UserRsCache[userID][label])
 }
 
-func (c *Cache) updateFriCache(userID, otherID uuid.UUID, lable string) {
+func (c *Cache) updateFriCache(userID uuid.UUID, otherUserInfo FriendMetaData, lable string) {
 	c.UserFriMuLock.Lock()
 	defer c.UserFriMuLock.Unlock()
 	if _, ok := c.UserFriCache[userID]; !ok {
-		c.UserFriCache[userID] = make(map[string]*[]uuid.UUID)
+		c.UserFriCache[userID] = make(map[string]*[]FriendMetaData)
 	}
 	if _, ok := c.UserFriCache[userID][lable]; !ok {
-		c.UserFriCache[userID][lable] = &[]uuid.UUID{}
+		c.UserFriCache[userID][lable] = &[]FriendMetaData{}
 	}
-	*c.UserFriCache[userID][lable] = append(*c.UserFriCache[userID][lable], otherID)
+	*c.UserFriCache[userID][lable] = append(*c.UserFriCache[userID][lable], otherUserInfo)
 }
 
 // this one will clean up what ever the lable got passed
