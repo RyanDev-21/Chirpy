@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -78,6 +79,7 @@ func (s *userService) Register(ctx context.Context, name, email, password string
 		return nil, err
 	}
 	s.logger.Info("successfully created the user", "reqID", reqID)
+	s.userCache.UpdateUserCache(user)
 	return user, nil
 }
 
@@ -109,19 +111,24 @@ func (s *userService) UpdatePassword(ctx context.Context, userID uuid.UUID, oldP
 	return user, nil
 }
 
+// you should not store both the req and otherUserID
 // will save  record with pending stauts
 func (s *userService) AddFriendSend(ctx context.Context, senderID, receiveID uuid.UUID, label string, friReqID uuid.UUID) error {
 	// udpate the current user cache
+	log.Printf("userID :%v, toID :%v", senderID, receiveID)
+
 	s.userCache.UpdateUserRs(CacheUpdateStruct{
-		UserID: senderID,
-		ReqID:  friReqID,
-		Lable:  "send",
+		UserID:      senderID,
+		OtherUserID: receiveID,
+		ReqID:       friReqID,
+		Lable:       "send",
 	})
 	// this update the opp user
 	s.userCache.UpdateUserRs(CacheUpdateStruct{
-		UserID: receiveID,
-		ReqID:  friReqID,
-		Lable:  "pending",
+		UserID:      receiveID,
+		OtherUserID: senderID,
+		ReqID:       friReqID,
+		Lable:       "pending",
 	})
 	publishCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
