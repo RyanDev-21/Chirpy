@@ -47,15 +47,19 @@ type DefaultUsersParameters struct {
 
 // may be there will be better way than passing the to_id
 type StatusFriendParameters struct {
-	ToID   uuid.UUID `json:"to_id"`
-	Status string    `json:"status"`
+	ToID   uuid.UUID `json:"to_id,omitempty"`
+	Status string    `json:"status,omitempty"`
 }
 
+type FriendMetaData struct {
+	UserID uuid.UUID
+	Name   string
+}
 type CacheUpdateStruct struct {
-	UserID      uuid.UUID
-	ReqID       uuid.UUID
-	OtherUserID uuid.UUID
-	Lable       string
+	UserID        uuid.UUID
+	ReqID         uuid.UUID
+	OtherUserInfo FriendMetaData
+	Lable         string
 }
 
 type CacheRsDeleteStruct struct {
@@ -76,22 +80,26 @@ type CancelFriendReq struct {
 
 type CacheUpdateFriStruct struct {
 	UserID uuid.UUID
-	ToID   uuid.UUID
+	ToID   FriendMetaData
 	Lable  string
 }
 
 type GetReqList struct {
-	PendingIDsList *map[uuid.UUID]uuid.UUID
-	RequestIDsList *map[uuid.UUID]uuid.UUID
+	PendingIDsList *map[uuid.UUID]FriendMetaData
+	RequestIDsList *map[uuid.UUID]FriendMetaData
 }
 
 type ResponseReqList struct {
-	PendingIDsList map[uuid.UUID]uuid.UUID `json:"pending_ids"`
-	RequestIDsList map[uuid.UUID]uuid.UUID `json:"request_ids"`
+	PendingIDsList map[uuid.UUID]FriendMetaData `json:"pending_ids"`
+	RequestIDsList map[uuid.UUID]FriendMetaData `json:"request_ids"`
 }
 
 type ResponseFriListStruct struct {
-	FriendList []uuid.UUID `json:"id_list"`
+	FriendList []FriendMetaData `json:"id_list"`
+}
+
+type ReesponseForAddFriend struct {
+	ReqID uuid.UUID `json:"req_id"`
 }
 
 type DeleteFirReqStruct struct {

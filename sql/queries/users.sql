@@ -30,7 +30,7 @@ SELECT * FROM users;
 
 
 -- name: GetAllUserRs :many
-SELECT * FROM user_relationships WHERE status != 'pending';
+SELECT ur.*,u.name FROM user_relationships ur LEFT JOIN users  u ON ur.otherUser_id = u.id  WHERE status != 'pending';
 
 -- name: AddSendReq :exec
 INSERT INTO user_relationships (id,user_id,otherUser_id)
@@ -42,19 +42,35 @@ VALUES(
 
 -- name: UpdateSendReq :exec
 UPDATE user_relationships SET status = 'confirm',updated_at = NOW() WHERE id = $1;
+
 -- name: GetFriReqList :many
-SELECT *  FROM user_relationships WHERE otherUser_id = $1 AND status != 'confirm';
+SELECT ur.id,ur.user_id,u.name  FROM user_relationships ur  LEFT JOIN users u ON u.id = ur.user_id WHERE ur.otherUser_id = $1 AND ur.status != 'confirm';
 
 -- name: GetYourSendReqList :many
-SELECT * FROM user_relationships WHERE user_id = $1 AND status!= 'confirm';
+SELECT ur.id,ur.otherUser_id,u.name FROM user_relationships ur LEFT JOIN users u ON u.id = ur.otherUser_id WHERE ur.user_id = $1 AND ur.status!= 'confirm' ;
+--
+-- -- name: GetUserFriListByID :many
+-- SELECT 
+--     CASE 
+--     WHEN user_id = $1 THEN otherUser_id
+--     WHEN otherUser_id = $1 THEN user_id
+--     END AS friend_id 
+-- FROM user_relationships WHERE status = 'confirm';
+--
 
--- name: GetUserFriListByID :many
+-- name: GetUserFriListByID :many 
 SELECT 
-    CASE 
-    WHEN user_id = $1 THEN otherUser_id
-    WHEN otherUser_id = $1 THEN user_id
-    END AS friend_id 
-FROM user_relationships WHERE status = 'confirm';
+	ur.id,
+	ur.otherUser_id,
+	u.name
+FROM user_relationships ur LEFT JOIN 
+users u ON u.id = (
+	CASE 
+	WHEN ur.user_id = $1 THEN ur.otherUser_id
+	WHEN ur.otherUser_id = $1 THEN ur.user_id
+	END
+)
+WHERE ur.status = 'confirm' AND ($1 IN (ur.user_id,ur.otherUser_id));
 
 
 -- name: CancelFriReqStatus :exec
@@ -62,3 +78,19 @@ UPDATE user_relationships SET status = 'cancel',updated_at = $2 WHERE id = $1;
 
 -- name: DeleteFriReq :exec
 DELETE FROM user_relationships WHERE id=$1;
+
+-- name: GetOtherUserInfoByReqID :one
+SELECT 
+	u.id,
+	u.email,
+	u.name,
+	u.created_at,
+	u.updated_at
+FROM user_relationships ur LEFT JOIN
+users u ON u.id  = (
+	CASE 
+		WHEN ur.user_id = $1 THEN ur.otherUser_id
+		WHEN ur.otherUser_id = $1 THEN ur.user_id
+	END
+)
+WHERE ur.id = $2;

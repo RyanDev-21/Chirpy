@@ -8,12 +8,13 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"regexp"
 
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/encoder"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
 	"RyanDev-21.com/Chirpy/pkg/response"
-	"github.com/google/uuid"
+	// "github.com/google/uuid"
 )
 
 type UserHandler struct {
@@ -38,6 +39,16 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, 400, "all fields need to have value")
 		return
 	}
+
+	if len(params.Password) < 8 {
+		response.Error(w, 400, "password must be at least 8 characters")
+		return
+	}
+	if !regexp.MustCompile(`[@$!%*?&]`).MatchString(params.Password) {
+		response.Error(w, 400, "password must contain at least one special character (@$!%*?&)")
+		return
+	}
+
 	user, err := h.userService.Register(r.Context(), params.Name, params.Email, params.Password)
 	if err != nil {
 		if err == DuplicateKeyErr {
@@ -63,6 +74,12 @@ func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	err := encoder.Decode(r, params)
 	if err != nil {
 		response.Error(w, 400, "invalid params")
+		return
+	}
+
+	passwordRegex := regexp.MustCompile(`[@$!%*?&]`)
+	if len(params.NewPass) < 8 || !passwordRegex.MatchString(params.NewPass) {
+		response.Error(w, 400, "password must be at least 8 characters with at least one special character (@$!%*?&)")
 		return
 	}
 
@@ -110,17 +127,15 @@ func (h *UserHandler) AddFriend(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, 500, "internal server error")
 		return
 	}
-	friReqID, err := uuid.NewV7()
-	if err != nil {
-		log.Printf("failed to gen the friReqId something went wrong")
-	}
 
-	err = h.userService.AddFriendSend(r.Context(), *userID, payload.ToID, "pending", friReqID)
+	friReqID, err := h.userService.AddFriendSend(r.Context(), *userID, payload.ToID, "pending")
 	if err != nil {
 		response.Error(w, 500, "internal server error")
 		return
 	}
-	w.WriteHeader(201)
+	response.JSON(w, 200, ReesponseForAddFriend{
+		ReqID: friReqID,
+	})
 }
 
 // refactor this later after you done this feature there is duplicate code
