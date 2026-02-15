@@ -28,3 +28,4 @@ sql:
             go_type: "time.Time"
           - column: "user_relationships.updated_at"
             go_type: "time.Time"
+          
