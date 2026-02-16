@@ -11,6 +11,7 @@ var NoUserFoundErr = errors.New("no user found")
 
 type responseType struct {
 	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"name"`
 	CreatedAt    string    `json:"created_at"`
 	UpdatedAt    string    `json:"updated_at"`
 	Email        string    `json:"email"`

@@ -33,7 +33,8 @@ type UserRepo interface {
 	UpdateFriReq(reqID uuid.UUID) error // this one confirm the fri req
 	GetUserFriListByID(ctx context.Context, userID uuid.UUID) (*[]database.GetUserFriListByIDRow, error)
 	CancelFriReq(reqID uuid.UUID, updateTime time.Time) error // this one cancel the req
-	DeleteFriReq(reqID uuid.UUID) error                       // delete the record
+	GetMatchName(ctx context.Context, searchName string) (*[]User, error)
+	DeleteFriReq(reqID uuid.UUID) error // delete the record
 	GetOtherUserIDByReqID(ctx context.Context, userID uuid.UUID, reqID uuid.UUID) (*User, error)
 }
 
@@ -239,4 +240,23 @@ func (r *userRepo) GetOtherUserIDByReqID(ctx context.Context, userID uuid.UUID, 
 		return nil, err
 	}
 	return toUserFormatForOtherUserInfo(user), nil
+}
+
+func (r *userRepo) GetMatchName(ctx context.Context, searchName string) (*[]User, error) {
+	userList, err := r.queries.SearchNameSiml(ctx, searchName)
+	if err != nil {
+		return nil, err
+	}
+	var userInfoList []User
+	for _, v := range userList {
+		userInfoList = append(userInfoList, User{
+			ID:        v.ID,
+			Name:      v.Name,
+			Email:     v.Email,
+			CreatedAt: v.CreatedAt,
+			UpdatedAt: v.UpdatedAt,
+			IsRED:     v.IsChirpyRed.Bool,
+		})
+	}
+	return &userInfoList, nil
 }

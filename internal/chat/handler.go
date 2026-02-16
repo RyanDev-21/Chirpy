@@ -53,7 +53,7 @@ func (h *chatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, 400, "bad request")
 		return
 	}
-	err = h.chatService.sendMessage(r.Context(), *userID, &payload)
+	msgID, err := h.chatService.sendMessage(r.Context(), *userID, &payload)
 	if err != nil {
 		if err == ErrNotSupportedTypeMsg {
 			response.Error(w, 400, "bad request")
@@ -63,11 +63,17 @@ func (h *chatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, 404, "client not found,consider connecting to ws")
 			return
 		}
+		if err == chatmodel.ErrNotValidToID {
+			response.Error(w, 400, "to id is not valid uuid")
+			return
+		}
 		log.Printf("failed to send message #%s#", err)
 		response.Error(w, 500, "something went wrong")
 		return
 	}
-	w.WriteHeader(201)
+	response.JSON(w, 200, chatmodel.ResponseMessageID{
+		MsgID: *msgID,
+	})
 }
 
 func (h *chatHandler) GetMesagesForPrivateID(w http.ResponseWriter, r *http.Request) {

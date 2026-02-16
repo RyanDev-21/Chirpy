@@ -94,3 +94,9 @@ users u ON u.id  = (
 	END
 )
 WHERE ur.id = $2;
+
+-- name: SearchNameSiml :many
+SELECT u.email,u.name,u.created_at,u.updated_at,u.id,u.is_chirpy_red,similarity(name,$1) AS similarity
+FROM users u
+WHERE name % $1
+ORDER BY similarity DESC,name;

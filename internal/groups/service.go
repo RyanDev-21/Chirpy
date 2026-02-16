@@ -72,24 +72,20 @@ func (s *groupService) createGroup(ctx context.Context, createrID uuid.UUID, gro
 	// updated group member count
 	memCount := int16(len(groupInfo.Members)) + 1 // the creator id should count too +1
 	groupInfo.CurrentMem = memCount
-	// update the metadata in the cache
-	go func(groupID uuid.UUID, groupInfo *createGroupStruct) {
-		s.groupCache.groupMuLock.Lock()
-		s.groupCache.GroupCache[chatID] = &CacheGroupInfo{
-			Name:     groupInfo.GroupName,
-			TotalMem: groupInfo.CurrentMem,
-			MaxMem:   groupInfo.MaxMems,
-		}
-		s.groupCache.groupMuLock.Unlock()
-	}(chatID, groupInfo)
+	// update the metadata in the cache (synchronous)
+	s.groupCache.groupMuLock.Lock()
+	s.groupCache.GroupCache[chatID] = &CacheGroupInfo{
+		Name:     groupInfo.GroupName,
+		TotalMem: groupInfo.CurrentMem,
+		MaxMem:   groupInfo.MaxMems,
+	}
+	s.groupCache.groupMuLock.Unlock()
 	// need to add the creatorId into the memberIds
 	updatedMemList := append(groupInfo.Members, createrID)
-	// now update the member list
-	go func(groupID uuid.UUID, memberIds *[]uuid.UUID) {
-		s.groupCache.memMuLock.Lock()
-		s.groupCache.MemberCache[chatID] = memberIds
-		s.groupCache.memMuLock.Unlock()
-	}(chatID, &updatedMemList)
+	// now update the member list (synchronous)
+	s.groupCache.memMuLock.Lock()
+	s.groupCache.MemberCache[chatID] = &updatedMemList
+	s.groupCache.memMuLock.Unlock()
 
 	payload := GroupPublish{
 		GroupID:   GroupInfo{chatID},

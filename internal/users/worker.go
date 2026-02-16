@@ -31,7 +31,6 @@ func (s *userService) StartWorkerForConfirmFri(channel chan *mq.Channel) {
 		continue
 	}
 	log.Printf("successfully created the add fri record")
-
 }
 
 func (s *userService) StartWorkerForCancelReq(channel chan *mq.Channel) {
@@ -58,4 +57,15 @@ func (s *userService) StartWorkerForDeleteReq(channel chan *mq.Channel) {
 		continue
 	}
 	log.Printf("successfully delete the req record")
+}
+
+func (s *userService) StartWorkerForUpdateUserCache(channel chan *mq.Channel) {
+	for chen := range channel {
+		msg := chen.Msg.(*[]User)
+		for _, v := range *msg {
+			s.userCache.UpdateUserCache(&v)
+		}
+	}
+
+	log.Printf("successfully updated the userCache")
 }
