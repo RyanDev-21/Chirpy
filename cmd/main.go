@@ -649,6 +649,7 @@ func main() {
 	addFriendLimiter := ratelimit.NewRateLimiter(10, time.Minute)
 	confirmFriendLimiter := ratelimit.NewRateLimiter(30, time.Minute)
 	deleteFriendLimiter := ratelimit.NewRateLimiter(30, time.Minute)
+	searchUserLimiter := ratelimit.NewRateLimiter(20, time.Minute)
 
 	// startup workers for each event
 	// run the message queue
@@ -667,6 +668,7 @@ func main() {
 
 	go mq.ListeningForTheChannels(chatmodel.PrivateMessageConstant, 1000, chatService.StartWorkerForAddPrivateMessage)
 	go mq.ListeningForTheChannels(chatmodel.PublicMessageConstant, 1000, chatService.StartWorkerForAddPublicMessage)
+	go mq.ListeningForTheChannels("UpdateUserCache", 100, userService.StartWorkerForUpdateUserCache)
 	// Main app route
 	mux.Handle("/app/", middleWareLog(finalHanlder))
 	// Asset route
@@ -683,9 +685,9 @@ func main() {
 	// POST route
 	mux.HandleFunc("POST /admin/metrics/reset", apicfg.ResetHandle)
 	mux.HandleFunc("POST /api/chirps", apicfg.ChirpHandle)
-	mux.Handle("POST /api/users", middleware.MiddelWareLog(userHandler.Register))
+	mux.Handle("POST /api/users", middleware.MiddleWareLog(userHandler.Register))
 	mux.HandleFunc("POST /admin/reset", apicfg.UserResetHandle)
-	mux.Handle("POST /api/login", middleware.MiddelWareLog(authHandler.Login))
+	mux.Handle("POST /api/login", middleware.MiddleWareLog(authHandler.Login))
 	mux.HandleFunc("POST /api/refresh", authHandler.RefreshToken)
 	mux.HandleFunc("POST /api/revoke", authHandler.Revoke)
 
@@ -703,63 +705,72 @@ func main() {
 
 	// UpdatePassword route
 	// uses middleware to parse the userID
-	mux.Handle("POST /api/users/password", middleware.AuthMiddleWare(userHandler.UpdatePassword, apicfg.secret, logger))
+	mux.Handle("POST /api/users/password", middleware.MiddleWareLog(middleware.AuthMiddleWare(userHandler.UpdatePassword, apicfg.secret, logger)))
 
 	// DELETE route
 	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apicfg.ChirpDeleteHandle)
 
 	// Maybe endpoint for chat
 	// WARN: why is this method get maybe consider smth
-	mux.Handle("GET /api/chats/ws", middleware.AuthMiddleWare(chatHandler.ServeWs, apicfg.secret, logger))
+	mux.Handle("GET /api/chats/ws", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.ServeWs, apicfg.secret, logger)))
 
 	// create a group
-	mux.Handle("POST /api/chats/groups", middleware.AuthMiddleWare(groupHandler.CreateGroup, apicfg.secret, logger))
+	mux.Handle("POST /api/chats/groups", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.CreateGroup, apicfg.secret, logger)))
 
 	// need to update these dummy function
 	// join group
-	mux.Handle("POST /api/chats/groups/{group_id}/members", middleware.AuthMiddleWare(groupHandler.JoinGroup, apicfg.secret, logger))
+	mux.Handle("POST /api/chats/groups/{group_id}/members", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.JoinGroup, apicfg.secret, logger)))
 
 	// leave group
-	mux.Handle("DELETE /api/chats/groups/{group_id}/members", middleware.AuthMiddleWare(groupHandler.LeaveGroup, apicfg.secret, logger))
+	mux.Handle("DELETE /api/chats/groups/{group_id}/members", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.LeaveGroup, apicfg.secret, logger)))
 
 	// TODO::still have to write this one
 	// kick or add the user from or to the group
-	mux.HandleFunc("PATCH /api/chats/groups/{group_id}/members", groupHandler.CreateGroup)
-
+	// mux.Handle("PATCH /api/chats/groups/{group_id}/members", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.CreateGroup, apicfg.secret, logger)))
+	//
 	// TODO:and this one
 	// change group setting or anything
-	mux.HandleFunc("PATCH /api/chats/groups/{group_id}", groupHandler.CreateGroup)
+	// mux.HandleFunc("PATCH /api/chats/groups/{group_id}", groupHandler.CreateGroup)
 
 	// NOTE:: i should really consider making the server as my own config and graceful shutdown
 
 	// ednpoint for add friend
 	mux.Handle("POST /api/friends/requests",
-		middleware.AuthMiddleWare(
-			ratelimit.RateLimitMiddleware(addFriendLimiter, userHandler.AddFriend, logger),
-			apicfg.secret, logger))
+		middleware.MiddleWareLog(
+			middleware.AuthMiddleWare(
+				ratelimit.RateLimitMiddleware(addFriendLimiter, userHandler.AddFriend, logger),
+				apicfg.secret, logger)))
 
-	mux.Handle("GET /api/friends/requests", middleware.AuthMiddleWare(userHandler.GetPendingList, apicfg.secret, logger))
+	mux.Handle("GET /api/friends/requests", middleware.MiddleWareLog(middleware.AuthMiddleWare(userHandler.GetPendingList, apicfg.secret, logger)))
 	mux.Handle("PUT /api/friends/requests/{request_id}/",
-		middleware.AuthMiddleWare(
-			ratelimit.RateLimitMiddleware(confirmFriendLimiter, userHandler.UpdateReq, logger),
-			apicfg.secret, logger))
+		middleware.MiddleWareLog(
+			middleware.AuthMiddleWare(
+				ratelimit.RateLimitMiddleware(confirmFriendLimiter, userHandler.UpdateReq, logger),
+				apicfg.secret, logger)))
 	mux.Handle("DELETE /api/friends/requests/{request_id}/",
-		middleware.AuthMiddleWare(
-			ratelimit.RateLimitMiddleware(deleteFriendLimiter, userHandler.DeleteFriReq, logger),
-			apicfg.secret, logger))
-	mux.Handle("GET /api/friends", middleware.AuthMiddleWare(
-		userHandler.GetFriendList, apicfg.secret, logger))
+		middleware.MiddleWareLog(
+			middleware.AuthMiddleWare(
+				ratelimit.RateLimitMiddleware(deleteFriendLimiter, userHandler.DeleteFriReq, logger),
+				apicfg.secret, logger)))
+	mux.Handle("GET /api/friends", middleware.MiddleWareLog(middleware.AuthMiddleWare(
+		userHandler.GetFriendList, apicfg.secret, logger)))
 
 	// endpoint for send message
 	// maybe need to consider about making the chatID
-	mux.Handle("POST /api/chats/message", middleware.AuthMiddleWare(chatHandler.SendMessage, apicfg.secret, logger))
+	mux.Handle("POST /api/chats/message", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.SendMessage, apicfg.secret, logger)))
 	server := http.Server{
 		Addr:    Port,
 		Handler: mux,
 	}
 
-	mux.Handle("GET /api/chat/{otherUser_id}/messages", middleware.AuthMiddleWare(chatHandler.GetMesagesForPrivateID, apicfg.secret, logger))
-	mux.Handle("GET /api/chat/groups/{group_id}/messages", middleware.AuthMiddleWare(chatHandler.GetMesagesForPublicID, apicfg.secret, logger))
+	mux.Handle("GET /api/chat/{otherUser_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMesagesForPrivateID, apicfg.secret, logger)))
+	mux.Handle("GET /api/chat/groups/{group_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMesagesForPublicID, apicfg.secret, logger)))
+	mux.Handle("GET /api/users/search",
+		middleware.MiddleWareLog(
+			middleware.AuthMiddleWare(
+				ratelimit.RateLimitMiddleware(searchUserLimiter, userHandler.SearchUser, logger),
+				apicfg.secret, logger)))
+
 	log.Printf("The server is running on %q\n", Port)
 	log.Fatal(server.ListenAndServe())
 }

@@ -47,13 +47,20 @@ type MessageMetaDataRes struct {
 	MsgInfo MessageCache `json:"message_info"`
 }
 
+type ResponseMessageID struct {
+	MsgID uuid.UUID `json:"msg_id"`
+}
+
 // var (
 //
 //	ErrUpdateCache         = errors.New("failed to update the cache")
 //	ErrRedisCacheSetFailed = errors.New("failed to set the redis cache")
 //
 // )
-var ErrNotAuthorized = errors.New("not in group")
+var (
+	ErrNotAuthorized = errors.New("not in group")
+	ErrNotValidToID  = errors.New("not valid toID(type uuid)")
+)
 
 const (
 	PrivateMessageConstant = "addPrivateMessage"

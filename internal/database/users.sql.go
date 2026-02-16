@@ -368,6 +368,51 @@ func (q *Queries) GetYourSendReqList(ctx context.Context, userID uuid.UUID) ([]G
 	return items, nil
 }
 
+const searchNameSiml = `-- name: SearchNameSiml :many
+SELECT u.email,u.name,u.created_at,u.updated_at,u.id,u.is_chirpy_red,similarity(name,$1) AS similarity
+FROM users u
+WHERE name % $1
+ORDER BY similarity DESC,name
+`
+
+type SearchNameSimlRow struct {
+	Email       string
+	Name        string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	ID          uuid.UUID
+	IsChirpyRed pgtype.Bool
+	Similarity  float32
+}
+
+func (q *Queries) SearchNameSiml(ctx context.Context, similarity string) ([]SearchNameSimlRow, error) {
+	rows, err := q.db.Query(ctx, searchNameSiml, similarity)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchNameSimlRow
+	for rows.Next() {
+		var i SearchNameSimlRow
+		if err := rows.Scan(
+			&i.Email,
+			&i.Name,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ID,
+			&i.IsChirpyRed,
+			&i.Similarity,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateIsRedById = `-- name: UpdateIsRedById :execresult
 UPDATE users SET  is_chirpy_red = true ,updated_at = NOW() WHERE id = $1
 `
