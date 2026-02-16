@@ -31,10 +31,13 @@ type UserService interface {
 	DeleteFriReq(ctx context.Context, userID, reqID uuid.UUID) error
 	GetPendingList(ctx context.Context, userID uuid.UUID) (*GetReqList, error)
 	GetFriendList(ctx context.Context, userID uuid.UUID) (*[]FriendMetaData, error)
+	SearchUser(ctx context.Context, serachName string) (*[]User, error)
+
 	StartWorkerForAddFri(channel chan *mq.Channel)
 	StartWorkerForConfirmFri(channel chan *mq.Channel)
 	StartWorkerForDeleteReq(channel chan *mq.Channel)
 	StartWorkerForCancelReq(channel chan *mq.Channel)
+	StartWorkerForUpdateUserCache(channel chan *mq.Channel)
 }
 
 type userService struct {
@@ -467,4 +470,29 @@ func saveIntoLog(jobName string, job interface{}, logger *slog.Logger) {
 	if err != nil {
 		logger.Error("file wirte process failed", "error", err)
 	}
+}
+
+func (s *userService) SearchUser(ctx context.Context, serachName string) (*[]User, error) {
+	reqID, _ := middleware.GetContextKey(ctx, "request")
+
+	s.logger.Info("search user started", "reqID", reqID, "searchName", serachName)
+
+	userList, err := s.userRepo.GetMatchName(ctx, serachName)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			s.logger.Info("no users found", "reqID", reqID, "searchName", serachName)
+			return &[]User{}, nil
+		}
+		s.logger.Error("failed to search users", "reqID", reqID, "error", err)
+		return nil, err
+	}
+
+	err = s.mainMq.PublishWithContext(ctx, "updateUserCache", userList)
+	if err != nil {
+		handleMqFail("updateUserCache", *userList, err, s.logger)
+	}
+
+	s.logger.Info("search user completed", "reqID", reqID, "searchName", serachName, "count", len(*userList))
+
+	return userList, nil
 }

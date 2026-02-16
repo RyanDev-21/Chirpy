@@ -26,7 +26,7 @@ type ChatService interface {
 	upgradeWebsocket(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error)
 	initWs(conn *websocket.Conn, userID uuid.UUID)
 	//	createGroup(userID uuid.UUID)
-	sendMessage(ctx context.Context, userID uuid.UUID, paylod *chatmodel.Message) error
+	sendMessage(ctx context.Context, userID uuid.UUID, paylod *chatmodel.Message) (*uuid.UUID, error)
 	fetchMessagePrivate(ctx context.Context, userID, toID uuid.UUID) (*chatmodel.MessageListRes, error) // the chatID will be otherUserID if private
 	fetchMessagePublic(ctx context.Context, userID, toID uuid.UUID) (*chatmodel.MessageListRes, error)  // the chatID will be otherUserID if private
 	StartWorkerForAddPrivateMessage(channel chan *mq.Channel)
@@ -73,10 +73,10 @@ func (s *chatService) upgradeWebsocket(w http.ResponseWriter, r *http.Request) (
 
 // send the message struct based on the toId
 // WARN : should consider validating the toID
-func (s *chatService) sendMessage(ctx context.Context, userID uuid.UUID, payload *chatmodel.Message) error {
+func (s *chatService) sendMessage(ctx context.Context, userID uuid.UUID, payload *chatmodel.Message) (*uuid.UUID, error) {
 	toID, err := uuid.Parse(payload.ToID)
 	if err != nil {
-		return errors.New("not valid toID(type uuid)")
+		return nil, chatmodel.ErrNotValidToID
 	}
 
 	var parentParseID *uuid.UUID
@@ -84,19 +84,19 @@ func (s *chatService) sendMessage(ctx context.Context, userID uuid.UUID, payload
 	if payload.ParendID != "" {
 		*parentParseID, err = uuid.Parse(payload.ParendID)
 		if err != nil {
-			return errors.New("not valid parentID(type uuid)")
+			return nil, errors.New("not valid parentID(type uuid)")
 		}
 	}
 
 	// i need to somehow get the client connection and then use the send one
 	err = s.hub.WriteIntoConnection(userID, payload)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	msgID, err := uuid.NewUUID()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	msgMeta := getPayload(userID, msgID, payload)
 	// handle the reply and stuff
@@ -104,22 +104,22 @@ func (s *chatService) sendMessage(ctx context.Context, userID uuid.UUID, payload
 	case "private":
 		err := s.handlePrivateMsg(ctx, userID, toID, msgMeta) // update the cache
 		if err != nil {
-			return err
+			return nil, err
 		}
 		s.publishJobHelper(chatmodel.PrivateMessageConstant, *msgMeta) // upadate the db
 
 	case "public":
 		err := s.handlePublicMsg(ctx, userID, msgMeta)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		s.publishJobHelper(chatmodel.PublicMessageConstant, *msgMeta)
 
 	default:
-		return ErrNotSupportedTypeMsg
+		return nil, ErrNotSupportedTypeMsg
 	}
-	return err
+	return &msgID, err
 }
 
 func (s *chatService) fetchMessagePrivate(ctx context.Context, userID, toID uuid.UUID) (*chatmodel.MessageListRes, error) {

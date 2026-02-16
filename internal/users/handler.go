@@ -230,6 +230,35 @@ func (h *UserHandler) GetFriendList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *UserHandler) SearchUser(w http.ResponseWriter, r *http.Request) {
+	_, err := middleware.GetContextKey(r.Context(), "user")
+	if err != nil {
+		response.Error(w, 400, "invalid request")
+		return
+	}
+	searchName := r.URL.Query().Get("q")
+	if searchName == "" {
+		response.Error(w, 400, "search name is not valid")
+		return
+	}
+	userList, err := h.userService.SearchUser(r.Context(), searchName)
+	if err != nil {
+		response.Error(w, 500, "internal server error")
+		return
+	}
+
+	if userList == nil || len(*userList) == 0 {
+		response.JSON(w, 200, FoundUserListRes{
+			UserList: []User{},
+		})
+		return
+	}
+
+	response.JSON(w, 200, FoundUserListRes{
+		UserList: *userList,
+	})
+}
+
 //WARN::rethinking about this
 // //route for cancel
 // func (h *UserHandler)CancelFriendReq(w http.ResponseWriter,r *http.Request){
