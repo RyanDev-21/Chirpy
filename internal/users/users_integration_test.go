@@ -3,6 +3,7 @@ package users
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -137,6 +139,19 @@ func (m *mockUserRepo) DeleteFriReq(reqID uuid.UUID) error {
 
 func (m *mockUserRepo) GetOtherUserIDByReqID(ctx context.Context, userID uuid.UUID, reqID uuid.UUID) (*User, error) {
 	return nil, nil
+}
+
+func (m *mockUserRepo) GetMatchName(ctx context.Context, searchName string) (*[]User, error) {
+	var result []User
+	for _, u := range m.users {
+		if strings.Contains(strings.ToLower(u.Name), strings.ToLower(searchName)) {
+			result = append(result, *u)
+		}
+	}
+	if len(result) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return &result, nil
 }
 
 type mockUserCache struct {

@@ -105,3 +105,7 @@ type ReesponseForAddFriend struct {
 type DeleteFirReqStruct struct {
 	ReqID uuid.UUID
 }
+
+type FoundUserListRes struct {
+	UserList []User
+}

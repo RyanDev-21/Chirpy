@@ -44,7 +44,8 @@ Authenticate user and get JWT token.
 **Request Body:**
 ```json
 {
-  "to_id": "uuid"
+  "email": "string",
+  "password": "string"
 }
 ```
 
@@ -55,7 +56,10 @@ Authenticate user and get JWT token.
   "email": "string",
   "name": "string",
   "token": "jwt_token",
-  "refresh_token": "refresh_token"
+  "refresh_token": "refresh_token",
+  "is_chirpy_red": false,
+  "created_at": "timestamp",
+  "updated_at": "timestamp"
 }
 ```
 
@@ -135,9 +139,43 @@ Authorization: Bearer <jwt_token>
 
 ---
 
+### 6. Search Users
+**Endpoint:** `GET /api/users/search?q=<name>` (Authenticated, Rate Limited: 20/min)
+
+Search for users by name prefix.
+
+**Headers:**
+```
+Authorization: Bearer <jwt_token>
+```
+
+**Query Parameters:**
+- `q` (required): Search query (partial name match)
+
+**Response (200):**
+```json
+{
+  "UserList": [
+    {
+      "id": "uuid",
+      "name": "string",
+      "email": "string",
+      "is_chirpy_red": false,
+      "created_at": "timestamp",
+      "updated_at": "timestamp"
+    }
+  ]
+}
+```
+
+**Errors:**
+- 400: "search name is not valid" (missing query param)
+
+---
+
 ## Friend System Endpoints
 
-### 6. Send Friend Request
+### 7. Send Friend Request
 **Endpoint:** `POST /api/friends/requests` (Authenticated, Rate Limited: 10/min)
 
 Send a friend request to another user.
@@ -167,7 +205,7 @@ Authorization: Bearer <jwt_token>
 
 ---
 
-### 7. Get Pending Requests
+### 8. Get Pending Requests
 **Endpoint:** `GET /api/friends/requests` (Authenticated)
 
 Get pending friend requests (incoming and outgoing).
@@ -200,7 +238,7 @@ Authorization: Bearer <jwt_token>
 
 ---
 
-### 8. Confirm/Reject Friend Request
+### 9. Confirm/Reject Friend Request
 **Endpoint:** `PUT /api/friends/requests/{request_id}/` (Authenticated, Rate Limited: 30/min)
 
 Confirm or cancel a friend request.
@@ -232,7 +270,7 @@ Authorization: Bearer <jwt_token>
 
 ---
 
-### 9. Delete/Cancel Friend Request
+### 10. Delete/Cancel Friend Request
 **Endpoint:** `DELETE /api/friends/requests/{request_id}/` (Authenticated, Rate Limited: 30/min)
 
 Cancel a sent friend request.
@@ -249,7 +287,7 @@ Authorization: Bearer <jwt_token>
 
 ---
 
-### 10. Get Friend List
+### 11. Get Friend List
 **Endpoint:** `GET /api/friends` (Authenticated)
 
 Get list of all confirmed friends.
@@ -275,7 +313,7 @@ Authorization: Bearer <jwt_token>
 
 ## Group Endpoints
 
-### 11. Create Group
+### 12. Create Group
 **Endpoint:** `POST /api/chats/groups` (Authenticated)
 
 Create a new chat group.
@@ -288,20 +326,26 @@ Authorization: Bearer <jwt_token>
 **Request Body:**
 ```json
 {
-  "name": "string"
+  "group_name": "string (unique)",
+  "description": "string (optional)",
+  "max_mems": number (optional, default 10),
+  "member_ids": ["uuid"] (optional)
 }
 ```
 
 **Response (201):**
 ```json
 {
-  "group_id": "uuid"
+  "chat_id": "uuid"
 }
 ```
 
+**Errors:**
+- 400: "duplicate name"
+
 ---
 
-### 12. Join Group
+### 13. Join Group
 **Endpoint:** `POST /api/chats/groups/{group_id}/members` (Authenticated)
 
 Add a member to a group.
@@ -322,7 +366,7 @@ Authorization: Bearer <jwt_token>
 
 ---
 
-### 13. Leave Group
+### 14. Leave Group
 **Endpoint:** `DELETE /api/chats/groups/{group_id}/members` (Authenticated)
 
 Remove a member from a group.
@@ -345,10 +389,10 @@ Authorization: Bearer <jwt_token>
 
 ## Chat/Messages Endpoints
 
-### 14. Send Message
+### 15. Send Message
 **Endpoint:** `POST /api/chats/message` (Authenticated)
 
-Send a message to a user or group.
+Send a message to a user or group. Recipient must be connected via WebSocket.
 
 **Headers:**
 ```
@@ -359,20 +403,25 @@ Authorization: Bearer <jwt_token>
 ```json
 {
   "to_id": "uuid (user or group ID)",
-  "message": "string"
+  "msg": "string",
+  "type": "private" | "public"
+}
+```
+- `type`: "private" for direct messages, "public" for group messages
+
+**Response (200):**
+```json
+{
+  "msg_id": "uuid"
 }
 ```
 
-**Response (201):**
-```json
-{
-  "message_id": "uuid"
-}
-```
+**Errors:**
+- 400: "client not found, consider connecting to ws" (recipient not connected)
 
 ---
 
-### 15. Get Private Messages
+### 16. Get Private Messages
 **Endpoint:** `GET /api/chat/{otherUser_id}/messages` (Authenticated)
 
 Get messages between current user and another user.
@@ -399,7 +448,7 @@ Authorization: Bearer <jwt_token>
 
 ---
 
-### 16. Get Group Messages
+### 17. Get Group Messages
 **Endpoint:** `GET /api/chat/groups/{group_id}/messages` (Authenticated)
 
 Get messages in a group.
@@ -426,7 +475,7 @@ Authorization: Bearer <jwt_token>
 
 ---
 
-### 17. WebSocket Connection
+### 18. WebSocket Connection
 **Endpoint:** `GET /api/chats/ws` (Authenticated)
 
 WebSocket endpoint for real-time chat.
@@ -440,7 +489,7 @@ Authorization: Bearer <jwt_token>
 
 ## Admin Endpoints
 
-### 18. Get Metrics
+### 19. Get Metrics
 **Endpoint:** `GET /admin/metrics`
 
 Get server metrics.
@@ -454,7 +503,7 @@ Get server metrics.
 
 ---
 
-### 19. Reset Metrics
+### 20. Reset Metrics
 **Endpoint:** `POST /admin/metrics/reset`
 
 Reset server metrics.
@@ -463,7 +512,7 @@ Reset server metrics.
 
 ---
 
-### 20. Reset Database
+### 21. Reset Database
 **Endpoint:** `POST /admin/reset`
 
 Reset the database (dev only).
@@ -474,7 +523,7 @@ Reset the database (dev only).
 
 ## Webhooks
 
-### 21. Polka Webhook
+### 22. Polka Webhook
 **Endpoint:** `POST /api/polka/webhooks`
 
 Handle Polka webhooks.
@@ -495,7 +544,7 @@ Handle Polka webhooks.
 
 ## Health Check
 
-### 22. Health Check
+### 23. Health Check
 **Endpoint:** `GET /api/healthz`
 
 Check if the server is running.
@@ -508,6 +557,7 @@ Check if the server is running.
 
 | Endpoint | Limit |
 |----------|-------|
+| GET /api/users/search | 20 requests/minute |
 | POST /api/friends/requests | 10 requests/minute |
 | PUT /api/friends/requests/{id} | 30 requests/minute |
 | DELETE /api/friends/requests/{id} | 30 requests/minute |

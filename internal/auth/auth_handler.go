@@ -50,14 +50,15 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, 200, responseType{
 		ID:           user.ID,
 		Email:        user.Email,
+		Name:         user.Name,
 		CreatedAt:    user.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:    user.UpdatedAt.Format(time.RFC3339),
 		IsChirpyRed:  user.IsRED,
 		Token:        accessToken,
 		RefreshToken: refreshToken,
 	})
-
 }
+
 func (h *authHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
@@ -75,6 +76,7 @@ func (h *authHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(204)
 }
+
 func (h *authHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
