@@ -35,16 +35,17 @@ func (q *Queries) AddSendReq(ctx context.Context, arg AddSendReqParams) error {
 }
 
 const cancelFriReqStatus = `-- name: CancelFriReqStatus :exec
-UPDATE user_relationships SET status = 'cancel',updated_at = $2 WHERE id = $1
+UPDATE user_relationships SET status = 'cancel',updated_at = $2 WHERE id = $1 AND otherUser_id = $3
 `
 
 type CancelFriReqStatusParams struct {
-	ID        uuid.UUID
-	UpdatedAt time.Time
+	ID          uuid.UUID
+	UpdatedAt   time.Time
+	OtheruserID uuid.UUID
 }
 
 func (q *Queries) CancelFriReqStatus(ctx context.Context, arg CancelFriReqStatusParams) error {
-	_, err := q.db.Exec(ctx, cancelFriReqStatus, arg.ID, arg.UpdatedAt)
+	_, err := q.db.Exec(ctx, cancelFriReqStatus, arg.ID, arg.UpdatedAt, arg.OtheruserID)
 	return err
 }
 
@@ -83,11 +84,16 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 }
 
 const deleteFriReq = `-- name: DeleteFriReq :exec
-DELETE FROM user_relationships WHERE id=$1
+DELETE FROM user_relationships WHERE id=$1 AND user_id =$2
 `
 
-func (q *Queries) DeleteFriReq(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteFriReq, id)
+type DeleteFriReqParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+func (q *Queries) DeleteFriReq(ctx context.Context, arg DeleteFriReqParams) error {
+	_, err := q.db.Exec(ctx, deleteFriReq, arg.ID, arg.UserID)
 	return err
 }
 
@@ -436,10 +442,16 @@ func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) 
 }
 
 const updateSendReq = `-- name: UpdateSendReq :exec
-UPDATE user_relationships SET status = 'confirm',updated_at = NOW() WHERE id = $1
+UPDATE user_relationships SET status = 'confirm',updated_at = $2 WHERE id = $1 AND otherUser_id= $3
 `
 
-func (q *Queries) UpdateSendReq(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, updateSendReq, id)
+type UpdateSendReqParams struct {
+	ID          uuid.UUID
+	UpdatedAt   time.Time
+	OtheruserID uuid.UUID
+}
+
+func (q *Queries) UpdateSendReq(ctx context.Context, arg UpdateSendReqParams) error {
+	_, err := q.db.Exec(ctx, updateSendReq, arg.ID, arg.UpdatedAt, arg.OtheruserID)
 	return err
 }

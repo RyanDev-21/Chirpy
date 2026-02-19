@@ -16,6 +16,37 @@ type Message struct {
 	ToID     string `json:"to_id"`
 	Type     string `json:"type"`
 }
+
+// type Event struct {
+// 	FromID   string `json:"from_id"`
+// 	ToID     string `json:"to_id"`
+// 	ParentID string `json:"parent_id,omitempty"`
+// 	Content  string `json:"content,omitempty"`
+// 	Type     string `json:"type,omitempty"`
+// }
+
+type OutGoingEvent struct {
+	FromID string `json:"from_id"`
+	Event  string `json:"event"`
+}
+type InCommingEvent struct {
+	ToID  string `json:"to_id"`
+	Event string `json:"event"`
+}
+
+type Event struct {
+	FromID string `json:"from_id"`
+	ToID   string `json:"to_id"`
+	Event  string `json:"event"`
+}
+
+type OutGoingMessage struct {
+	Content  string `json:"msg"`
+	ParentID string `json:"parent_id,omitempty"`
+	ToID     string `json:"to_id"`
+	FromID   string `json:"from_id"`
+	Type     string `json:"type"`
+}
 type PublishMessageStruct struct {
 	Msg    *Message
 	UserID uuid.UUID

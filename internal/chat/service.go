@@ -3,8 +3,7 @@ package chat
 import (
 	"context"
 	"errors"
-
-	//	"log"
+	"log/slog"
 	"net/http"
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
@@ -38,6 +37,7 @@ type chatService struct {
 	mq         *mq.MainMQ
 	rediscache ChatRepoCache
 	groupCache *groups.Cache
+	logger     *slog.Logger
 }
 
 var (
@@ -45,13 +45,14 @@ var (
 	ErrNOtFoundClient      = errors.New("not found client")
 )
 
-func NewChatService(chatRepo ChatRepo, hub *chatmodel.Hub, mq *mq.MainMQ, cache ChatRepoCache, groupCache *groups.Cache) ChatService {
+func NewChatService(chatRepo ChatRepo, hub *chatmodel.Hub, mq *mq.MainMQ, cache ChatRepoCache, groupCache *groups.Cache, logger *slog.Logger) ChatService {
 	return &chatService{
 		chatRepo:   chatRepo,
 		hub:        hub,
 		mq:         mq,
 		rediscache: cache,
 		groupCache: groupCache,
+		logger:     logger,
 	}
 }
 
@@ -126,29 +127,24 @@ func (s *chatService) fetchMessagePrivate(ctx context.Context, userID, toID uuid
 	key := getChatKey(userID, toID)
 	redisKey := s.rediscache.generateRedisKey(userID, key)
 	msgList, err := s.rediscache.getMessages(ctx, redisKey)
-	if err != nil {
-		if errors.Is(err, redis.Nil) { // if miss,db hit
-			// need to fetchMessage from db
-			message, err := s.chatRepo.GetMessagesForPrivate(ctx, userID, toID)
-			if err != nil {
-				return nil, err
-			}
-			// update the cache
-			for _, v := range *message {
-				err := s.rediscache.addMessage(ctx, redisKey, convertFromMessageToMeta(v))
-				if err != nil {
-					return nil, err
-				}
-			}
-			// type convertion to return
-			msgMetaList, err := convertToMsgMetaList(message)
-			if err != nil {
-				return nil, err
-			}
-			return msgMetaList, nil
-
+	if err != nil || msgList == nil || len(*msgList) == 0 {
+		s.logger.Debug("cache miss or empty, fetching from DB", "err", err)
+		message, err := s.chatRepo.GetMessagesForPrivate(ctx, userID, toID)
+		if err != nil {
+			return nil, err
 		}
-		return nil, err
+		s.logger.Debug("fetched messages from DB", "count", len(*message))
+		for _, v := range *message {
+			err := s.rediscache.addMessage(ctx, redisKey, convertFromMessageToMeta(v))
+			if err != nil {
+				s.logger.Warn("failed to cache message", "err", err)
+			}
+		}
+		msgMetaList, err := convertToMsgMetaList(message)
+		if err != nil {
+			return nil, err
+		}
+		return msgMetaList, nil
 	}
 	return &chatmodel.MessageListRes{
 		MsgList: *msgList,

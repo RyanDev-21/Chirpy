@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"log/slog"
+	slog "log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -21,9 +21,6 @@ import (
 	"RyanDev-21.com/Chirpy/internal/groups"
 	rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
 
-	// rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
-
-	//	rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
@@ -616,8 +613,6 @@ func main() {
 		log.Printf("failed to get the redis client \n #%s#", err)
 	}
 
-	rediscache := rediscache.NewRedisCacheImpl(cacheClient)
-	chatCache := chat.NewChatCache(rediscache)
 	// Create Repositories
 	userRepo := users.NewUserRepo(dbQueries)
 	authRepo := authClient.NewAuthRepo(dbQueries)
@@ -630,19 +625,29 @@ func main() {
 	userCache := users.NewUserCache(userRepo)
 	go userCache.Load()
 
-	// initiate logger
-	logger := slog.Default()
+	// initiate logger first
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+
+	rediscache := rediscache.NewRedisCacheImpl(cacheClient)
+	chatCache := chat.NewChatCache(rediscache, chatRepo, logger)
+	ctxForCache, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	go func() {
+		defer cancel()
+		chatCache.LoadMessagesForStartUp(ctxForCache)
+	}()
 
 	// Create Services
 	userService := users.NewUserService(userRepo, userCache, mq, logger)
 	authService := authClient.NewAuthService(userRepo, authRepo, apicfg.secret, logger)
-	chatService := chat.NewChatService(chatRepo, hub, mq, chatCache, groupCache)
+	chatService := chat.NewChatService(chatRepo, hub, mq, chatCache, groupCache, logger)
 	groupService := groups.NewGroupService(groupRepo, hub, mq, groupCache, logger)
 
 	// Create Hanlders
 	userHandler := users.NewUserHandler(userService)
 	authHandler := authClient.NewAuthHandler(authService)
-	chatHandler := chat.NewChatHandler(chatService)
+	chatHandler := chat.NewChatHandler(chatService, logger)
 	groupHandler := groups.NewGroupHandler(groupService)
 
 	// Rate limiters for friend endpoints
@@ -764,7 +769,7 @@ func main() {
 	}
 
 	mux.Handle("GET /api/chat/{otherUser_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMesagesForPrivateID, apicfg.secret, logger)))
-	mux.Handle("GET /api/chat/groups/{group_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMesagesForPublicID, apicfg.secret, logger)))
+	mux.Handle("GET /api/chat/groups/{group_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMessagesForPublicID, apicfg.secret, logger)))
 	mux.Handle("GET /api/users/search",
 		middleware.MiddleWareLog(
 			middleware.AuthMiddleWare(

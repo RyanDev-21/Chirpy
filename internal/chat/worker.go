@@ -1,8 +1,6 @@
 package chat
 
 import (
-	"log"
-
 	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"RyanDev-21.com/Chirpy/internal/database"
@@ -63,7 +61,6 @@ func getPayLoadForAddMessagePublic(msgMetaData chatmodel.MessageMetaData, parent
 // this one will store the msg id and its info into db
 func (s *chatService) StartWorkerForAddPrivateMessage(channel chan *mq.Channel) {
 	for chen := range channel {
-		log.Printf("are we in here or not")
 		msg := chen.Msg.(chatmodel.MessageMetaData)
 		parentID := ParentIdIdentifier(msg.MsgInfo.Msg.ParendID)
 
@@ -73,17 +70,16 @@ func (s *chatService) StartWorkerForAddPrivateMessage(channel chan *mq.Channel) 
 		if err != nil {
 			if pgErr, ok := err.(*pgconn.PgError); ok {
 				if pgErr.Code == "23503" {
-					log.Printf("foreign  key constraint error :#%s# ", err)
-					log.Print("dropping this job")
+					s.logger.Error("foreign key constraint error, dropping job", "err", err)
 					break
 				}
 			}
-			log.Printf("failed to do the job #%s#", err)
+			s.logger.Error("failed to add private message to database", "err", err)
 			chen.RetriesCount++
 			s.mq.Republish(chen, chen.RetriesCount)
 			continue
 		}
-		log.Printf("Successfully addded the message to the db")
+		s.logger.Debug("successfully added private message to database")
 	}
 }
 
@@ -96,8 +92,7 @@ func (s *chatService) StartWorkerForAddPublicMessage(channel chan *mq.Channel) {
 		if err != nil {
 			if pgErr, ok := err.(*pgconn.PgError); ok {
 				if pgErr.Code == "23503" {
-					log.Printf("foreign  key constraint error :#%s# ", err)
-					log.Print("dropping this job")
+					s.logger.Error("foreign key constraint error, dropping job", "err", err)
 					break
 				}
 			}
@@ -105,6 +100,6 @@ func (s *chatService) StartWorkerForAddPublicMessage(channel chan *mq.Channel) {
 			s.mq.Republish(chen, chen.RetriesCount)
 			continue
 		}
-		log.Printf("Successfully save the group message")
+		s.logger.Debug("successfully added group message to database")
 	}
 }

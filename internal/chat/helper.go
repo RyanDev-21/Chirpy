@@ -4,13 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
-	"log/slog"
 	"time"
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 	"RyanDev-21.com/Chirpy/internal/database"
-	"RyanDev-21.com/Chirpy/pkg/helper"
 	"github.com/google/uuid"
 )
 
@@ -43,7 +40,7 @@ func (s *chatService) handlePrivateMsg(ctx context.Context, userID, parseID uuid
 	redisKey := s.rediscache.generateRedisKey(userID, key)
 	err := s.rediscache.addMessage(ctx, redisKey, msg)
 	if err != nil {
-		log.Printf("failed to store into the cache \n #%s#", err)
+		s.logger.Error("failed to store message into cache", "err", err)
 		return err
 	}
 	// need to send into hub sent
@@ -56,7 +53,7 @@ func (s *chatService) handlePublicMsg(ctx context.Context, userID uuid.UUID, msg
 	key := s.rediscache.generateRedisKey(userID, chatID)
 	err := s.rediscache.addMessage(ctx, key, msg)
 	if err != nil {
-		log.Printf("failed to stor into the cache \n #%s#", err)
+		s.logger.Error("failed to store group message into cache", "err", err)
 		return err
 	}
 	return nil
@@ -64,14 +61,11 @@ func (s *chatService) handlePublicMsg(ctx context.Context, userID uuid.UUID, msg
 
 // this is just helper fucntion to pub the job with context
 func (s *chatService) publishJobHelper(job string, payload interface{}) {
-	// dummy logger for now
-	logger := slog.Default()
 	context, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 	err := s.mq.PublishWithContext(context, job, payload)
 	if err != nil {
-		log.Printf("failed to connect to main queue #%s#", err)
-		helper.SaveIntoLog(job, payload, logger)
+		s.logger.Error("failed to publish to message queue", "err", err, "job", job)
 	}
 }
 
