@@ -69,11 +69,13 @@ type CacheRsDeleteStruct struct {
 }
 
 type FriendReq struct {
-	ReqID  uuid.UUID
-	FromID uuid.UUID
-	ToID   uuid.UUID
+	ReqID      uuid.UUID
+	FromID     uuid.UUID
+	ToID       uuid.UUID
+	UpdateTime time.Time
 }
 type CancelFriendReq struct {
+	FromID     uuid.UUID
 	ReqID      uuid.UUID
 	UpdateTime time.Time
 }
@@ -103,7 +105,8 @@ type ReesponseForAddFriend struct {
 }
 
 type DeleteFirReqStruct struct {
-	ReqID uuid.UUID
+	ReqID  uuid.UUID
+	FromID uuid.UUID
 }
 
 type FoundUserListRes struct {

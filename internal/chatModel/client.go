@@ -2,6 +2,7 @@ package chatmodel
 
 import (
 	//	"bytes"
+	"encoding/json"
 	"log"
 	"time"
 
@@ -51,47 +52,56 @@ func (c *Client) ReadPump() {
 
 	c.Conn.SetReadLimit(maxMessageSize)
 	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
-	//when it recieve pong message from the connection will add more sec to deadline
+	// when it recieve pong message from the connection will add more sec to deadline
 	c.Conn.SetPongHandler(func(string) error { c.Conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 
-	var msg Message
+	var rawMsg json.RawMessage
 
 	for {
-		//maybe consider only accepting the msg.Content
-		//NOTE::this read json as we are writing json maybe consider writing raw bytes
-		err := c.Conn.ReadJSON(&msg)
+		// maybe consider only accepting the msg.Content
+		// NOTE::this read json as we are writing json maybe consider writing raw bytes
+		err := c.Conn.ReadJSON(&rawMsg)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("error :%v", err)
-
 			}
 			break
 		}
-	
-		//NOTE::this logic has shifted into chat service
-		//the toID should be uuid.UUID only
-		// parseID, err := uuid.Parse(msg.ToID)
-		// if err != nil {
-		// 	log.Println("parsing the uuid failed")
-		// } 
-		//
-		// // maybe upload the job here
-		// switch msg.Type {
-		// case "private":
-		// 	handlePrivateMsg(c, &msg, parseID)
-		// 	publishJobHelper("privateMsg",&msg,c.MsgQ)		
-		// case "public":
-		// 	handlePublicMsg(c, &msg)
-		// 	publishJobHelper("publicMsg",&msg,c.MsgQ)
-		// default:
-		// 	log.Printf("invalid type of msg in readpump ")
-		// }
-		//the last parameters takes how many you wanna replace if <0 there is no limit
-		//as we don't read the message type anymore
-		//msg= bytes.TrimSpace(bytes.Replace(message,newline,space,-1))
 
-		c.Hub.Broadcast <- msg
+		var msgMap map[string]interface{}
+		if err := json.Unmarshal(rawMsg, &msgMap); err != nil {
+			continue
+		}
 
+		// Check if it's an InCommingEvent (has event, no type)
+		if _, hasEvent := msgMap["event"]; hasEvent {
+			if _, hasType := msgMap["type"]; !hasType {
+				var inEvent InCommingEvent
+				json.Unmarshal(rawMsg, &inEvent)
+				c.Hub.Broadcast <- Event{
+					FromID: c.UserID.String(),
+					ToID:   inEvent.ToID,
+					Event:  inEvent.Event,
+				}
+				continue
+			}
+		}
+
+		// Otherwise treat as Message
+		var message Message
+		json.Unmarshal(rawMsg, &message)
+		c.Hub.Broadcast <- *convertIntoInCommingStruct(message, c.UserID)
+
+	}
+}
+
+func convertIntoInCommingStruct(msg Message, userID uuid.UUID) *OutGoingMessage {
+	return &OutGoingMessage{
+		Content:  msg.Content,
+		ToID:     msg.ToID,
+		ParentID: msg.ParendID,
+		FromID:   userID.String(),
+		Type:     msg.Type,
 	}
 }
 
@@ -107,7 +117,7 @@ func (c *Client) WritePump() {
 		case message, ok := <-c.Send:
 			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
-				//The Hub closed the channel
+				// The Hub closed the channel
 				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
@@ -132,5 +142,4 @@ func (c *Client) WritePump() {
 			}
 		}
 	}
-
 }

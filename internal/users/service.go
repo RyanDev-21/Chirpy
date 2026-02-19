@@ -245,7 +245,9 @@ func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.U
 	context, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
 	job := &FriendReq{
-		ReqID: reqID,
+		FromID:     fromID,
+		ReqID:      reqID,
+		UpdateTime: time.Now(),
 	}
 	err := s.mainMq.PublishWithContext(context, ConfirmFriendReq, job)
 	if err != nil {
@@ -287,6 +289,7 @@ func (s *userService) CancelFriReq(ctx context.Context, userID, reqID uuid.UUID)
 	context, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
 	job := &CancelFriendReq{
+		FromID:     userID,
 		ReqID:      reqID,
 		UpdateTime: time.Now(),
 	}
@@ -330,7 +333,8 @@ func (s *userService) DeleteFriReq(ctx context.Context, userID, reqID uuid.UUID)
 	context, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
 	job := &DeleteFirReqStruct{
-		ReqID: reqID,
+		ReqID:  reqID,
+		FromID: userID,
 	}
 	err := s.mainMq.PublishWithContext(context, DeleteFriReq, job)
 	if err != nil {

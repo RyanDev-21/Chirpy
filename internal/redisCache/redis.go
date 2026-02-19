@@ -28,8 +28,8 @@ type RedisCacheImpl interface {
 	HDel(ctx context.Context, key, field string) error
 	RPush(ctx context.Context, key string, val interface{}) error
 	LRange(ctx context.Context, key string, start, stop int64) ([]string, error)
-	XAdd(ctx context.Context, stream string, values ...interface{})  error
-	XRangeN(ctx context.Context,key string)([]redis.XMessage,error)
+	XAdd(ctx context.Context, stream string, values ...interface{}) error
+	XRangeN(ctx context.Context, key string) ([]redis.XMessage, error)
 }
 
 func NewRedisClient() (redis.UniversalClient, error) {
@@ -57,18 +57,18 @@ func NewRedisCacheImpl(rdb redis.UniversalClient) RedisCacheImpl {
 	}
 }
 
-func(rc *RedisCache)XRangeN(ctx context.Context,key string)([]redis.XMessage,error){
-	cmd:= rc.redis.XRangeN(ctx,key,"+","-",50)
+func (rc *RedisCache) XRangeN(ctx context.Context, key string) ([]redis.XMessage, error) {
+	cmd := rc.redis.XRangeN(ctx, key, "-", "+", 50)
 	return cmd.Result()
 }
 
-func (rc *RedisCache) XAdd(ctx context.Context, key string, values ...interface{})  error {
+func (rc *RedisCache) XAdd(ctx context.Context, key string, values ...interface{}) error {
 	_, err := rc.redis.XAdd(ctx, &redis.XAddArgs{
 		Stream: key,
 		MaxLen: 100,
 		Values: map[string]interface{}{
 			"message_id": values[0],
-			"payload":values[1],
+			"payload":    values[1],
 		},
 	}).Result()
 	return err
