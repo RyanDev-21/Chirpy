@@ -14,7 +14,7 @@ import (
 	"RyanDev-21.com/Chirpy/pkg/encoder"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
 	"RyanDev-21.com/Chirpy/pkg/response"
-	// "github.com/google/uuid"
+	"github.com/google/uuid"
 )
 
 type UserHandler struct {
@@ -120,6 +120,10 @@ func (h *UserHandler) AddFriend(w http.ResponseWriter, r *http.Request) {
 	err := encoder.Decode(r, payload)
 	if err != nil {
 		response.Error(w, 400, "invalid parameters")
+		return
+	}
+	if payload.ToID == uuid.Nil {
+		response.Error(w, 400, "missing to_id")
 		return
 	}
 	userID, err := middleware.GetContextKey(r.Context(), "user")

@@ -95,6 +95,72 @@ func (q *Queries) AddMessagePublic(ctx context.Context, arg AddMessagePublicPara
 	return i, err
 }
 
+const getMessagesForAllPrivateChats = `-- name: GetMessagesForAllPrivateChats :many
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at FROM message
+`
+
+func (q *Queries) GetMessagesForAllPrivateChats(ctx context.Context) ([]Message, error) {
+	rows, err := q.db.Query(ctx, getMessagesForAllPrivateChats)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.Parentid,
+			&i.FromID,
+			&i.ToID,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getMessagesForAllPublicChats = `-- name: GetMessagesForAllPublicChats :many
+SELECT id, content, group_id, from_id, parent_id, created_at, updated_at, deleted_at FROM GroupMessage
+`
+
+func (q *Queries) GetMessagesForAllPublicChats(ctx context.Context) ([]Groupmessage, error) {
+	rows, err := q.db.Query(ctx, getMessagesForAllPublicChats)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Groupmessage
+	for rows.Next() {
+		var i Groupmessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.GroupID,
+			&i.FromID,
+			&i.ParentID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getMessagesForPrivate = `-- name: GetMessagesForPrivate :many
 SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at FROM message WHERE from_id = $1 AND  to_id = $2 OR from_id = $2 AND to_id= $1
 `

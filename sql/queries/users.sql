@@ -41,7 +41,7 @@ VALUES(
 );
 
 -- name: UpdateSendReq :exec
-UPDATE user_relationships SET status = 'confirm',updated_at = NOW() WHERE id = $1;
+UPDATE user_relationships SET status = 'confirm',updated_at = $2 WHERE id = $1 AND otherUser_id= $3;
 
 -- name: GetFriReqList :many
 SELECT ur.id,ur.user_id,u.name  FROM user_relationships ur  LEFT JOIN users u ON u.id = ur.user_id WHERE ur.otherUser_id = $1 AND ur.status != 'confirm';
@@ -74,10 +74,10 @@ WHERE ur.status = 'confirm' AND ($1 IN (ur.user_id,ur.otherUser_id));
 
 
 -- name: CancelFriReqStatus :exec
-UPDATE user_relationships SET status = 'cancel',updated_at = $2 WHERE id = $1;
+UPDATE user_relationships SET status = 'cancel',updated_at = $2 WHERE id = $1 AND otherUser_id = $3;
 
 -- name: DeleteFriReq :exec
-DELETE FROM user_relationships WHERE id=$1;
+DELETE FROM user_relationships WHERE id=$1 AND user_id =$2;
 
 -- name: GetOtherUserInfoByReqID :one
 SELECT 
