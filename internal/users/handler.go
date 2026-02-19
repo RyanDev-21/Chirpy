@@ -262,15 +262,3 @@ func (h *UserHandler) SearchUser(w http.ResponseWriter, r *http.Request) {
 		UserList: *userList,
 	})
 }
-
-//WARN::rethinking about this
-// //route for cancel
-// func (h *UserHandler)CancelFriendReq(w http.ResponseWriter,r *http.Request){
-// 	userID, ok := r.Context().Value(middleware.USERCONTEXTKEY).(uuid.UUID)
-// 	if !ok{
-// 		response.Error(w,400,"invalid request")
-// 		return
-// 	}
-// 	//err := h.userService.CancelFriendReq(ctx,userID)
-//
-// }
