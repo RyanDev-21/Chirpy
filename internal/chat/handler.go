@@ -93,7 +93,7 @@ func (h *chatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, 401, "unauthorized")
 		return
 	}
-	payload := &chatmodel.Message{}
+	payload := &chatmodel.InCommingMessage{}
 	err = encoder.Decode(r, payload)
 	if err != nil {
 		h.logger.Error("failed to decode message payload", "err", err)
