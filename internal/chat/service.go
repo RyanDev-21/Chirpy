@@ -25,7 +25,7 @@ type ChatService interface {
 	upgradeWebsocket(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error)
 	initWs(conn *websocket.Conn, userID uuid.UUID)
 	//	createGroup(userID uuid.UUID)
-	sendMessage(ctx context.Context, userID uuid.UUID, paylod *chatmodel.Message) (*uuid.UUID, error)
+	sendMessage(ctx context.Context, userID uuid.UUID, paylod *chatmodel.InCommingMessage) (*uuid.UUID, error)
 	fetchMessagePrivate(ctx context.Context, userID, toID uuid.UUID) (*chatmodel.MessageListRes, error) // the chatID will be otherUserID if private
 	fetchMessagePublic(ctx context.Context, userID, toID uuid.UUID) (*chatmodel.MessageListRes, error)  // the chatID will be otherUserID if private
 	StartWorkerForAddPrivateMessage(channel chan *mq.Channel)
@@ -74,7 +74,7 @@ func (s *chatService) upgradeWebsocket(w http.ResponseWriter, r *http.Request) (
 
 // send the message struct based on the toId
 // WARN : should consider validating the toID
-func (s *chatService) sendMessage(ctx context.Context, userID uuid.UUID, payload *chatmodel.Message) (*uuid.UUID, error) {
+func (s *chatService) sendMessage(ctx context.Context, userID uuid.UUID, payload *chatmodel.InCommingMessage) (*uuid.UUID, error) {
 	toID, err := uuid.Parse(payload.ToID)
 	if err != nil {
 		return nil, chatmodel.ErrNotValidToID

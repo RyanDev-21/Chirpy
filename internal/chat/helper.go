@@ -23,7 +23,7 @@ func getChatKey(firstID, secondID uuid.UUID) string {
 // 	return nil
 // }
 
-func getPayload(userID, msgID uuid.UUID, msg *chatmodel.Message) *chatmodel.MessageMetaData {
+func getPayload(userID, msgID uuid.UUID, msg *chatmodel.InCommingMessage) *chatmodel.MessageMetaData {
 	return &chatmodel.MessageMetaData{
 		ID: msgID,
 		MsgInfo: &chatmodel.MessageCache{
@@ -74,7 +74,7 @@ func convertFromMessageToMeta(msg database.Message) *chatmodel.MessageMetaData {
 		ID: msg.ID,
 		MsgInfo: &chatmodel.MessageCache{
 			FromID: uuid.UUID(msg.FromID.Bytes),
-			Msg: chatmodel.Message{
+			Msg: chatmodel.InCommingMessage{
 				ToID:     msg.ToID.String(),
 				Content:  msg.Content.String,
 				ParendID: msg.Parentid.String(),
@@ -89,7 +89,7 @@ func convertFromGroupMessageToMeta(msg database.Groupmessage) *chatmodel.Message
 		ID: msg.ID,
 		MsgInfo: &chatmodel.MessageCache{
 			FromID: uuid.UUID(msg.FromID.Bytes),
-			Msg: chatmodel.Message{
+			Msg: chatmodel.InCommingMessage{
 				ToID:     msg.GroupID.String(),
 				Content:  msg.Content.String,
 				ParendID: msg.ParentID.String(),
