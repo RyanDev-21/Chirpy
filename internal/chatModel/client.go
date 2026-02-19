@@ -88,15 +88,15 @@ func (c *Client) ReadPump() {
 		}
 
 		// Otherwise treat as Message
-		var message Message
+		var message InCommingMessage
 		json.Unmarshal(rawMsg, &message)
 		c.Hub.Broadcast <- *convertIntoInCommingStruct(message, c.UserID)
 
 	}
 }
 
-func convertIntoInCommingStruct(msg Message, userID uuid.UUID) *OutGoingMessage {
-	return &OutGoingMessage{
+func convertIntoInCommingStruct(msg InCommingMessage, userID uuid.UUID) *Message {
+	return &Message{
 		Content:  msg.Content,
 		ToID:     msg.ToID,
 		ParentID: msg.ParendID,

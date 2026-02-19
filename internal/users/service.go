@@ -462,6 +462,7 @@ func (s *userService) GetPendingList(ctx context.Context, userID uuid.UUID) (*Ge
 }
 
 // tempory thing for mq fail
+// maybe use helper one i don't konw have to think about this for sure
 func saveIntoLog(jobName string, job interface{}, logger *slog.Logger) {
 	saveLog := []byte(fmt.Sprintf("jobName:%v;jobDescrioption:%v;\n", jobName, job))
 	path := filepath.Join("../../", "consistency_log.txt")
