@@ -50,7 +50,7 @@ func NewHub() *Hub {
 
 var ErrNoClientFound = errors.New("no client exist")
 
-func (h *Hub) WriteIntoConnection(clientID uuid.UUID, msg *Message) error {
+func (h *Hub) WriteIntoConnection(clientID uuid.UUID, msg *InCommingMessage) error {
 	h.ClientMux.Lock()
 	defer h.ClientMux.Unlock()
 	if client, ok := h.Clients[clientID.String()]; ok {
