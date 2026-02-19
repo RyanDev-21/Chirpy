@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type Message struct {
+type InCommingMessage struct {
 	Content  string `json:"msg"`
 	ParendID string `json:"parent_id,omitempty"`
 	ToID     string `json:"to_id"`
@@ -39,16 +39,22 @@ type Event struct {
 	ToID   string `json:"to_id"`
 	Event  string `json:"event"`
 }
-
 type OutGoingMessage struct {
 	Content  string `json:"msg"`
 	ParentID string `json:"parent_id,omitempty"`
-	ToID     string `json:"to_id"`
 	FromID   string `json:"from_id"`
 	Type     string `json:"type"`
 }
+
+type Message struct {
+	Content  string `json:"msg"`
+	ParentID string `json:"parent_id,omitempty"`
+	FromID   string `json:"from_id"`
+	ToID     string `json:"to_id"`
+	Type     string `json:"type"`
+}
 type PublishMessageStruct struct {
-	Msg    *Message
+	Msg    *InCommingMessage
 	UserID uuid.UUID
 }
 
@@ -57,7 +63,7 @@ type GroupActionInfo struct {
 	GroupID uuid.UUID
 }
 type MessageCache struct {
-	Msg    Message
+	Msg    InCommingMessage
 	FromID uuid.UUID
 }
 type MessageList struct {

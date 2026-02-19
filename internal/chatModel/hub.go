@@ -152,7 +152,12 @@ func (h *Hub) Run() {
 						}
 					}
 				}
-				payload = message
+				payload = OutGoingMessage{
+					Content:  message.Content,
+					FromID:   message.FromID,
+					Type:     message.Type,
+					ParentID: message.ParentID,
+				}
 			case Event:
 				targetIds = append(targetIds, message.ToID)
 				payload = OutGoingEvent{
