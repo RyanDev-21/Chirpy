@@ -25,3 +25,9 @@ SELECT * FROM message WHERE from_id = $1 AND  to_id = $2 OR from_id = $2 AND to_
 
 -- name: GetMessagesForPublic :many
 SELECT * FROM GroupMessage WHERE group_id = $1;
+
+-- name: GetMessagesForAllPrivateChats :many
+SELECT * FROM message;
+
+-- name: GetMessagesForAllPublicChats :many
+SELECT * FROM GroupMessage;

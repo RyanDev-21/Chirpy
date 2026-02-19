@@ -6,19 +6,20 @@ import (
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 )
-func marshallBinary(payload interface{})([]byte,error){
+
+func marshallBinary(payload interface{}) ([]byte, error) {
 	var buff bytes.Buffer
-	enc:=gob.NewEncoder(&buff)
-	err:=enc.Encode(payload)
-	
-	return buff.Bytes(),err
+	enc := gob.NewEncoder(&buff)
+	err := enc.Encode(payload)
+
+	return buff.Bytes(), err
 }
 
-func unmarshalBinary(bytesArray []byte)(*chatmodel.MessageCache,error){
-	var payload *chatmodel.MessageCache
-	var buff bytes.Buffer
-	dec :=gob.NewDecoder(&buff)
+func unmarshalBinary(bytesArray []byte) (*chatmodel.MessageCache, error) {
+	var payload chatmodel.MessageCache
+	buff := bytes.NewBuffer(bytesArray)
+	dec := gob.NewDecoder(buff)
 
-	err:=dec.Decode(payload) 
-	return payload,err
+	err := dec.Decode(&payload)
+	return &payload, err
 }

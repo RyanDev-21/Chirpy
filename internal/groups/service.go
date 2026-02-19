@@ -123,20 +123,15 @@ func (s *groupService) joinGroup(ctx context.Context, groupID uuid.UUID, userID 
 
 	// update the group member list
 	// NOTE::maybe should check about the dupli err in cache before processing
-	go func(groupID, userID uuid.UUID) {
-		s.groupCache.memMuLock.Lock()
-		defer s.groupCache.memMuLock.Unlock()
-		memberLists := s.groupCache.MemberCache[groupID]
-		*s.groupCache.MemberCache[groupID] = append(*memberLists, userID)
-	}(groupID, userID)
-
+	s.groupCache.memMuLock.Lock()
+	memberLists := s.groupCache.MemberCache[groupID]
+	*s.groupCache.MemberCache[groupID] = append(*memberLists, userID)
+	s.groupCache.memMuLock.Unlock()
 	// update the group's metadata
-	go func(groupID, userID uuid.UUID) {
-		s.groupCache.groupMuLock.Lock()
-		defer s.groupCache.groupMuLock.Unlock()
-		s.groupCache.GroupCache[groupID].TotalMem += 1
-	}(groupID, userID)
-
+	s.groupCache.groupMuLock.Lock()
+	defer s.groupCache.groupMuLock.Unlock()
+	s.groupCache.GroupCache[groupID].TotalMem += 1
+	s.groupCache.groupMuLock.Unlock()
 	// assign the job for the db operation of adding member
 	s.mq.Publish("addGroupMember", &ManageGroupPublishStruct{
 		GroupId: groupID,
@@ -170,28 +165,24 @@ func (s *groupService) leaveGroup(ctx context.Context, groupID uuid.UUID, userID
 		UserID:  userID,
 	}
 	// firts update the group metadata first
-	go func(gpID *uuid.UUID) {
-		s.groupCache.groupMuLock.Lock()
-		s.groupCache.GroupCache[*gpID].TotalMem -= 1
-		s.groupCache.groupMuLock.Unlock()
-	}(&groupID)
+	s.groupCache.groupMuLock.Lock()
+	s.groupCache.GroupCache[groupID].TotalMem -= 1
+	s.groupCache.groupMuLock.Unlock()
 
 	// now we update the member list of that group
-	go func(gpID *uuid.UUID, userID *uuid.UUID) {
-		s.groupCache.memMuLock.Lock()
-		memberIdsList := *s.groupCache.MemberCache[*gpID]
-		// you need to know the index
-		updatedMemberIdsList := func() []uuid.UUID {
-			index := slices.Index(memberIdsList, *userID)
-			memberIdsList[index] = memberIdsList[len(memberIdsList)-1]
-			memberIdsList = memberIdsList[:len(memberIdsList)-1]
-			log.Printf("memberIdsList value: %v", memberIdsList)
-			return memberIdsList
-		}
-		log.Printf("finished updating in the cache : %v", updatedMemberIdsList())
-		*s.groupCache.MemberCache[*gpID] = updatedMemberIdsList()
-	}(&groupID, &userID)
-
+	s.groupCache.memMuLock.Lock()
+	memberIdsList := *s.groupCache.MemberCache[groupID]
+	// you need to know the index
+	updatedMemberIdsList := func() []uuid.UUID {
+		index := slices.Index(memberIdsList, userID)
+		memberIdsList[index] = memberIdsList[len(memberIdsList)-1]
+		memberIdsList = memberIdsList[:len(memberIdsList)-1]
+		log.Printf("memberIdsList value: %v", memberIdsList)
+		return memberIdsList
+	}
+	log.Printf("finished updating in the cache : %v", updatedMemberIdsList())
+	*s.groupCache.MemberCache[groupID] = updatedMemberIdsList()
+	s.groupCache.memMuLock.Unlock()
 	// and then we publish the job for the db worker to consume
 	s.mq.Publish("removeGroupMember", &ManageGroupPublishStruct{
 		GroupId: groupID,

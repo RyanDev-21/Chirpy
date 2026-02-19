@@ -18,6 +18,8 @@ type ChatRepo interface {
 	AddMessagePublic(payload *database.AddMessagePublicParams) (*database.Groupmessage, error)
 	GetMessagesForPrivate(ctx context.Context, fromID, toID uuid.UUID) (*[]database.Message, error)
 	GetMessagesForPublic(ctx context.Context, toID uuid.UUID) (*[]database.Groupmessage, error)
+	GetAllPrivateMessages(ctx context.Context) (*[]database.Message, error)
+	GetAllPublicMessages(ctx context.Context) (*[]database.Groupmessage, error)
 }
 
 func NewChatRepo(queries *database.Queries) ChatRepo {
@@ -57,4 +59,14 @@ func (r *chatRepo) GetMessagesForPublic(ctx context.Context, toID uuid.UUID) (*[
 		return nil, err
 	}
 	return &message, nil
+}
+
+func (r *chatRepo) GetAllPrivateMessages(ctx context.Context) (*[]database.Message, error) {
+	msgs, err := r.queries.GetMessagesForAllPrivateChats(ctx)
+	return &msgs, err
+}
+
+func (r *chatRepo) GetAllPublicMessages(ctx context.Context) (*[]database.Groupmessage, error) {
+	msgs, err := r.queries.GetMessagesForAllPublicChats(ctx)
+	return &msgs, err
 }

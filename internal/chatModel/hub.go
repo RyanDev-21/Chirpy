@@ -1,6 +1,7 @@
 package chatmodel
 
 import (
+	"encoding/json"
 	"errors"
 	"log"
 	"sync"
@@ -9,21 +10,21 @@ import (
 )
 
 type Hub struct {
-	//contains all the chatId which the user register
+	// contains all the chatId which the user register
 	UsertoChannel map[string]map[string]bool
 
-	//contains all the users id of the specific chat
+	// contains all the users id of the specific chat
 	ChatToUser map[string]map[string]bool
 	Clients    map[string]*Client
 	ClientMux  sync.RWMutex
-	//register and unregister are for the connection
+	// register and unregister are for the connection
 	Register   chan *Client
 	Unregister chan *Client
 
-	//the client use this channel to broadcast the message onto the hub
-	Broadcast chan Message
+	// the client use this channel to broadcast the message onto the hub
+	Broadcast chan interface{}
 
-	//group sepcific channel
+	// group sepcific channel
 	JoinChan  chan GroupActionInfo
 	LeaveChan chan GroupActionInfo
 }
@@ -38,7 +39,7 @@ func NewHub() *Hub {
 	return &Hub{
 		UsertoChannel: make(map[string]map[string]bool),
 		ChatToUser:    make(map[string]map[string]bool),
-		Broadcast:     make(chan Message),
+		Broadcast:     make(chan interface{}),
 		Register:      make(chan *Client),
 		Unregister:    make(chan *Client),
 		Clients:       make(map[string]*Client),
@@ -48,11 +49,12 @@ func NewHub() *Hub {
 }
 
 var ErrNoClientFound = errors.New("no client exist")
-func (h *Hub)WriteIntoConnection(clientID uuid.UUID,msg *Message)error{
+
+func (h *Hub) WriteIntoConnection(clientID uuid.UUID, msg *Message) error {
 	h.ClientMux.Lock()
 	defer h.ClientMux.Unlock()
-	if client,ok := h.Clients[clientID.String()];ok{
-		client.Conn.WriteJSON(&msg)	
+	if client, ok := h.Clients[clientID.String()]; ok {
+		client.Conn.WriteJSON(&msg)
 		return nil
 	}
 
@@ -72,16 +74,16 @@ func (h *Hub)WriteIntoConnection(clientID uuid.UUID,msg *Message)error{
 func (h *Hub) Run() {
 	for {
 		select {
-		//stores the userID as key and its client as connection
+		// stores the userID as key and its client as connection
 		case client := <-h.Register:
 			h.Clients[client.UserID.String()] = client
-		//remove from the hub where the id match
-		//and search user's chatidlist
+		// remove from the hub where the id match
+		// and search user's chatidlist
 		// and delete the userId in that each of chattouser's chatidlist
-		//and then finally delete the userid from the usertochat
+		// and then finally delete the userid from the usertochat
 
-		//when join update the user relation with the chat in both
-		//userToChat && chatToUser
+		// when join update the user relation with the chat in both
+		// userToChat && chatToUser
 		case client := <-h.JoinChan:
 			userID := client.UserID.String()
 			groupID := client.GroupID.String()
@@ -94,7 +96,7 @@ func (h *Hub) Run() {
 			}
 			h.ChatToUser[groupID][userID] = true
 
-		//same thing just the opposite of the join
+		// same thing just the opposite of the join
 		case client := <-h.LeaveChan:
 			groupID := client.GroupID.String()
 			userID := client.UserID.String()
@@ -128,41 +130,55 @@ func (h *Hub) Run() {
 			}
 			delete(h.UsertoChannel, client.UserID.String())
 
-		//basically stores the targetIds based on the type of the message
-		//if it is private you find in the clients and then write to it
-		//if it is public/group you find the id in the chatTouser based on
-		//the chat id and then write to the every single connection of those ids
-		//of that chat
+		// basically stores the targetIds based on the type of the message
+		// if it is private you find in the clients and then write to it
+		// if it is public/group you find the id in the chatTouser based on
+		// the chat id and then write to the every single connection of those ids
+		// of that chat
 		case message := <-h.Broadcast:
 			var targetIds []string
-			switch message.Type {
-			//just for the sake of this i put the type in th msg struct
-			case "private":
-				targetIds = append(targetIds, message.ToID)
-			case "public":
-				log.Printf("userIds list and its chats #%v#", h.ChatToUser[message.ToID])
-				if userIdsInChat, ok := h.ChatToUser[message.ToID]; ok {
-					for userID := range userIdsInChat {
-						targetIds = append(targetIds, userID)
+			var payload interface{}
+			switch message := message.(type) {
+			case Message:
+				switch message.Type {
+				// just for the sake of this i put the type in th msg struct
+				case "private":
+					targetIds = append(targetIds, message.ToID)
+				case "public":
+					log.Printf("userIds list and its chats #%v#", h.ChatToUser[message.ToID])
+					if userIdsInChat, ok := h.ChatToUser[message.ToID]; ok {
+						for userID := range userIdsInChat {
+							targetIds = append(targetIds, userID)
+						}
 					}
 				}
+				payload = message
+			case Event:
+				targetIds = append(targetIds, message.ToID)
+				payload = OutGoingEvent{
+					FromID: message.FromID,
+					Event:  message.Event,
+				}
+			}
+			bytes, err := json.Marshal(payload)
+			if err != nil {
+				log.Fatal("failed to marshal into bytes")
+				return
 			}
 
 			if len(targetIds) > 0 {
 				for _, clientID := range targetIds {
-					//i need to implement mutex lock or smth
+					// i need to implement mutex lock or smth
 					if _, ok := h.Clients[clientID]; ok {
 						select {
-						case h.Clients[clientID].Send <- []byte(message.Content):
+						case h.Clients[clientID].Send <- bytes:
 						default:
 							close(h.Clients[clientID].Send)
 							delete(h.Clients, clientID)
 						}
 					}
-
 				}
-
-			} 
+			}
 		}
 	}
 }

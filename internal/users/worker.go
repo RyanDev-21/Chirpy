@@ -23,7 +23,7 @@ func (s *userService) StartWorkerForAddFri(channel chan *mq.Channel) {
 func (s *userService) StartWorkerForConfirmFri(channel chan *mq.Channel) {
 	for chen := range channel {
 		msg := chen.Msg.(*FriendReq)
-		err := s.userRepo.UpdateFriReq(msg.ReqID)
+		err := s.userRepo.UpdateFriReq(msg.ReqID, msg.FromID, msg.UpdateTime)
 		if err != nil {
 			chen.RetriesCount++
 			s.mainMq.Republish(chen, chen.RetriesCount)
@@ -36,7 +36,7 @@ func (s *userService) StartWorkerForConfirmFri(channel chan *mq.Channel) {
 func (s *userService) StartWorkerForCancelReq(channel chan *mq.Channel) {
 	for chen := range channel {
 		msg := chen.Msg.(*CancelFriendReq)
-		err := s.userRepo.CancelFriReq(msg.ReqID, msg.UpdateTime)
+		err := s.userRepo.CancelFriReq(msg.ReqID, msg.FromID, msg.UpdateTime)
 		if err != nil {
 			chen.RetriesCount++
 			s.mainMq.Republish(chen, chen.RetriesCount)
@@ -49,7 +49,7 @@ func (s *userService) StartWorkerForCancelReq(channel chan *mq.Channel) {
 func (s *userService) StartWorkerForDeleteReq(channel chan *mq.Channel) {
 	for chen := range channel {
 		msg := chen.Msg.(*DeleteFirReqStruct)
-		err := s.userRepo.DeleteFriReq(msg.ReqID)
+		err := s.userRepo.DeleteFriReq(msg.ReqID, msg.FromID)
 		if err != nil {
 			chen.RetriesCount++
 			s.mainMq.Republish(chen, chen.RetriesCount)

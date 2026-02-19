@@ -30,11 +30,11 @@ type UserRepo interface {
 	SendFriendRequest(fromID, toID, friReqID uuid.UUID) error
 	GetMyFriReqList(ctx context.Context, userID uuid.UUID) (*[]database.GetFriReqListRow, error)
 	GetMySendFirReqList(ctx context.Context, userID uuid.UUID) (*[]database.GetYourSendReqListRow, error)
-	UpdateFriReq(reqID uuid.UUID) error // this one confirm the fri req
+	UpdateFriReq(reqID uuid.UUID, fromID uuid.UUID, updateTime time.Time) error // this one confirm the fri req
 	GetUserFriListByID(ctx context.Context, userID uuid.UUID) (*[]database.GetUserFriListByIDRow, error)
-	CancelFriReq(reqID uuid.UUID, updateTime time.Time) error // this one cancel the req
+	CancelFriReq(reqID uuid.UUID, fromID uuid.UUID, updateTime time.Time) error // this one cancel the req
 	GetMatchName(ctx context.Context, searchName string) (*[]User, error)
-	DeleteFriReq(reqID uuid.UUID) error // delete the record
+	DeleteFriReq(reqID uuid.UUID, fromID uuid.UUID) error // delete the record
 	GetOtherUserIDByReqID(ctx context.Context, userID uuid.UUID, reqID uuid.UUID) (*User, error)
 }
 
@@ -197,10 +197,14 @@ func (r *userRepo) GetMySendFirReqList(ctx context.Context, userID uuid.UUID) (*
 	return &list, nil
 }
 
-func (r *userRepo) UpdateFriReq(reqID uuid.UUID) error {
+func (r *userRepo) UpdateFriReq(reqID uuid.UUID, fromID uuid.UUID, updateTime time.Time) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	err := r.queries.UpdateSendReq(ctx, reqID)
+	err := r.queries.UpdateSendReq(ctx, database.UpdateSendReqParams{
+		ID:          reqID,
+		UpdatedAt:   updateTime,
+		OtheruserID: fromID,
+	})
 	return err
 }
 
@@ -214,20 +218,24 @@ func (r *userRepo) GetUserFriListByID(ctx context.Context, userID uuid.UUID) (*[
 	return &list, nil
 }
 
-func (r *userRepo) CancelFriReq(reqID uuid.UUID, updateTime time.Time) error {
+func (r *userRepo) CancelFriReq(reqID uuid.UUID, fromID uuid.UUID, updateTime time.Time) error {
 	context, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 	err := r.queries.CancelFriReqStatus(context, database.CancelFriReqStatusParams{
-		ID:        reqID,
-		UpdatedAt: updateTime,
+		ID:          reqID,
+		UpdatedAt:   updateTime,
+		OtheruserID: fromID,
 	})
 	return err
 }
 
-func (r *userRepo) DeleteFriReq(reqID uuid.UUID) error {
+func (r *userRepo) DeleteFriReq(reqID uuid.UUID, fromID uuid.UUID) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	err := r.queries.DeleteFriReq(ctx, reqID)
+	err := r.queries.DeleteFriReq(ctx, database.DeleteFriReqParams{
+		ID:     reqID,
+		UserID: fromID,
+	})
 	return err
 }
 
