@@ -102,6 +102,10 @@ func (h *chatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	msgID, err := h.chatService.sendMessage(r.Context(), *userID, payload)
 	if err != nil {
+		if err == chatmodel.ErrNotConnectedToWs {
+			response.Error(w, 404, "connect to ws first to send message")
+			return
+		}
 		h.logger.Error("failed to send message", "err", err)
 		response.Error(w, 500, "internal server error")
 		return
