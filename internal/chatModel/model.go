@@ -5,6 +5,7 @@ import (
 	// "fmt"
 	// "time"
 
+	"encoding/json"
 	"errors"
 
 	"github.com/google/uuid"
@@ -16,6 +17,15 @@ type InCommingMessage struct {
 	ToID     string `json:"to_id"`
 	Type     string `json:"type"`
 }
+type Event struct {
+	Event   string `json:"event"`
+	Payload any    `json:"payload"`
+}
+
+type InCommingEvent struct {
+	Event   string          `json:"event"`
+	Payload json.RawMessage `json:"payload"`
+}
 
 // type Event struct {
 // 	FromID   string `json:"from_id"`
@@ -25,20 +35,28 @@ type InCommingMessage struct {
 // 	Type     string `json:"type,omitempty"`
 // }
 
-type OutGoingEvent struct {
+type OutFriEvent struct {
+	ReqID  string `json:"req_id"`
 	FromID string `json:"from_id"`
-	Event  string `json:"event"`
-}
-type InCommingEvent struct {
-	ToID  string `json:"to_id"`
-	Event string `json:"event"`
 }
 
-type Event struct {
+type OutGoingEventForTyping struct {
 	FromID string `json:"from_id"`
-	ToID   string `json:"to_id"`
-	Event  string `json:"event"`
 }
+type TypoEvent struct {
+	FromID string
+	ToID   string
+}
+
+type InCommingEventForTyping struct {
+	ToID string `json:"to_id"`
+}
+
+//	type Event struct {
+//		FromID string `json:"from_id"`
+//		ToID   string `json:"to_id"`
+//		Event  string `json:"event"`
+//	}
 type OutGoingMessage struct {
 	Content  string `json:"msg"`
 	ParentID string `json:"parent_id,omitempty"`
@@ -47,11 +65,11 @@ type OutGoingMessage struct {
 }
 
 type Message struct {
-	Content  string `json:"msg"`
-	ParentID string `json:"parent_id,omitempty"`
-	FromID   string `json:"from_id"`
-	ToID     string `json:"to_id"`
-	Type     string `json:"type"`
+	Content  string
+	ParentID string
+	FromID   string
+	ToID     string
+	Type     string
 }
 type PublishMessageStruct struct {
 	Msg    *InCommingMessage
@@ -95,8 +113,9 @@ type ResponseMessageID struct {
 //
 // )
 var (
-	ErrNotAuthorized = errors.New("not in group")
-	ErrNotValidToID  = errors.New("not valid toID(type uuid)")
+	ErrNotAuthorized    = errors.New("not in group")
+	ErrNotValidToID     = errors.New("not valid toID(type uuid)")
+	ErrNotConnectedToWs = errors.New("not connected to ws")
 )
 
 const (
