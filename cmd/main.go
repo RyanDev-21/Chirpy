@@ -639,7 +639,7 @@ func main() {
 	}()
 
 	// Create Services
-	userService := users.NewUserService(userRepo, userCache, mq, logger)
+	userService := users.NewUserService(userRepo, userCache, mq, logger, hub)
 	authService := authClient.NewAuthService(userRepo, authRepo, apicfg.secret, logger)
 	chatService := chat.NewChatService(chatRepo, hub, mq, chatCache, groupCache, logger)
 	groupService := groups.NewGroupService(groupRepo, hub, mq, groupCache, logger)
