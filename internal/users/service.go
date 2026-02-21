@@ -7,8 +7,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
@@ -25,7 +27,7 @@ func handleMqFail(jobName string, jobStruct interface{}, err error, logger *slog
 type UserService interface {
 	Register(ctx context.Context, name, email, password string) (*User, error)
 	UpdatePassword(ctx context.Context, userID uuid.UUID, oldPass string, newPass string) (*User, error)
-	AddFriendSend(ctx context.Context, sendID uuid.UUID, recieverID uuid.UUID, label string) (uuid.UUID, error)
+	AddFriendSend(ctx context.Context, sendID uuid.UUID, recieverID uuid.UUID, label string) (*uuid.UUID, error)
 	ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.UUID, status string) error
 	CancelFriReq(ctx context.Context, userID, reqID uuid.UUID) error
 	DeleteFriReq(ctx context.Context, userID, reqID uuid.UUID) error
@@ -44,14 +46,16 @@ type userService struct {
 	userRepo  UserRepo
 	userCache UserCacheItf
 	mainMq    *mq.MainMQ
+	hub       *chatmodel.Hub
 	logger    *slog.Logger
 }
 
-func NewUserService(userRepo UserRepo, userCache UserCacheItf, mainMq *mq.MainMQ, logger *slog.Logger) UserService {
+func NewUserService(userRepo UserRepo, userCache UserCacheItf, mainMq *mq.MainMQ, logger *slog.Logger, hub *chatmodel.Hub) UserService {
 	return &userService{
 		userRepo:  userRepo,
 		userCache: userCache,
 		mainMq:    mainMq,
+		hub:       hub,
 		logger:    logger,
 	}
 }
@@ -114,7 +118,7 @@ func (s *userService) UpdatePassword(ctx context.Context, userID uuid.UUID, oldP
 
 // you should not store both the req and otherUserID
 // will save  record with pending stauts
-func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, recieverID uuid.UUID, label string) (uuid.UUID, error) {
+func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, recieverID uuid.UUID, label string) (*uuid.UUID, error) {
 	reqID, _ := middleware.GetContextKey(ctx, "request")
 
 	s.logger.Info("add friend request started", "reqID", reqID, "senderID", senderID, "receiverID", recieverID)
@@ -122,7 +126,7 @@ func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, rec
 	friReqID, err := uuid.NewV7()
 	if err != nil {
 		s.logger.Error("failed to generate friend request ID", "reqID", reqID, "error", err)
-		return friReqID, err
+		return &friReqID, err
 	}
 
 	userName := s.userCache.GetUserNameByID(senderID)
@@ -136,13 +140,23 @@ func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, rec
 		user, _, err := s.userRepo.GetUserByID(ctx, recieverID)
 		if err != nil {
 			s.logger.Error("failed to get receiver from DB", "reqID", reqID, "error", err)
-			return friReqID, err
+			return &friReqID, err
 		}
 		s.userCache.UpdateUserCache(user)
 		otherUserName = user.Name
 	}
 	// otherUserName :=s.userCache.GetUserNameByID(receiveID)
 	// if other
+
+	exist := s.userCache.CheckUserRsWithLable(senderID, "send", recieverID)
+	if exist {
+		return nil, ErrReqExist
+	}
+
+	exist = s.userCache.CheckUserFriWithOtherUserID(senderID, recieverID)
+	if exist {
+		return nil, ErrReqExist
+	}
 
 	s.userCache.UpdateUserRs(CacheUpdateStruct{
 		UserID: senderID,
@@ -163,9 +177,30 @@ func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, rec
 		ReqID: friReqID,
 		Lable: "pending",
 	})
+
+	s.logger.Info("checking the ws connection ...", "reqID", reqID, "fromID", senderID)
+	valid := s.hub.CheckWsConnection(senderID)
+	if !valid {
+		s.logger.Warn("the client is not connected to ws", "reqID", reqID, "fromID", senderID)
+		return nil, chatmodel.ErrNotConnectedToWs
+	}
+
+	s.logger.Info("writing into connection", "reqID", reqID, "fromID", senderID)
+	// need to change this to get the infriEvent
+	err = s.hub.WriteIntoConnection(recieverID, chatmodel.Event{
+		Event: "AddFri",
+		Payload: chatmodel.OutFriEvent{
+			ReqID:  friReqID.String(),
+			FromID: senderID.String(),
+		},
+	})
+	if err != nil {
+		s.logger.Info("failed to parse into bytes", "reqID", reqID, "fromID", senderID, "toID", recieverID)
+		return nil, err
+	}
+
 	publishCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
-
 	s.logger.Info("publishing friend request to MQ", "reqID", reqID, "friReqID", friReqID)
 
 	job := &FriendReq{
@@ -178,11 +213,11 @@ func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, rec
 	if err != nil {
 		s.logger.Error("failed to publish friend request to MQ", "reqID", reqID, "error", err)
 		handleMqFail(SendRequest, job, err, s.logger)
-		return friReqID, err
+		return &friReqID, err
 	}
 
 	s.logger.Info("friend request sent successfully", "reqID", reqID, "friReqID", friReqID)
-	return friReqID, nil
+	return &friReqID, nil
 }
 
 // this need to return error for failed case didn't do any of that
@@ -198,6 +233,11 @@ func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.U
 		// cache miss db fetch
 		user, err := s.userRepo.GetOtherUserIDByReqID(ctx, fromID, reqID)
 		if err != nil {
+			if exists := strings.ContainsAny(err.Error(), "no rows"); exists {
+				s.logger.Error("failed to get the otherUserInfo", "reqID", reqIDVal, "fromID", fromID, "error", err)
+				return ErrNoRedFound
+			}
+			s.logger.Error("failed to get the otherUserInfo", "reqID", reqIDVal, "fromID", fromID, "error", err)
 			return err
 		}
 		s.userCache.UpdateUserCache(user) // update the cache
@@ -207,6 +247,11 @@ func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.U
 		}
 
 	}
+	exist := s.userCache.CheckUserFriWithOtherUserID(fromID, toID.UserID)
+	if exist {
+		return ErrReqExist
+	}
+
 	s.logger.Info("cleaning up pending/send requests and adding friends", "reqID", reqIDVal, "fromID", fromID, "toID", toID.UserID)
 
 	// this update the pending guy
@@ -241,6 +286,26 @@ func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.U
 		},
 		Lable: "friend",
 	})
+	s.logger.Info("checking the ws connection ...", "reqID", reqIDVal, "fromID", fromID)
+	valid := s.hub.CheckWsConnection(fromID)
+	if !valid {
+		s.logger.Warn("the client is not connected to ws", "reqID", reqIDVal, "fromID", fromID)
+		return chatmodel.ErrNotConnectedToWs
+	}
+
+	s.logger.Info("writing into connection", "reqID", reqIDVal, "fromID", fromID)
+	// need to change this to get the infriEvent
+	err := s.hub.WriteIntoConnection(toID.UserID, chatmodel.Event{
+		Event: "AcceptFri",
+		Payload: chatmodel.OutFriEvent{
+			ReqID:  reqID.String(),
+			FromID: fromID.String(),
+		},
+	})
+	if err != nil {
+		s.logger.Info("failed to parse into bytes", "reqID", reqIDVal, "fromID", fromID, "toID", toID.UserID)
+		return err
+	}
 
 	context, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
@@ -249,7 +314,7 @@ func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.U
 		ReqID:      reqID,
 		UpdateTime: time.Now(),
 	}
-	err := s.mainMq.PublishWithContext(context, ConfirmFriendReq, job)
+	err = s.mainMq.PublishWithContext(context, ConfirmFriendReq, job)
 	if err != nil {
 		handleMqFail(ConfirmFriendReq, job, err, s.logger)
 		return err
@@ -259,12 +324,20 @@ func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.U
 
 // need to handle the errorr from that PublishWithContext
 func (s *userService) CancelFriReq(ctx context.Context, userID, reqID uuid.UUID) error {
+	reqIDVal, _ := middleware.GetContextKey(ctx, "request")
+
+	s.logger.Info("confirm friend request started", "reqID", reqIDVal, "fromID", userID, "reqID", reqID)
 	toID := s.userCache.GetOtherUserIDByReqID(userID, reqID, "pending")
 
 	if toID == nil {
 		s.logger.Warn("faield to get the toID from cache", "error", "toID is nil")
 		user, err := s.userRepo.GetOtherUserIDByReqID(ctx, userID, reqID)
 		if err != nil {
+			if exists := strings.ContainsAny(err.Error(), "no rows"); exists {
+				s.logger.Error("failed to get the otherUserInfo", "reqID", reqIDVal, "fromID", userID, "error", err)
+				return ErrNoRedFound
+			}
+			s.logger.Error("failed to get the otherUserInfo", "reqID", reqIDVal, "fromID", userID, "error", err)
 			return err
 		}
 		s.userCache.UpdateUserCache(user) // update the cache
@@ -272,6 +345,11 @@ func (s *userService) CancelFriReq(ctx context.Context, userID, reqID uuid.UUID)
 			UserID: user.ID,
 			Name:   user.Name,
 		}
+	}
+
+	exists := s.userCache.CheckUserFriWithOtherUserID(userID, toID.UserID)
+	if exists {
+		return ErrReqExist
 	}
 	// this update the pending guy
 	s.userCache.CleanUpUserRs(&CacheRsDeleteStruct{
@@ -286,6 +364,25 @@ func (s *userService) CancelFriReq(ctx context.Context, userID, reqID uuid.UUID)
 		ReqID:  reqID,
 		Lable:  "send",
 	})
+	s.logger.Info("checking the ws connection ...", "reqID", reqIDVal, "fromID", userID)
+	valid := s.hub.CheckWsConnection(userID)
+	if !valid {
+		s.logger.Warn("the client is not connected to ws", "reqID", reqIDVal, "fromID", userID)
+		return chatmodel.ErrNotConnectedToWs
+	}
+	s.logger.Info("writing into connection", "reqID", reqIDVal, "fromID", userID)
+	err := s.hub.WriteIntoConnection(toID.UserID, chatmodel.Event{
+		Event: "DenyFri",
+		Payload: chatmodel.OutFriEvent{
+			ReqID:  reqID.String(),
+			FromID: userID.String(),
+		},
+	})
+	if err != nil {
+		s.logger.Warn("failed to pare into bytes", "reqID", reqIDVal, "fromID", userID, "toID", toID.UserID)
+		return err
+	}
+
 	context, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
 	job := &CancelFriendReq{
@@ -293,7 +390,7 @@ func (s *userService) CancelFriReq(ctx context.Context, userID, reqID uuid.UUID)
 		ReqID:      reqID,
 		UpdateTime: time.Now(),
 	}
-	err := s.mainMq.PublishWithContext(context, CancelReq, job)
+	err = s.mainMq.PublishWithContext(context, CancelReq, job)
 	if err != nil {
 		handleMqFail(CancelReq, job, err, s.logger)
 		return err
@@ -364,14 +461,14 @@ func (s *userService) GetFriendList(ctx context.Context, userID uuid.UUID) (*[]F
 				s.userCache.UpdateUserRs(CacheUpdateFriStruct{
 					UserID: userID,
 					ToID: FriendMetaData{
-						UserID: v.OtheruserID,
-						Name:   v.Name.String,
+						UserID: v.FriendID,
+						Name:   v.FriendName,
 					},
 					Lable: "friend",
 				})
 				friendList = append(friendList, FriendMetaData{
-					UserID: v.OtheruserID,
-					Name:   v.Name.String,
+					UserID: v.FriendID,
+					Name:   v.FriendName,
 				})
 			}
 		}

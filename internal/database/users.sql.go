@@ -29,12 +29,14 @@ type AddSendReqParams struct {
 	OtheruserID uuid.UUID
 }
 
+// SELECT ur.*,u.name FROM user_relationships ur LEFT JOIN users  u ON ur.otherUser_id = u.id  WHERE status != 'pending';
 func (q *Queries) AddSendReq(ctx context.Context, arg AddSendReqParams) error {
 	_, err := q.db.Exec(ctx, addSendReq, arg.ID, arg.UserID, arg.OtheruserID)
 	return err
 }
 
 const cancelFriReqStatus = `-- name: CancelFriReqStatus :exec
+
 UPDATE user_relationships SET status = 'cancel',updated_at = $2 WHERE id = $1 AND otherUser_id = $3
 `
 
@@ -44,6 +46,23 @@ type CancelFriReqStatusParams struct {
 	OtheruserID uuid.UUID
 }
 
+// -- name: GetUserFriListByID :many
+// SELECT
+//
+//	ur.id,
+//	ur.otherUser_id,
+//	u.name AS otherUserName
+//
+// FROM user_relationships ur LEFT JOIN
+// users u ON u.id = (
+//
+//	CASE
+//	WHEN ur.user_id = $1 THEN ur.otherUser_id
+//	WHEN ur.otherUser_id = $1 THEN ur.user_id
+//	END
+//
+// )
+// WHERE ur.status = 'confirm' AND ($1 IN (ur.user_id,ur.otherUser_id));
 func (q *Queries) CancelFriReqStatus(ctx context.Context, arg CancelFriReqStatusParams) error {
 	_, err := q.db.Exec(ctx, cancelFriReqStatus, arg.ID, arg.UpdatedAt, arg.OtheruserID)
 	return err
@@ -139,20 +158,28 @@ func (q *Queries) GetAllUser(ctx context.Context) ([]User, error) {
 }
 
 const getAllUserRs = `-- name: GetAllUserRs :many
-SELECT ur.id, ur.user_id, ur.otheruser_id, ur.label, ur.status, ur.created_at, ur.updated_at,u.name FROM user_relationships ur LEFT JOIN users  u ON ur.otherUser_id = u.id  WHERE status != 'pending'
+SELECT 
+    ur.user_id,
+    u1.name AS user_name,
+    ur.otherUser_id,
+    u2.name AS other_user_name,
+    ur.status
+FROM user_relationships ur
+JOIN users u1 ON ur.user_id = u1.id
+JOIN users u2 ON ur.otherUser_id = u2.id
+WHERE ur.status = 'confirm'
 `
 
 type GetAllUserRsRow struct {
-	ID          uuid.UUID
-	UserID      uuid.UUID
-	OtheruserID uuid.UUID
-	Label       string
-	Status      string
-	CreatedAt   pgtype.Timestamp
-	UpdatedAt   time.Time
-	Name        pgtype.Text
+	UserID        uuid.UUID
+	UserName      string
+	OtheruserID   uuid.UUID
+	OtherUserName string
+	Status        string
 }
 
+// Join for the first user
+// Join for the second user
 func (q *Queries) GetAllUserRs(ctx context.Context) ([]GetAllUserRsRow, error) {
 	rows, err := q.db.Query(ctx, getAllUserRs)
 	if err != nil {
@@ -163,14 +190,11 @@ func (q *Queries) GetAllUserRs(ctx context.Context) ([]GetAllUserRsRow, error) {
 	for rows.Next() {
 		var i GetAllUserRsRow
 		if err := rows.Scan(
-			&i.ID,
 			&i.UserID,
+			&i.UserName,
 			&i.OtheruserID,
-			&i.Label,
+			&i.OtherUserName,
 			&i.Status,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.Name,
 		); err != nil {
 			return nil, err
 		}
@@ -226,7 +250,7 @@ users u ON u.id  = (
 		WHEN ur.otherUser_id = $1 THEN ur.user_id
 	END
 )
-WHERE ur.id = $2
+WHERE ur.id = $2 AND status != 'confirm'
 `
 
 type GetOtherUserInfoByReqIDParams struct {
@@ -256,38 +280,37 @@ func (q *Queries) GetOtherUserInfoByReqID(ctx context.Context, arg GetOtherUserI
 }
 
 const getUserFriListByID = `-- name: GetUserFriListByID :many
-
 SELECT 
-	ur.id,
-	ur.otherUser_id,
-	u.name
-FROM user_relationships ur LEFT JOIN 
-users u ON u.id = (
-	CASE 
-	WHEN ur.user_id = $1 THEN ur.otherUser_id
-	WHEN ur.otherUser_id = $1 THEN ur.user_id
-	END
+    (SELECT name FROM users u1 WHERE u1.id = $1) AS user_name,
+    u.name AS friend_name,
+    u.id AS friend_id
+FROM users u
+WHERE u.id IN (
+    SELECT otherUser_id FROM user_relationships WHERE user_id = $1 AND status = 'confirm'
+    UNION
+    SELECT user_id FROM user_relationships WHERE otherUser_id = $1 AND status = 'confirm'
 )
-WHERE ur.status = 'confirm' AND ($1 IN (ur.user_id,ur.otherUser_id))
 `
 
 type GetUserFriListByIDRow struct {
-	ID          uuid.UUID
-	OtheruserID uuid.UUID
-	Name        pgtype.Text
+	UserName   string
+	FriendName string
+	FriendID   uuid.UUID
 }
 
 // -- name: GetUserFriListByID :many
-// SELECT
+// SELECT name(SELECT name FROM users WHERE id = $1) AS userName,
 //
-//	CASE
-//	WHEN user_id = $1 THEN otherUser_id
-//	WHEN otherUser_id = $1 THEN user_id
-//	END AS friend_id
+//		u.name AS otherUserName
+//	    CASE
+//	    WHEN user_id = $1 THEN otherUser_id
+//	    WHEN otherUser_id = $1 THEN user_id
+//	    END AS friend_id
 //
-// FROM user_relationships WHERE status = 'confirm';
-func (q *Queries) GetUserFriListByID(ctx context.Context, userID uuid.UUID) ([]GetUserFriListByIDRow, error) {
-	rows, err := q.db.Query(ctx, getUserFriListByID, userID)
+// FROM user_relationships LEFT JOIN users u ON u.id == friend_id
+// WHERE status = 'confirm';
+func (q *Queries) GetUserFriListByID(ctx context.Context, id uuid.UUID) ([]GetUserFriListByIDRow, error) {
+	rows, err := q.db.Query(ctx, getUserFriListByID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +318,7 @@ func (q *Queries) GetUserFriListByID(ctx context.Context, userID uuid.UUID) ([]G
 	var items []GetUserFriListByIDRow
 	for rows.Next() {
 		var i GetUserFriListByIDRow
-		if err := rows.Scan(&i.ID, &i.OtheruserID, &i.Name); err != nil {
+		if err := rows.Scan(&i.UserName, &i.FriendName, &i.FriendID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

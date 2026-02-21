@@ -23,6 +23,8 @@ type UserCacheItf interface {
 	GetOtherUserIDByReqID(userID, reqID uuid.UUID, lable string) *FriendMetaData
 	UpdateUserCache(user *User)
 	GetUserNameByID(userID uuid.UUID) string
+	CheckUserRsWithLable(userID uuid.UUID, label string, otherUserID uuid.UUID) bool
+	CheckUserFriWithOtherUserID(userID, otherUserID uuid.UUID) bool
 }
 
 type Cache struct {
@@ -72,6 +74,32 @@ func (c *Cache) GetUserRs(userID uuid.UUID) bool {
 	return false
 }
 
+func (c *Cache) CheckUserRsWithLable(userID uuid.UUID, label string, otherUserID uuid.UUID) bool {
+	c.UserRsMuLock.Lock()
+	defer c.UserRsMuLock.Unlock()
+	if v, ok := c.UserRsCache[userID][label]; ok {
+		for _, v := range *v {
+			if v.UserID == otherUserID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (c *Cache) CheckUserFriWithOtherUserID(userID, otherUserID uuid.UUID) bool {
+	c.UserFriMuLock.Lock()
+	defer c.UserFriMuLock.Unlock()
+	if v, ok := c.UserFriCache[userID]["friend"]; ok {
+		for _, v := range *v {
+			if v.UserID == otherUserID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (c *Cache) UpdateUserCache(user *User) {
 	c.UserMuLock.Lock()
 	defer c.UserMuLock.Unlock()
@@ -97,6 +125,7 @@ func (c *Cache) GetOtherUserIDByReqID(userID, reqID uuid.UUID, lable string) *Fr
 	defer c.UserRsMuLock.Unlock()
 	if _, ok := c.UserRsCache[userID]; ok {
 		if v, ok := c.UserRsCache[userID][lable]; ok {
+			log.Printf("found or not")
 			v := *v
 			if newV, ok := v[reqID]; ok {
 				return &newV
@@ -218,18 +247,18 @@ func (c *Cache) Load() {
 				UserID: userRs.UserID,
 				ToID: FriendMetaData{
 					UserID: userRs.OtheruserID,
-					Name:   userRs.Name.String,
+					Name:   userRs.OtherUserName,
 				},
-				Lable: userRs.Label,
+				Lable: userRs.Status,
 			})
 			// this update the other user
 			c.UpdateUserRs(CacheUpdateFriStruct{
 				UserID: userRs.OtheruserID,
 				ToID: FriendMetaData{
-					UserID: userRs.OtheruserID,
-					Name:   userRs.Name.String,
+					UserID: userRs.UserID,
+					Name:   userRs.UserName,
 				},
-				Lable: userRs.Label,
+				Lable: userRs.Status,
 			})
 		}
 	}()

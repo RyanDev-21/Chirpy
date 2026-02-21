@@ -5,11 +5,11 @@ package users
 import (
 	//"fmt"
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 	"regexp"
 
+	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/encoder"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
@@ -99,6 +99,10 @@ func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, 401, "unauthorized")
 			return
 		}
+		if err == ErrNoRedFound || err == ErrReqExist {
+			response.Error(w, 400, "invalid request")
+			return
+		}
 
 		response.Error(w, 500, "Internal server error")
 		return
@@ -134,11 +138,15 @@ func (h *UserHandler) AddFriend(w http.ResponseWriter, r *http.Request) {
 
 	friReqID, err := h.userService.AddFriendSend(r.Context(), *userID, payload.ToID, "pending")
 	if err != nil {
+		if err == ErrReqExist {
+			response.Error(w, 400, "invalid request")
+			return
+		}
 		response.Error(w, 500, "internal server error")
 		return
 	}
 	response.JSON(w, 200, ReesponseForAddFriend{
-		ReqID: friReqID,
+		ReqID: *friReqID,
 	})
 }
 
@@ -146,6 +154,7 @@ func (h *UserHandler) AddFriend(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) UpdateReq(w http.ResponseWriter, r *http.Request) {
 	reqID, err := middleware.GetPathValue("request_id", r)
 	if err != nil {
+		log.Printf("failed to get request_id err:%v", err)
 		response.Error(w, 400, "invalid request")
 		return
 	}
@@ -167,10 +176,19 @@ func (h *UserHandler) UpdateReq(w http.ResponseWriter, r *http.Request) {
 		err = h.userService.CancelFriReq(r.Context(), *userID, *reqID)
 
 	default:
-		err = errors.New("no supported status")
+		response.Error(w, 400, "invalid request")
+		return
 
 	}
 	if err != nil {
+		if err == chatmodel.ErrNoClientFound {
+			response.Error(w, 400, "client is not connect to ws, consider connecting first")
+			return
+		}
+		if err == ErrNoRedFound {
+			response.Error(w, 400, "invalid request")
+			return
+		}
 		response.Error(w, 500, "internal server error")
 		return
 	}

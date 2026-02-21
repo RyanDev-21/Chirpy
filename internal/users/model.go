@@ -2,9 +2,15 @@ package users
 
 import (
 	//	"errors"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
+)
+
+var (
+	ErrReqExist   = errors.New("req already exist")
+	ErrNoRedFound = errors.New("no record found")
 )
 
 type PasswordUpdateStruct struct {
