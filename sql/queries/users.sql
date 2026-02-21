@@ -30,8 +30,20 @@ SELECT * FROM users;
 
 
 -- name: GetAllUserRs :many
-SELECT ur.*,u.name FROM user_relationships ur LEFT JOIN users  u ON ur.otherUser_id = u.id  WHERE status != 'pending';
-
+SELECT 
+    ur.user_id,
+    u1.name AS user_name,
+    ur.otherUser_id,
+    u2.name AS other_user_name,
+    ur.status
+FROM user_relationships ur
+-- Join for the first user
+JOIN users u1 ON ur.user_id = u1.id
+-- Join for the second user
+JOIN users u2 ON ur.otherUser_id = u2.id
+WHERE ur.status = 'confirm';
+-- SELECT ur.*,u.name FROM user_relationships ur LEFT JOIN users  u ON ur.otherUser_id = u.id  WHERE status != 'pending';
+--
 -- name: AddSendReq :exec
 INSERT INTO user_relationships (id,user_id,otherUser_id)
 VALUES(
@@ -50,28 +62,40 @@ SELECT ur.id,ur.user_id,u.name  FROM user_relationships ur  LEFT JOIN users u ON
 SELECT ur.id,ur.otherUser_id,u.name FROM user_relationships ur LEFT JOIN users u ON u.id = ur.otherUser_id WHERE ur.user_id = $1 AND ur.status!= 'confirm' ;
 --
 -- -- name: GetUserFriListByID :many
--- SELECT 
+-- SELECT name(SELECT name FROM users WHERE id = $1) AS userName,
+-- 	u.name AS otherUserName
 --     CASE 
 --     WHEN user_id = $1 THEN otherUser_id
 --     WHEN otherUser_id = $1 THEN user_id
 --     END AS friend_id 
--- FROM user_relationships WHERE status = 'confirm';
---
-
--- name: GetUserFriListByID :many 
+-- FROM user_relationships LEFT JOIN users u ON u.id == friend_id
+-- WHERE status = 'confirm';
+-- name: GetUserFriListByID :many
 SELECT 
-	ur.id,
-	ur.otherUser_id,
-	u.name
-FROM user_relationships ur LEFT JOIN 
-users u ON u.id = (
-	CASE 
-	WHEN ur.user_id = $1 THEN ur.otherUser_id
-	WHEN ur.otherUser_id = $1 THEN ur.user_id
-	END
-)
-WHERE ur.status = 'confirm' AND ($1 IN (ur.user_id,ur.otherUser_id));
+    (SELECT name FROM users u1 WHERE u1.id = $1) AS user_name,
+    u.name AS friend_name,
+    u.id AS friend_id
+FROM users u
+WHERE u.id IN (
+    SELECT otherUser_id FROM user_relationships WHERE user_id = $1 AND status = 'confirm'
+    UNION
+    SELECT user_id FROM user_relationships WHERE otherUser_id = $1 AND status = 'confirm'
+);
 
+-- -- name: GetUserFriListByID :many 
+-- SELECT 
+-- 	ur.id,
+-- 	ur.otherUser_id,
+-- 	u.name AS otherUserName
+-- FROM user_relationships ur LEFT JOIN 
+-- users u ON u.id = (
+-- 	CASE 
+-- 	WHEN ur.user_id = $1 THEN ur.otherUser_id
+-- 	WHEN ur.otherUser_id = $1 THEN ur.user_id
+-- 	END
+-- )
+-- WHERE ur.status = 'confirm' AND ($1 IN (ur.user_id,ur.otherUser_id));
+--
 
 -- name: CancelFriReqStatus :exec
 UPDATE user_relationships SET status = 'cancel',updated_at = $2 WHERE id = $1 AND otherUser_id = $3;
@@ -93,7 +117,7 @@ users u ON u.id  = (
 		WHEN ur.otherUser_id = $1 THEN ur.user_id
 	END
 )
-WHERE ur.id = $2;
+WHERE ur.id = $2 AND status != 'confirm';
 
 -- name: SearchNameSiml :many
 SELECT u.email,u.name,u.created_at,u.updated_at,u.id,u.is_chirpy_red,similarity(name,$1) AS similarity

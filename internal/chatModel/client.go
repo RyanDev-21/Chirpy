@@ -56,7 +56,6 @@ func (c *Client) ReadPump() {
 	c.Conn.SetPongHandler(func(string) error { c.Conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 
 	var rawMsg json.RawMessage
-
 	for {
 		// maybe consider only accepting the msg.Content
 		// NOTE::this read json as we are writing json maybe consider writing raw bytes
@@ -68,42 +67,107 @@ func (c *Client) ReadPump() {
 			break
 		}
 
-		var msgMap map[string]interface{}
-		if err := json.Unmarshal(rawMsg, &msgMap); err != nil {
+		var eventMap InCommingEvent
+		if err := json.Unmarshal(rawMsg, &eventMap); err != nil {
 			continue
 		}
+		log.Printf("eventMap value :%v", eventMap)
 
-		// Check if it's an InCommingEvent (has event, no type)
-		if _, hasEvent := msgMap["event"]; hasEvent {
-			if _, hasType := msgMap["type"]; !hasType {
-				var inEvent InCommingEvent
-				json.Unmarshal(rawMsg, &inEvent)
-				c.Hub.Broadcast <- Event{
-					FromID: c.UserID.String(),
-					ToID:   inEvent.ToID,
-					Event:  inEvent.Event,
-				}
+		switch eventMap.Event {
+		case "Typing":
+			var p InCommingEventForTyping
+			if err := json.Unmarshal(eventMap.Payload, &p); err != nil {
+				log.Printf("not valid json")
 				continue
 			}
+			c.Hub.Broadcast <- Event{
+				Event: "Typing",
+				Payload: TypoEvent{
+					FromID: c.UserID.String(),
+					ToID:   p.ToID,
+				},
+			}
 		}
-
-		// Otherwise treat as Message
-		var message InCommingMessage
-		json.Unmarshal(rawMsg, &message)
-		c.Hub.Broadcast <- *convertIntoInCommingStruct(message, c.UserID)
-
 	}
 }
 
-func convertIntoInCommingStruct(msg InCommingMessage, userID uuid.UUID) *Message {
-	return &Message{
-		Content:  msg.Content,
-		ToID:     msg.ToID,
-		ParentID: msg.ParendID,
-		FromID:   userID.String(),
-		Type:     msg.Type,
-	}
-}
+// 	switch eventMap.Event {
+// 	case "msg":
+// 		var p InCommingMessage
+// 		if err := json.Unmarshal(eventMap.Payload, &p); err != nil {
+// 			log.Print("not valid json")
+// 			continue
+// 		}
+// 		c.Hub.Broadcast <- Event{
+// 			Event:   "msg",
+// 			Payload: *convertIntoMessageStruct(p, c.UserID),
+// 		}
+// 		log.Printf("value for payload :%v", p)
+//
+// 	case "AcceptFri":
+// 		var p InFriEvent
+// 		if err := json.Unmarshal(eventMap.Payload, &p); err != nil {
+// 			log.Print("not valid json")
+// 			continue
+// 		}
+// 		c.Hub.Broadcast <- convertIntoFirEventStruct(c.UserID, p)
+// 		log.Printf("value for payload :%v", p)
+// 	case "DenyFri":
+// 		var p InFriEvent
+// 		if err := json.Unmarshal(eventMap.Payload, &p); err != nil {
+// 			log.Print("not valid json")
+// 			continue
+// 		}
+// 		c.Hub.Broadcast <- convertIntoFirEventStruct(c.UserID, p)
+// 		log.Printf("value for payload :%v", p)
+// 	default:
+// 		log.Printf("unsupported type of event")
+// 		continue
+// 	}
+// }
+//
+//have to rewrite this all
+// var msgMap map[string]interface{}
+// if err := json.Unmarshal(rawMsg, &msgMap); err != nil {
+// 	continue
+// }
+//
+// // Check if it's an InCommingEvent (has event, no type)
+// if _, hasEvent := msgMap["event"]; hasEvent {
+// 	if _, hasType := msgMap["type"]; !hasType {
+// 		var inEvent InCommingEvent
+// 		json.Unmarshal(rawMsg, &inEvent)
+// 		c.Hub.Broadcast <- Event{
+// 			FromID: c.UserID.String(),
+// 			ToID:   inEvent.ToID,
+// 			Event:  inEvent.Event,
+// 		}
+// 		continue
+// 	}
+// }
+//
+// // Otherwise treat as Message
+// var message InCommingMessage
+// json.Unmarshal(rawMsg, &message)
+// c.Hub.Broadcast <- *convertIntoInCommingStruct(message, c.UserID)
+
+// func convertIntoMessageStruct(msg InCommingMessage, userID uuid.UUID) *message {
+// 	return &message{
+// 		Content:  msg.Content,
+// 		ToID:     msg.ToID,
+// 		ParentID: msg.ParendID,
+// 		FromID:   userID.String(),
+// 		Type:     msg.Type,
+// 	}
+// }
+//
+// func convertIntoFirEventStruct(userID uuid.UUID, payload InFriEvent) *friEvent {
+// 	return &friEvent{
+// 		reqID:  payload.ReqID,
+// 		toID:   payload.ToID,
+// 		fromID: userID.String(),
+// 	}
+// }
 
 // read from the Send chanel and write it to the connection
 func (c *Client) WritePump() {

@@ -50,15 +50,38 @@ func NewHub() *Hub {
 
 var ErrNoClientFound = errors.New("no client exist")
 
-func (h *Hub) WriteIntoConnection(clientID uuid.UUID, msg *InCommingMessage) error {
-	h.ClientMux.Lock()
-	defer h.ClientMux.Unlock()
-	if client, ok := h.Clients[clientID.String()]; ok {
-		client.Conn.WriteJSON(&msg)
-		return nil
+func (h *Hub) CheckWsConnection(clientID uuid.UUID) bool {
+	h.ClientMux.RLock()
+	defer h.ClientMux.RUnlock()
+	if _, ok := h.Clients[clientID.String()]; ok {
+		return true
+	}
+	return false
+}
+
+// this one should correctly write into conneciton
+func (h *Hub) WriteIntoConnection(clientID uuid.UUID, payload Event) error {
+	var targetIds []string
+	switch payload.Event {
+	case "msg":
+		msg := payload.Payload.(OutGoingMessage)
+		targetIds = append(targetIds, h.getTarGetIdsForMsg(msg.Type, clientID)...)
+	case "AddFri":
+		targetIds = append(targetIds, clientID.String())
+	case "AcceptFri":
+		targetIds = append(targetIds, clientID.String())
+	case "DenyFri":
+		targetIds = append(targetIds, clientID.String())
+
+	}
+	bytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("failed to pare into bytes")
+		return err
 	}
 
-	return ErrNoClientFound
+	h.broadcast(targetIds, bytes)
+	return nil
 }
 
 // func (h *Hub)CheckOnline(clientID uuid.UUID)bool{
@@ -135,55 +158,80 @@ func (h *Hub) Run() {
 		// if it is public/group you find the id in the chatTouser based on
 		// the chat id and then write to the every single connection of those ids
 		// of that chat
-		case message := <-h.Broadcast:
+		case event := <-h.Broadcast:
+			var payload Event
 			var targetIds []string
-			var payload interface{}
-			switch message := message.(type) {
-			case Message:
-				switch message.Type {
-				// just for the sake of this i put the type in th msg struct
-				case "private":
-					targetIds = append(targetIds, message.ToID)
-				case "public":
-					log.Printf("userIds list and its chats #%v#", h.ChatToUser[message.ToID])
-					if userIdsInChat, ok := h.ChatToUser[message.ToID]; ok {
-						for userID := range userIdsInChat {
-							targetIds = append(targetIds, userID)
-						}
-					}
+			eventType := event.(Event)      // this typecast into Event
+			evePayload := eventType.Payload // this get the payload ofEvent
+			switch inPayload := evePayload.(type) {
+			case TypoEvent:
+				payload = Event{
+					Event:   eventType.Event,
+					Payload: inPayload.FromID,
 				}
-				payload = OutGoingMessage{
-					Content:  message.Content,
-					FromID:   message.FromID,
-					Type:     message.Type,
-					ParentID: message.ParentID,
-				}
-			case Event:
-				targetIds = append(targetIds, message.ToID)
-				payload = OutGoingEvent{
-					FromID: message.FromID,
-					Event:  message.Event,
-				}
+				targetIds = append(targetIds, inPayload.ToID)
+				// case OutFriEvent:
+				// 	targetIds = append(targetIds, inPayload.)
+				// 	payload = Event
+				// 		Event: eventType.Event,
+				// 		Payload: OutFriEvent{
+				// 			ReqID:  inPayload.reqID,
+				// 			FromID: inPayload.fromID,
+				// 		},
+				// 	}
 			}
 			bytes, err := json.Marshal(payload)
 			if err != nil {
 				log.Fatal("failed to marshal into bytes")
 				return
 			}
+			h.broadcast(targetIds, bytes)
+		}
+	}
+}
 
-			if len(targetIds) > 0 {
-				for _, clientID := range targetIds {
-					// i need to implement mutex lock or smth
-					if _, ok := h.Clients[clientID]; ok {
-						select {
-						case h.Clients[clientID].Send <- bytes:
-						default:
-							close(h.Clients[clientID].Send)
-							delete(h.Clients, clientID)
-						}
-					}
+func (h *Hub) broadcast(targetIds []string, bytes []byte) {
+	if len(targetIds) > 0 {
+		for _, clientID := range targetIds {
+			// i need to implement mutex lock or smth
+			if _, ok := h.Clients[clientID]; ok {
+				select {
+				case h.Clients[clientID].Send <- bytes:
+				default:
+					close(h.Clients[clientID].Send)
+					delete(h.Clients, clientID)
 				}
 			}
 		}
 	}
 }
+
+func (h *Hub) getTarGetIdsForMsg(msgType string, toID uuid.UUID) []string {
+	var targetIds []string
+	switch msgType {
+	case "private":
+		targetIds = append(targetIds, toID.String())
+	case "public":
+		log.Printf("userIds list and its chats #%v#", h.ChatToUser[toID.String()])
+		if userIdsInChat, ok := h.ChatToUser[toID.String()]; ok {
+			for userID := range userIdsInChat {
+				targetIds = append(targetIds, userID)
+			}
+		}
+	}
+	return targetIds
+}
+
+// func (h *Hub) handleMessageStruct(msg Message) (*OutGoingMessage, []string) {
+// 	var payload OutGoingMessage
+// 	var targetIds []string
+// 	targetIds = h.getTarGetIdsForMsg(msg)
+// 	payload = OutGoingMessage{
+// 		Content:  msg.Content,
+// 		FromID:   msg.FromID,
+// 		Type:     msg.Type,
+// 		ParentID: msg.ParentID,
+// 	}
+//
+// 	return &payload, targetIds
+// }
