@@ -138,10 +138,11 @@ func (h *UserHandler) AddFriend(w http.ResponseWriter, r *http.Request) {
 
 	friReqID, err := h.userService.AddFriendSend(r.Context(), *userID, payload.ToID, "pending")
 	if err != nil {
-		if err == ErrReqExist {
+		if err == ErrReqExist || err == ErrNotValidReq {
 			response.Error(w, 400, "invalid request")
 			return
 		}
+
 		response.Error(w, 500, "internal server error")
 		return
 	}

@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	ErrReqExist   = errors.New("req already exist")
-	ErrNoRedFound = errors.New("no record found")
+	ErrReqExist    = errors.New("req already exist")
+	ErrNoRedFound  = errors.New("no record found")
+	ErrNotValidReq = errors.New("invalid request")
 )
 
 type PasswordUpdateStruct struct {

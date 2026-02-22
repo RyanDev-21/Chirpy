@@ -32,11 +32,11 @@ type RedisCacheImpl interface {
 	XRangeN(ctx context.Context, key string) ([]redis.XMessage, error)
 }
 
-func NewRedisClient() (redis.UniversalClient, error) {
+func NewRedisClient(addr, userName, password string) (redis.UniversalClient, error) {
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     "redis-10979.c292.ap-southeast-1-1.ec2.cloud.redislabs.com:10979",
-		Username: "default",
-		Password: "dKtoeF3RH6WhCU34GmXj6whNDGXlrWEC",
+		Addr:     addr,
+		Username: userName,
+		Password: password,
 		DB:       0,
 	})
 
