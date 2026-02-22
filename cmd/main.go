@@ -588,6 +588,9 @@ func main() {
 	platform := os.Getenv("PLATFORM")
 	secret := os.Getenv("SECRET")
 	polkaKey := os.Getenv("POLKA_KEY")
+	redisAddr := os.Getenv("REDIS_ADDR")
+	redisUsr := os.Getenv("REDIS_USR")
+	redisPass := os.Getenv("REDIS_PASS")
 	db, err := pgxpool.New(ctx, dURL)
 	if err != nil {
 		log.Fatal("Failed connection to the db ")
@@ -608,9 +611,9 @@ func main() {
 	go hub.Run()
 
 	// init redis cache
-	cacheClient, err := rediscache.NewRedisClient()
+	cacheClient, err := rediscache.NewRedisClient(redisAddr, redisUsr, redisPass)
 	if err != nil {
-		log.Printf("failed to get the redis client \n #%s#", err)
+		log.Fatalf("failed to get the redis client \n #%s#", err)
 	}
 
 	// Create Repositories
@@ -655,7 +658,6 @@ func main() {
 	confirmFriendLimiter := ratelimit.NewRateLimiter(30, time.Minute)
 	deleteFriendLimiter := ratelimit.NewRateLimiter(30, time.Minute)
 	searchUserLimiter := ratelimit.NewRateLimiter(20, time.Minute)
-
 	// startup workers for each event
 	// run the message queue
 
