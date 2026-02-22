@@ -123,6 +123,11 @@ func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, rec
 
 	s.logger.Info("add friend request started", "reqID", reqID, "senderID", senderID, "receiverID", recieverID)
 
+	if senderID == recieverID {
+		s.logger.Warn("the client is trying to add the same id", "reqID", reqID, "fromID", senderID)
+		return nil, ErrNotValidReq
+	}
+
 	friReqID, err := uuid.NewV7()
 	if err != nil {
 		s.logger.Error("failed to generate friend request ID", "reqID", reqID, "error", err)
