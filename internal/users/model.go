@@ -119,3 +119,28 @@ type DeleteFirReqStruct struct {
 type FoundUserListRes struct {
 	UserList []User
 }
+type ColorField struct {
+	MainColor     string `json:"main_color"`
+	FallBackColor string `json:"fallback_color"`
+}
+type PositionField struct {
+	X string `json:"x"`
+	Y string `json:"y"`
+}
+
+type EleConfig struct {
+	Color    ColorField    `json:"color"`
+	Position PositionField `json:"position"`
+}
+
+type ElementCustom struct {
+	Label  string    `json:"label"`
+	Config EleConfig `json:"config"`
+}
+type ConfigList struct {
+	List []ElementCustom `json:"config_list,omitempty"`
+}
+type JobForSaveConfig struct {
+	UserID     uuid.UUID
+	ConfigList *ConfigList
+}

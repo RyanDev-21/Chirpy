@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,6 +13,8 @@ import (
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
+
+	//	"RyanDev-21.com/Chirpy/internal/database"
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
 	"github.com/google/uuid"
@@ -34,29 +37,34 @@ type UserService interface {
 	GetPendingList(ctx context.Context, userID uuid.UUID) (*GetReqList, error)
 	GetFriendList(ctx context.Context, userID uuid.UUID) (*[]FriendMetaData, error)
 	SearchUser(ctx context.Context, serachName string) (*[]User, error)
+	SaveConfig(ctx context.Context, userID uuid.UUID, configList *ConfigList) error
+	GetConfig(ctx context.Context, userID uuid.UUID) (*ConfigList, error)
 
 	StartWorkerForAddFri(channel chan *mq.Channel)
 	StartWorkerForConfirmFri(channel chan *mq.Channel)
 	StartWorkerForDeleteReq(channel chan *mq.Channel)
 	StartWorkerForCancelReq(channel chan *mq.Channel)
 	StartWorkerForUpdateUserCache(channel chan *mq.Channel)
+	StartWorkerForSaveConfig(channel chan *mq.Channel)
 }
 
 type userService struct {
-	userRepo  UserRepo
-	userCache UserCacheItf
-	mainMq    *mq.MainMQ
-	hub       *chatmodel.Hub
-	logger    *slog.Logger
+	userRepo    UserRepo
+	userCache   UserCacheItf
+	mainMq      *mq.MainMQ
+	hub         *chatmodel.Hub
+	logger      *slog.Logger
+	configCache ConfigCache
 }
 
-func NewUserService(userRepo UserRepo, userCache UserCacheItf, mainMq *mq.MainMQ, logger *slog.Logger, hub *chatmodel.Hub) UserService {
+func NewUserService(userRepo UserRepo, userCache UserCacheItf, mainMq *mq.MainMQ, logger *slog.Logger, hub *chatmodel.Hub, configCache ConfigCache) UserService {
 	return &userService{
-		userRepo:  userRepo,
-		userCache: userCache,
-		mainMq:    mainMq,
-		hub:       hub,
-		logger:    logger,
+		userRepo:    userRepo,
+		userCache:   userCache,
+		mainMq:      mainMq,
+		hub:         hub,
+		logger:      logger,
+		configCache: configCache,
 	}
 }
 
@@ -602,4 +610,59 @@ func (s *userService) SearchUser(ctx context.Context, serachName string) (*[]Use
 	s.logger.Info("search user completed", "reqID", reqID, "searchName", serachName, "count", len(*userList))
 
 	return userList, nil
+}
+
+func (s *userService) SaveConfig(ctx context.Context, userID uuid.UUID, configList *ConfigList) error {
+	reqID, _ := middleware.GetContextKey(ctx, "request")
+	s.logger.Info("save position started ", "reqID", reqID, "userID", userID)
+
+	s.logger.Info("updating the config cache", "reqID", reqID, "userID", userID)
+	err := s.configCache.UpdateConfig(userID, configList)
+	if err != nil {
+		s.logger.Error("failed to update the config cache", "reqID", reqID, "userID", userID, "error", err)
+		return err
+	}
+	payload := JobForSaveConfig{
+		UserID:     userID,
+		ConfigList: configList,
+	}
+	err = s.mainMq.PublishWithContext(ctx, "SavePosition", payload)
+	if err != nil {
+		handleMqFail("SavePosition", payload, err, s.logger)
+		return err
+	}
+	s.logger.Info("update user config completed", "reqID", reqID, "configList", *configList)
+	return nil
+}
+
+func (s *userService) GetConfig(ctx context.Context, userID uuid.UUID) (*ConfigList, error) {
+	reqID, _ := middleware.GetContextKey(ctx, "request")
+	s.logger.Info("get config started ", "reqID", reqID, "userID", userID)
+	s.logger.Info("trying to fetch from config cache", "reqID", reqID, "userID", userID)
+	configList := s.configCache.GetConfig(userID)
+
+	if configList == nil {
+		s.logger.Info("cache miss trying to fetch from db", "reqID", reqID, "userID", userID)
+		res, err := s.userRepo.GetAllConfigUser(ctx, userID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				s.logger.Info("found nothing returning empty list", "reqID", reqID, "userID", userID)
+
+				return &ConfigList{
+					List: []ElementCustom{},
+				}, nil
+			}
+			s.logger.Error("failed to get from db", "reqID", reqID, "userID", userID, "error", err)
+			return nil, err
+		}
+		s.logger.Info("trying to update the config to the cache", "reqID", reqID, "userID", userID)
+		s.configCache.UpdateConfig(userID, &ConfigList{
+			List: *res,
+		})
+
+		return &ConfigList{
+			List: *res,
+		}, nil
+	}
+	return configList, nil
 }
