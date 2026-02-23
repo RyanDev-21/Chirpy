@@ -29,6 +29,11 @@ type Chirp struct {
 	UserID    uuid.UUID
 }
 
+type Eleconfig struct {
+	UserID uuid.UUID
+	Pref   []byte
+}
+
 type Groupmessage struct {
 	ID        uuid.UUID
 	Content   pgtype.Text

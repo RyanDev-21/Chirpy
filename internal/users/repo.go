@@ -3,7 +3,9 @@ package users
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+
 	//	"log"
 	"strings"
 	"time"
@@ -36,6 +38,9 @@ type UserRepo interface {
 	GetMatchName(ctx context.Context, searchName string) (*[]User, error)
 	DeleteFriReq(reqID uuid.UUID, fromID uuid.UUID) error // delete the record
 	GetOtherUserIDByReqID(ctx context.Context, userID uuid.UUID, reqID uuid.UUID) (*User, error)
+	SaveEleConfig(userID uuid.UUID, eleconfigs *[]ElementCustom) error
+	GetAllConfigUser(ctx context.Context, userID uuid.UUID) (*[]ElementCustom, error)
+	GetAllUserConfigs(ctx context.Context) (*[]database.Eleconfig, error)
 }
 
 type userRepo struct {
@@ -267,4 +272,46 @@ func (r *userRepo) GetMatchName(ctx context.Context, searchName string) (*[]User
 		})
 	}
 	return &userInfoList, nil
+}
+
+func (r *userRepo) SaveEleConfig(userID uuid.UUID, eleconfigs *[]ElementCustom) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Millisecond)
+	defer cancel()
+	var byteArr []byte
+	for _, v := range *eleconfigs {
+		bytes, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		byteArr = append(byteArr, bytes...)
+	}
+	_, err := r.queries.SavePosition(ctx, database.SavePositionParams{
+		UserID: userID,
+		Pref:   byteArr,
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *userRepo) GetAllConfigUser(ctx context.Context, userID uuid.UUID) (*[]ElementCustom, error) {
+	bytes, err := r.queries.GetAllConfigForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	var configList []ElementCustom
+	err = json.Unmarshal(bytes, &configList)
+	if err != nil {
+		return nil, err
+	}
+	return &configList, nil
+}
+
+func (r *userRepo) GetAllUserConfigs(ctx context.Context) (*[]database.Eleconfig, error) {
+	res, err := r.queries.GetAllUsersConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &res, nil
 }
