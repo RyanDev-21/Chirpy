@@ -69,3 +69,17 @@ func (s *userService) StartWorkerForUpdateUserCache(channel chan *mq.Channel) {
 
 	log.Printf("successfully updated the userCache")
 }
+
+func (s *userService) StartWorkerForSaveConfig(channel chan *mq.Channel) {
+	for chen := range channel {
+		msg := chen.Msg.(JobForSaveConfig)
+		err := s.userRepo.SaveEleConfig(msg.UserID, &msg.ConfigList.List)
+		if err != nil {
+			log.Printf("err value:%v", err)
+			chen.RetriesCount++
+			s.mainMq.Republish(chen, chen.RetriesCount)
+		}
+		continue
+	}
+	log.Printf("successfully added the req record")
+}
