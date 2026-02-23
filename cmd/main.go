@@ -640,9 +640,10 @@ func main() {
 		defer cancel()
 		chatCache.LoadMessagesForStartUp(ctxForCache)
 	}()
+	configCache := users.NewConfigCache(userRepo)
 
 	// Create Services
-	userService := users.NewUserService(userRepo, userCache, mq, logger, hub)
+	userService := users.NewUserService(userRepo, userCache, mq, logger, hub, configCache)
 	authService := authClient.NewAuthService(userRepo, authRepo, apicfg.secret, logger)
 	chatService := chat.NewChatService(chatRepo, hub, mq, chatCache, groupCache, logger)
 	groupService := groups.NewGroupService(groupRepo, hub, mq, groupCache, logger)
@@ -676,6 +677,8 @@ func main() {
 	go mq.ListeningForTheChannels(chatmodel.PrivateMessageConstant, 1000, chatService.StartWorkerForAddPrivateMessage)
 	go mq.ListeningForTheChannels(chatmodel.PublicMessageConstant, 1000, chatService.StartWorkerForAddPublicMessage)
 	go mq.ListeningForTheChannels("UpdateUserCache", 100, userService.StartWorkerForUpdateUserCache)
+	go mq.ListeningForTheChannels("SavePosition", 100, userService.StartWorkerForSaveConfig)
+
 	// Main app route
 	mux.Handle("/app/", middleWareLog(finalHanlder))
 	// Asset route
@@ -778,6 +781,10 @@ func main() {
 				ratelimit.RateLimitMiddleware(searchUserLimiter, userHandler.SearchUser, logger),
 				apicfg.secret, logger)))
 
+	mux.Handle("POST /api/users/configs", middleware.MiddleWareLog(middleware.AuthMiddleWare(
+		userHandler.SaveConfig, apicfg.secret, logger)))
+	mux.Handle("GET /api/users/configs", middleware.MiddleWareLog(middleware.AuthMiddleWare(
+		userHandler.GetConfig, apicfg.secret, logger)))
 	log.Printf("The server is running on %q\n", Port)
 	log.Fatal(server.ListenAndServe())
 }

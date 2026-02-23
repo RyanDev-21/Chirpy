@@ -281,3 +281,45 @@ func (h *UserHandler) SearchUser(w http.ResponseWriter, r *http.Request) {
 		UserList: *userList,
 	})
 }
+
+func (h *UserHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
+	payload := &ConfigList{}
+	err := encoder.Decode(r, payload)
+	if err != nil {
+		response.Error(w, 400, "invalid parameters")
+		return
+	}
+	userID, err := middleware.GetContextKey(r.Context(), "user")
+	if err != nil {
+		response.Error(w, 400, "invalid request")
+		return
+	}
+
+	err = h.userService.SaveConfig(r.Context(), *userID, payload)
+	if err != nil {
+		if err == ErrNoRedFound {
+			response.Error(w, 404, "not found ")
+			return
+		}
+		response.Error(w, 500, "something went wrong")
+		return
+	}
+	w.WriteHeader(201)
+}
+
+// right now this returns the whoel config list
+func (h *UserHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetContextKey(r.Context(), "user")
+	if err != nil {
+		response.Error(w, 400, "invalid request")
+		return
+	}
+	configList, err := h.userService.GetConfig(r.Context(), *userID)
+	if err != nil {
+		response.Error(w, 500, "something went wrong")
+		return
+	}
+	response.JSON(w, 200, ConfigList{
+		List: configList.List,
+	})
+}
