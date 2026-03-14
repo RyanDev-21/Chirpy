@@ -15,6 +15,7 @@ type Hub struct {
 
 	// contains all the users id of the specific chat
 	ChatToUser map[string]map[string]bool
+		
 	Clients    map[string]*Client
 	ClientMux  sync.RWMutex
 	// register and unregister are for the connection
@@ -39,7 +40,7 @@ func NewHub() *Hub {
 	return &Hub{
 		UsertoChannel: make(map[string]map[string]bool),
 		ChatToUser:    make(map[string]map[string]bool),
-		Broadcast:     make(chan interface{}),
+		Broadcast:     make(chan interface{},1000),
 		Register:      make(chan *Client),
 		Unregister:    make(chan *Client),
 		Clients:       make(map[string]*Client),
@@ -179,6 +180,17 @@ func (h *Hub) Run() {
 				// 			FromID: inPayload.fromID,
 				// 		},
 				// 	}
+		
+		case SeenEvent:		
+				payload = Event{
+					Event: eventType.Event,
+					Payload: OutGoingEventForSeen{
+						FromID: inPayload.FromID,
+						MsgID: inPayload.MsgID,
+					},
+
+				}
+			targetIds  = append(targetIds, inPayload.ToID)
 			}
 			bytes, err := json.Marshal(payload)
 			if err != nil {
@@ -193,16 +205,24 @@ func (h *Hub) Run() {
 func (h *Hub) broadcast(targetIds []string, bytes []byte) {
 	if len(targetIds) > 0 {
 		for _, clientID := range targetIds {
-			// i need to implement mutex lock or smth
-			if _, ok := h.Clients[clientID]; ok {
-				select {
-				case h.Clients[clientID].Send <- bytes:
-				default:
-					close(h.Clients[clientID].Send)
-					delete(h.Clients, clientID)
-				}
+			h.ClientMux.Lock()
+			client, ok := h.Clients[clientID]
+			h.ClientMux.Unlock()
+			if !ok{
+				continue
 			}
+			select {
+				case client.Send <- bytes:
+				default:
+			
+				h.ClientMux.Lock()
+				close(h.Clients[clientID].Send)
+					delete(h.Clients, clientID)
+				h.ClientMux.Unlock()
+			}
+			
 		}
+
 	}
 }
 
@@ -214,6 +234,7 @@ func (h *Hub) getTarGetIdsForMsg(msgType string, toID uuid.UUID) []string {
 	case "public":
 		log.Printf("userIds list and its chats #%v#", h.ChatToUser[toID.String()])
 		if userIdsInChat, ok := h.ChatToUser[toID.String()]; ok {
+
 			for userID := range userIdsInChat {
 				targetIds = append(targetIds, userID)
 			}

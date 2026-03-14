@@ -80,6 +80,7 @@ func (h *authHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 func (h *authHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
+	
 		response.Error(w, 401, "unauthorized")
 		return
 	}

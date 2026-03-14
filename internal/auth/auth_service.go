@@ -84,23 +84,33 @@ func (s *authService)Revoke(ctx context.Context,token string)error{
 
 //need to add the logic to check whether the token has already revoked or not 
 func (s *authService)Refresh(ctx context.Context,token string)(string,string,error){
+	reqID, err:= middleware.GetContextKey(ctx,"request")
+	if err!=nil {
+		s.logger.Warn("failed to get the reqID")
+	}
+	s.logger.Info("getting the refresh token started","reqID",reqID)
 	response ,err := s.authRepo.GetRefreshToken(ctx,token)
-	if err !=nil{
+	if err !=nil{ 
+		s.logger.Error("something went wrong","reqID",reqID,"error",err)
 		return "","",err
 	}
 	if time.Now().After(response.ExpiresAt){
+		s.logger.Info("trying to refresh with the expired one","reqID",reqID)
 		return "","",ErrTokenExpired
 	}
 	err = s.authRepo.RevokeToken(ctx,token)	
 	if err !=nil{
+		s.logger.Error("Failed to revoke the token","reqID",reqID,"error",err)
 		return "","",err
 	}
 
 	//returns both tokens alongside the error(if exists)
 	accessToken,refreshToken,err :=s.generateTokens(ctx,response.UserID)
 	if err !=nil{
+		s.logger.Error("failed to generate both tokens ","reqID",reqID,"error",err)
 		return "","",err
 	}
+	s.logger.Info("returning the tokens","reqID",reqID)
 	return accessToken,refreshToken,nil
 }
 

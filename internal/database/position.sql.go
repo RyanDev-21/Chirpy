@@ -46,19 +46,19 @@ func (q *Queries) GetAllUsersConfig(ctx context.Context) ([]Eleconfig, error) {
 	return items, nil
 }
 
-const savePosition = `-- name: SavePosition :one
+const savePosition = `-- name: SavePosition :exec
 INSERT INTO EleConfig(user_id,pref)
-VALUES($1,$2)RETURNING user_id, pref
+VALUES($1,$2::jsonb)
+ON CONFLICT (user_id)
+DO UPDATE SET pref = EXCLUDED.pref::jsonb
 `
 
 type SavePositionParams struct {
-	UserID uuid.UUID
-	Pref   []byte
+	UserID  uuid.UUID
+	Column2 []byte
 }
 
-func (q *Queries) SavePosition(ctx context.Context, arg SavePositionParams) (Eleconfig, error) {
-	row := q.db.QueryRow(ctx, savePosition, arg.UserID, arg.Pref)
-	var i Eleconfig
-	err := row.Scan(&i.UserID, &i.Pref)
-	return i, err
+func (q *Queries) SavePosition(ctx context.Context, arg SavePositionParams) error {
+	_, err := q.db.Exec(ctx, savePosition, arg.UserID, arg.Column2)
+	return err
 }

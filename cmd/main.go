@@ -2,17 +2,12 @@ package main
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
-	"fmt"
 	"log"
-	slog "log/slog"
 	"net/http"
 	"os"
-	"strings"
-	"sync/atomic"
-	"time"
 
+	//"database/sql"
+	"RyanDev-21.com/Chirpy/cmd/setup"
 	authClient "RyanDev-21.com/Chirpy/internal/auth"
 	"RyanDev-21.com/Chirpy/internal/chat"
 	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
@@ -22,562 +17,29 @@ import (
 	rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
 
 	"RyanDev-21.com/Chirpy/internal/users"
-	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
-	"RyanDev-21.com/Chirpy/pkg/ratelimit"
-	"RyanDev-21.com/Chirpy/pkg/response"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
 
-var CreateGroup = "CreateGroup"
-
 const (
 	Port = ":8080"
 )
 
-type apiConfig struct {
-	fileServerHits atomic.Int32
-	queries        *database.Queries
-	platform       string
-	secret         string
-	polkaKey       string
-}
-
-type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-	IsRED     bool      `json:"is_chirpy_red"`
-}
-
-type Chirp struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Body      string    `json:"body"`
-	UserID    uuid.UUID `json:"user_id"`
-}
-
-type AuthUser struct {
-	User
-	Token        string `json:"token"`
-	RefreshToken string `json:"refresh_token"`
-}
-
-func APIHandle(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
-}
-
-func (cfg *apiConfig) middlewareMeticsInc(next http.Handler) http.Handler {
+func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cfg.fileServerHits.Add(1)
-		log.Printf("server hits: %v\n", cfg.fileServerHits.Load())
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-func middleWareLog(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s", r.Method, r.URL.Path)
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (cfg *apiConfig) HitHandle(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html")
-	w.WriteHeader(http.StatusOK)
-	hits := cfg.fileServerHits.Load()
-	fmt.Fprintf(w, `<html>
-  <body>
-    <h1>Welcome, Chirpy Admin</h1>
-    <p>Chirpy has been visited %d times!</p>
-  </body>
-</html>`, hits)
-}
-
-func (cfg *apiConfig) ResetHandle(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusOK)
-	old := cfg.fileServerHits.Swap(0)
-	hits := cfg.fileServerHits.Load()
-	fmt.Fprintf(w, "Old Hits: %v , New Hits :%v", old, hits)
-}
-
-type responseError struct {
-	Error string `json:"error"`
-}
-
-const InternalError = "Something went wrong"
-
-var keywords = []string{
-	"kerfuffle",
-	"sharbert",
-	"fornax",
-}
-
-type returnVals struct {
-	Body string `json:"cleanded_body"`
-}
-
-func replaceAsterids(body string) string {
-	var updatedBody string
-	turnLower := strings.ToLower(body)
-	var keyword string
-	for _, v := range keywords {
-		if strings.Contains(turnLower, v) {
-			idx := strings.Index(turnLower, v)
-
-			keyword = body[idx : idx+len(v)]
-
-			break
-		}
-	}
-	if keyword == "" {
-		return body
-	}
-
-	updatedBody = strings.ReplaceAll(body, keyword, "****")
-	return updatedBody
-}
-
-// func respondWithError(w http.ResponseWriter, code int, msg string) {
-// 	responseBody := responseError{
-// 		Error: msg,
-// 	}
-// 	res, err := json.Marshal(responseBody)
-// 	if err != nil {
-// 		log.Printf("Error marshaling json:%s", err)
-// 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-// 		return
-// 	}
-// 	w.Header().Set("Content-Type", "application/json")
-// 	w.WriteHeader(code)
-// 	w.Write(res)
-
-// }
-
-// // Marshal the struct or any interface into json and write it to the respond
-// // takes io.write ,statusCode and any interface
-// func respondWithJSON(w http.ResponseWriter, code int, payload any) {
-// 	w.Header().Set("Content-Type", "application/json")
-// 	w.WriteHeader(code)
-// 	res, err := json.Marshal(payload)
-// 	if err != nil {
-// 		log.Printf("error mashaling json: %s", err)
-// 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-// 		return
-// 	}
-// 	w.Write(res)
-
-// }
-
-func (cfg *apiConfig) GetChirpHandle(w http.ResponseWriter, r *http.Request) {
-	items := []Chirp{}
-	var chirps []database.Chirp
-	s := r.URL.Query().Get("author_id")
-	if s != "" {
-		uuid, err := uuid.Parse(s)
-		if err != nil {
-			response.Error(w, 400, "invalid author id")
-			return
-		}
-		singleChirp, err := cfg.queries.GetRecordByID(r.Context(), uuid)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				response.Error(w, 400, "no author found")
-				return
-			}
-			response.Error(w, 500, "Internal server error")
-			return
-		}
-		chirps = []database.Chirp{singleChirp}
-
-	} else {
-		chirpsList, err := cfg.queries.GetAllRecord(r.Context())
-		if err != nil {
-			log.Printf("failed to get the record from chrip table %s", err)
-			response.Error(w, 500, "Something went wrong")
-			return
-		}
-		chirps = chirpsList
-
-	}
-
-	for _, chirp := range chirps {
-		items = append(items,
-			Chirp{
-				ID:        chirp.ID,
-				CreatedAt: chirp.CreatedAt,
-				UpdatedAt: chirp.UpdatedAt,
-				Body:      chirp.Body,
-				UserID:    chirp.UserID,
-			})
-	}
-	response.JSON(w, 200, items)
-}
-
-func ValidateHandle(w http.ResponseWriter, r *http.Request) {
-	type parameters struct {
-		Body string `json:"body"`
-	}
-
-	decoder := json.NewDecoder(r.Body)
-	params := parameters{}
-	err := decoder.Decode(&params)
-	if err != nil {
-		log.Printf("Error decoding the parameters: %s", err)
-		response.Error(w, 500, "Something went wrong")
-		return
-	}
-	if len(params.Body) > 140 {
-		log.Printf("Length of the body params: %d", len(params.Body))
-		response.Error(w, 400, "Chirpy is too long")
-		return
-	}
-
-	payload := returnVals{
-		Body: replaceAsterids(params.Body),
-	}
-
-	response.JSON(w, 200, payload)
-}
-
-func (cfg *apiConfig) UserHandle(w http.ResponseWriter, r *http.Request) {
-	type parameters struct {
-		Name     string `json:"Name"`
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	decoder := json.NewDecoder(r.Body)
-	params := parameters{}
-	err := decoder.Decode(&params)
-	if err != nil {
-		log.Printf("Error decoding the paramters %s", err)
-		response.Error(w, 400, "Invalid json fields")
-		return
-	}
-	hashpassword, err := auth.HashPassword(params.Password)
-	if err != nil {
-		log.Printf("Error hashing the password %s", err)
-		response.Error(w, 500, "Something went wrong")
-		return
-	}
-	payload := struct {
-		Name     string
-		Email    string
-		Password string
-	}{
-		Name:     params.Name,
-		Email:    params.Email,
-		Password: hashpassword,
-	}
-	user, err := cfg.queries.CreateUser(r.Context(), database.CreateUserParams(payload))
-	if err != nil {
-		log.Printf("Error creating the user:%s", err)
-		response.Error(w, 500, "Something went wrong")
-		return
-	}
-	respondUser := User{
-		ID:        user.ID,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-		Email:     user.Email,
-		IsRED:     user.IsChirpyRed.Bool,
-	}
-
-	response.JSON(w, 200, respondUser)
-}
-
-func (cfg *apiConfig) UserResetHandle(w http.ResponseWriter, r *http.Request) {
-	if cfg.platform != "dev" {
-		response.Error(w, 403, "Forbidden")
-		return
-	}
-	err := cfg.queries.DeleteUser(r.Context())
-	if err != nil {
-		log.Printf("failed to delete all users %s", err)
-		response.Error(w, 500, "Something went wrong")
-		return
-	}
-
-	respondStruct := struct {
-		Msg string `json:"msg"`
-	}{
-		Msg: "Successfully deleted",
-	}
-	response.JSON(w, 200, respondStruct)
-}
-
-func (cfg *apiConfig) ChirpHandle(w http.ResponseWriter, r *http.Request) {
-	type paramters struct {
-		Body string `json:"body"`
-	}
-	decoder := json.NewDecoder(r.Body)
-	params := paramters{}
-	err := decoder.Decode(&params)
-	if err != nil {
-		log.Printf("failed to decode the parameters %s", err)
-		response.Error(w, 500, "Something went wrong")
-		return
-	}
-	token, err := auth.GetBearerToken(r.Header)
-	if err != nil {
-		response.Error(w, 401, "The user is not authenticated")
-		return
-	}
-	userID, err := auth.ValidateJWT(token, cfg.secret)
-	if err != nil {
-		response.Error(w, 401, "The user is not authorized")
-		return
-	}
-
-	payload := struct {
-		Body   string    `json:"body"`
-		UserID uuid.UUID `json:"user_id"`
-	}{
-		Body:   params.Body,
-		UserID: userID,
-	}
-	chirp, err := cfg.queries.CreateRecord(r.Context(), database.CreateRecordParams(payload))
-	if err != nil {
-		log.Printf("failed to create the record %s", err)
-		response.Error(w, 500, "Something went wrong")
-		return
-	}
-	respondChirp := Chirp{
-		ID:        chirp.ID,
-		CreatedAt: chirp.CreatedAt,
-		UpdatedAt: chirp.UpdatedAt,
-		Body:      chirp.Body,
-		UserID:    chirp.UserID,
-	}
-
-	response.JSON(w, 200, respondChirp)
-}
-
-// func GetAccessTokenAndRefreshToken(r *http.Request, userID uuid.UUID, cfg *apiConfig) (string, string, error) {
-// 	expireIn := 60 * time.Minute
-// 	accessToken, err := auth.MakeJWT(userID, cfg.secret, expireIn)
-// 	if err != nil {
-// 		log.Printf("failed to make accessToken %s", err)
-// 		return "", "", err
-// 	}
-// 	refreshToken, err := auth.MakeRefreshToken()
-// 	if err != nil {
-// 		log.Printf("failed to make a refreshToken %s", err)
-// 		return "", "", err
-// 	}
-// 	refreshTokenExpireDate := 30 * (24 * time.Hour)
-// 	_, err = cfg.queries.CreateARefreshToken(r.Context(), database.CreateARefreshTokenParams{
-// 		Token:    refreshToken,
-// 		UserID:   userID,
-// 		ExpireAt: time.Now().Add(refreshTokenExpireDate),
-// 	})
-// 	if err != nil {
-// 		log.Printf("failed to insert into db #%s#", err)
-// 		return "", "", err
-// 	}
-
-// 	return accessToken, refreshToken, nil
-
-// }
-
-func (cfg *apiConfig) GetChirpWithIDHandle(w http.ResponseWriter, r *http.Request) {
-	stringIDParam := r.PathValue("chirp_id")
-	uuidParam, err := uuid.Parse(stringIDParam)
-	if err != nil {
-		log.Printf("failed to get the id from url %s", err)
-		response.Error(w, 400, "Invalid id")
-		return
-	}
-	chirp, err := cfg.queries.GetRecordByID(r.Context(), uuidParam)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			response.Error(w, 404, "Cannot find the matching record")
-			return
-		}
-		log.Printf("failed to get the id from db %s", err)
-		response.Error(w, 500, "Something went wrong")
-		return
-	}
-	response.JSON(w, 200, chirp)
-}
-
-func (cfg *apiConfig) ChirpDeleteHandle(w http.ResponseWriter, r *http.Request) {
-	stringIDParam := r.PathValue("chirpID")
-	uuidChirp, err := uuid.Parse(stringIDParam)
-	if err != nil {
-		response.Error(w, 400, "invalid id")
-		return
-	}
-	accessToken, err := auth.GetBearerToken(r.Header)
-	if err != nil {
-		response.Error(w, 401, "Invalid token")
-		return
-	}
-
-	userID, err := auth.ValidateJWT(accessToken, cfg.secret)
-	if err != nil {
-		response.Error(w, 401, "Invalid token")
-		return
-	}
-
-	chirp, err := cfg.queries.GetRecordByID(r.Context(), uuidChirp)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			response.Error(w, 404, "Cannot find the matching chirp")
-			return
-		}
-		log.Printf("failed to get the record from chirp #%s#", err)
-		response.Error(w, 500, "Something went wrong")
-		return
-	}
-	if userID != chirp.UserID {
-		response.Error(w, 403, "Forbidden")
-		return
-	}
-	err = cfg.queries.DeleteRecordByID(r.Context(), uuidChirp)
-	if err != nil {
-		log.Printf("failed to delete the chirp #%s#", err)
-		response.Error(w, 500, "Something went wrong")
-		return
-	}
-	w.WriteHeader(204)
-}
-
-// need to fix this
-func (cfg *apiConfig) UserPutHandle(w http.ResponseWriter, r *http.Request) {
-	type parameters struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	decoder := json.NewDecoder(r.Body)
-	params := &parameters{}
-	err := decoder.Decode(params)
-	if err != nil {
-		response.Error(w, 400, "Invalid parameters")
-		return
-	}
-
-	accessToken, err := auth.GetBearerToken(r.Header)
-	if err != nil {
-		response.Error(w, 401, "Invalid token")
-		return
-	}
-	userID, err := auth.ValidateJWT(accessToken, cfg.secret)
-	if err != nil {
-		log.Printf("failed to validate jwt #%s#", err)
-		response.Error(w, 401, "Invalid token")
-		return
-
-	}
-	userInfo, err := cfg.queries.GetUserInfoByID(r.Context(), userID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			response.Error(w, 404, "User not found")
-			return
-		}
-		response.Error(w, 500, "Something went wrong")
-		return
-	}
-	if userInfo.Email != params.Email {
-		response.Error(w, 401, "Unauthorized")
-		return
-	}
-	hashPassword, err := auth.HashPassword(params.Password)
-	if err != nil {
-		log.Printf("hashPassword function doesn't work #%s#", err)
-		response.Error(w, 500, "Something went wrong")
-		return
-	}
-	err = cfg.queries.UpdatePassword(r.Context(), database.UpdatePasswordParams{
-		Password: hashPassword,
-		ID:       userID,
-	})
-	if err != nil {
-		log.Printf("failed to update the password #%s#", err)
-		response.Error(w, 500, "Something went wrong")
-		return
-	}
-
-	user, err := cfg.queries.GetUserInfoByID(r.Context(), userID)
-	if err != nil {
-		log.Printf("the GetUserInfoByID funciton isn't working #%s#", err)
-		response.Error(w, 500, "Something went wrong")
-		return
-	}
-	response.JSON(w, 200, User{
-		ID:        user.ID,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-
-		Email: user.Email,
-		IsRED: user.IsChirpyRed.Bool,
-	})
-}
-
-func (cfg *apiConfig) WebHookHandle(w http.ResponseWriter, r *http.Request) {
-	type parameters struct {
-		Event string `json:"event"`
-		Data  struct {
-			UserID string `json:"user_id"`
-		} `json:"data"`
-	}
-
-	decoder := json.NewDecoder(r.Body)
-	params := &parameters{}
-	err := decoder.Decode(params)
-	if err != nil {
-		response.Error(w, 400, "Invalid body")
-		return
-	}
-	if params.Event != "user.upgraded" {
-		w.WriteHeader(204)
-		return
-	}
-	userUUID, err := uuid.Parse(params.Data.UserID)
-	if err != nil {
-		response.Error(w, 400, "Invalid user id")
-		return
-	}
-
-	key, err := auth.GetAPIKEY(r.Header)
-	if err != nil {
-		response.Error(w, 401, "Invalid apiKey")
-		return
-	}
-	if key != cfg.polkaKey {
-		response.Error(w, 401, "ApiKey doesn't match")
-		return
-	}
-
-	result, err := cfg.queries.UpdateIsRedById(r.Context(), userUUID)
-	if err != nil {
-		log.Printf("failed to update the user is_red #%s#", err)
-		response.Error(w, 500, "Internal server error")
-		return
-	}
-	if rows := result.RowsAffected(); rows == 0 {
-		response.Error(w, 404, "Not found user")
-		return
-	}
-	w.WriteHeader(204)
-}
-
-// func (cfg *apiConfig) SwitchProtocol(w http.ResponseWriter, r *http.Request) {
-// 	chatID := r.URL.Query().Get("chatID")
-// 	if chatID == "" {
-// 		respondWithError(w, 400, "invalid chatID")
-// 		return
-// 	}
-
-// }
 func main() {
 	err := godotenv.Load("../.env")
 	if err != nil {
@@ -586,8 +48,7 @@ func main() {
 	ctx := context.Background()
 	dURL := os.Getenv("DB_URL")
 	platform := os.Getenv("PLATFORM")
-	secret := os.Getenv("SECRET")
-	polkaKey := os.Getenv("POLKA_KEY")
+	Secret := os.Getenv("SECRET")
 	redisAddr := os.Getenv("REDIS_ADDR")
 	redisUsr := os.Getenv("REDIS_USR")
 	redisPass := os.Getenv("REDIS_PASS")
@@ -595,15 +56,12 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed connection to the db ")
 	}
-	dbQueries := database.New(db)
+	queries := database.New(db)
 	defer db.Close()
-	apicfg := apiConfig{queries: dbQueries, platform: platform, secret: secret, polkaKey: polkaKey}
-	mux := http.NewServeMux()
-	handlerChain := apicfg.middlewareMeticsInc(http.FileServer(http.Dir("./")))
-	finalHanlder := http.StripPrefix("/app/", handlerChain)
-	assetChain := apicfg.middlewareMeticsInc(http.FileServer(http.Dir("./assets/")))
-	assetHandler := http.StripPrefix("/app/assets/", assetChain)
+	// initiate Logger first
 
+	apicfg := setup.InitApiConfig(queries, platform, Secret)
+	mux := http.NewServeMux()
 	// init customMq queue
 	mq := mq.NewMainMQ(&map[string]chan *mq.Channel{}, 10)
 	// init hub
@@ -617,10 +75,10 @@ func main() {
 	}
 
 	// Create Repositories
-	userRepo := users.NewUserRepo(dbQueries)
-	authRepo := authClient.NewAuthRepo(dbQueries)
-	chatRepo := chat.NewChatRepo(dbQueries)
-	groupRepo := groups.NewGroupRepo(dbQueries)
+	userRepo := users.NewUserRepo(apicfg.Queries)
+	authRepo := authClient.NewAuthRepo(apicfg.Queries)
+	chatRepo := chat.NewChatRepo(apicfg.Queries)
+	groupRepo := groups.NewGroupRepo(apicfg.Queries)
 	// set up group cache
 	groupCache := groups.NewGroupCache(groupRepo)
 	go groupCache.Load()
@@ -628,163 +86,100 @@ func main() {
 	userCache := users.NewUserCache(userRepo)
 	go userCache.Load()
 
-	// initiate logger first
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-
 	rediscache := rediscache.NewRedisCacheImpl(cacheClient)
-	chatCache := chat.NewChatCache(rediscache, chatRepo, logger)
-	ctxForCache, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	go func() {
-		defer cancel()
-		chatCache.LoadMessagesForStartUp(ctxForCache)
-	}()
+	chatCache := chat.NewChatCache(rediscache, chatRepo, &apicfg.Logger)
+	go chatCache.LoadMessagesForStartUp()
 	configCache := users.NewConfigCache(userRepo)
 
 	// Create Services
-	userService := users.NewUserService(userRepo, userCache, mq, logger, hub, configCache)
-	authService := authClient.NewAuthService(userRepo, authRepo, apicfg.secret, logger)
-	chatService := chat.NewChatService(chatRepo, hub, mq, chatCache, groupCache, logger)
-	groupService := groups.NewGroupService(groupRepo, hub, mq, groupCache, logger)
+	userService := users.NewUserService(userRepo, userCache, mq, &apicfg.Logger, hub, configCache)
+	authService := authClient.NewAuthService(userRepo, authRepo, apicfg.Secret, &apicfg.Logger)
+	chatService := chat.NewChatService(chatRepo, hub, mq, chatCache, groupCache, &apicfg.Logger)
+	groupService := groups.NewGroupService(groupRepo, hub, mq, groupCache, &apicfg.Logger)
 
 	// Create Hanlders
 	userHandler := users.NewUserHandler(userService)
 	authHandler := authClient.NewAuthHandler(authService)
-	chatHandler := chat.NewChatHandler(chatService, logger)
+	chatHandler := chat.NewChatHandler(chatService, &apicfg.Logger)
 	groupHandler := groups.NewGroupHandler(groupService)
-
-	// Rate limiters for friend endpoints
-	addFriendLimiter := ratelimit.NewRateLimiter(10, time.Minute)
-	confirmFriendLimiter := ratelimit.NewRateLimiter(30, time.Minute)
-	deleteFriendLimiter := ratelimit.NewRateLimiter(30, time.Minute)
-	searchUserLimiter := ratelimit.NewRateLimiter(20, time.Minute)
-	// startup workers for each event
-	// run the message queue
 
 	// right now the topic name for job are hand coded should change that later
 	go mq.Run()
+	// set up jobs consumer for userService
+	setup.RunJobsForUsers(mq, userService)
+	// this has to move somewhere
+	// need to fix the magic numbers and hardcoded job
 	go mq.ListeningForTheChannels("createGroup", 100, groupService.StartWorkerForCreateGroup)
 	//	go mq.ListeningForTheChannels("addCreator", 100, groupService.StartWorkerForCreateGroupLeader)
 	go mq.ListeningForTheChannels("addMemberList", 100, groupService.StartWorkerForAddMember)
 	go mq.ListeningForTheChannels("addMember", 100, groupService.StartWorkerForAddMemberList)
 	go mq.ListeningForTheChannels("removeGroupMember", 100, groupService.StartWorkerForLeaveMember)
-	go mq.ListeningForTheChannels(users.SendRequest, 100, userService.StartWorkerForAddFri)
-	go mq.ListeningForTheChannels(users.ConfirmFriendReq, 100, userService.StartWorkerForConfirmFri)
-	go mq.ListeningForTheChannels(users.DeleteFriReq, 100, userService.StartWorkerForDeleteReq)
-	go mq.ListeningForTheChannels(users.CancelReq, 100, userService.StartWorkerForCancelReq)
-
+	// jobs for users moved
 	go mq.ListeningForTheChannels(chatmodel.PrivateMessageConstant, 1000, chatService.StartWorkerForAddPrivateMessage)
 	go mq.ListeningForTheChannels(chatmodel.PublicMessageConstant, 1000, chatService.StartWorkerForAddPublicMessage)
-	go mq.ListeningForTheChannels("UpdateUserCache", 100, userService.StartWorkerForUpdateUserCache)
-	go mq.ListeningForTheChannels("SavePosition", 100, userService.StartWorkerForSaveConfig)
+	go mq.ListeningForTheChannels("JobForSeen", 100, chatService.StartWorkerForUpdateSeen)
 
-	// Main app route
-	mux.Handle("/app/", middleWareLog(finalHanlder))
-	// Asset route
-	mux.Handle("/app/assets/", middleWareLog(assetHandler))
-
-	// Get Route
-	mux.HandleFunc("GET /admin/metrics", apicfg.HitHandle)
-	mux.HandleFunc("GET /api/healthz", APIHandle)
-	mux.HandleFunc("GET /api/chirps", apicfg.GetChirpHandle)
-
-	// Get route with url params
-	mux.HandleFunc("GET /api/chirps/{chirp_id}", apicfg.GetChirpWithIDHandle)
+	setup.SetUpUserRoutes(mux, apicfg, *userHandler)
+	// Users routes moved
 
 	// POST route
 	mux.HandleFunc("POST /admin/metrics/reset", apicfg.ResetHandle)
-	mux.HandleFunc("POST /api/chirps", apicfg.ChirpHandle)
-	mux.Handle("POST /api/users", middleware.MiddleWareLog(userHandler.Register))
 	mux.HandleFunc("POST /admin/reset", apicfg.UserResetHandle)
 	mux.Handle("POST /api/login", middleware.MiddleWareLog(authHandler.Login))
-	mux.HandleFunc("POST /api/refresh", authHandler.RefreshToken)
+	mux.Handle("POST /api/refresh", middleware.MiddleWareLog(authHandler.RefreshToken))
 	mux.HandleFunc("POST /api/revoke", authHandler.Revoke)
 
-	//NOTE FOR webhooks
-	/*"Client must request with json of '{
-						  "event": "user.upgraded",
-						  "data": {
-							"user_id": "3311741c-680c-4546-99f3-fc9efac2036c"
-						  }
-	}'"*/
-	mux.HandleFunc("POST /api/polka/webhooks", apicfg.WebHookHandle)
-
-	// PUT route
-	// mux.Handle("PUT /api/users", middleware.AuthMiddleWare(userHandler.UpdateUserInfo, apicfg.secret))
-
-	// UpdatePassword route
-	// uses middleware to parse the userID
-	mux.Handle("POST /api/users/password", middleware.MiddleWareLog(middleware.AuthMiddleWare(userHandler.UpdatePassword, apicfg.secret, logger)))
-
-	// DELETE route
-	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apicfg.ChirpDeleteHandle)
+	// //NOTE FOR webhooks
+	// /*"Client must request with json of '{
+	// 					  "event": "user.upgraded",
+	// 					  "data": {
+	// 						"user_id": "3311741c-680c-4546-99f3-fc9efac2036c"
+	// 					  }
+	// }'"*/
+	// mux.HandleFunc("POST /api/polka/webhooks", apicfg.WebHookHandle)
 
 	// Maybe endpoint for chat
-	// WARN: why is this method get maybe consider smth
-	mux.Handle("GET /api/chats/ws", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.ServeWs, apicfg.secret, logger)))
+	mux.Handle("GET /api/chats/ws", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.ServeWs, apicfg.Secret, &apicfg.Logger)))
 
 	// create a group
-	mux.Handle("POST /api/chats/groups", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.CreateGroup, apicfg.secret, logger)))
+	mux.Handle("POST /api/chats/groups", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.CreateGroup, apicfg.Secret, &apicfg.Logger)))
 
-	// need to update these dummy function
 	// join group
-	mux.Handle("POST /api/chats/groups/{group_id}/members", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.JoinGroup, apicfg.secret, logger)))
+	mux.Handle("POST /api/chats/groups/{group_id}/members", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.JoinGroup, apicfg.Secret, &apicfg.Logger)))
 
 	// leave group
-	mux.Handle("DELETE /api/chats/groups/{group_id}/members", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.LeaveGroup, apicfg.secret, logger)))
+	mux.Handle("DELETE /api/chats/groups/{group_id}/members", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.LeaveGroup, apicfg.Secret, &apicfg.Logger)))
 
 	// TODO::still have to write this one
 	// kick or add the user from or to the group
-	// mux.Handle("PATCH /api/chats/groups/{group_id}/members", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.CreateGroup, apicfg.secret, logger)))
+	// mux.Handle("PATCH /api/chats/groups/{group_id}/members", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.CreateGroup, apicfg.Secret, Logger)))
 	//
 	// TODO:and this one
 	// change group setting or anything
 	// mux.HandleFunc("PATCH /api/chats/groups/{group_id}", groupHandler.CreateGroup)
 
 	// NOTE:: i should really consider making the server as my own config and graceful shutdown
-
-	// ednpoint for add friend
-	mux.Handle("POST /api/friends/requests",
-		middleware.MiddleWareLog(
-			middleware.AuthMiddleWare(
-				ratelimit.RateLimitMiddleware(addFriendLimiter, userHandler.AddFriend, logger),
-				apicfg.secret, logger)))
-
-	mux.Handle("GET /api/friends/requests", middleware.MiddleWareLog(middleware.AuthMiddleWare(userHandler.GetPendingList, apicfg.secret, logger)))
-	mux.Handle("PUT /api/friends/requests/{request_id}/",
-		middleware.MiddleWareLog(
-			middleware.AuthMiddleWare(
-				ratelimit.RateLimitMiddleware(confirmFriendLimiter, userHandler.UpdateReq, logger),
-				apicfg.secret, logger)))
-	mux.Handle("DELETE /api/friends/requests/{request_id}/",
-		middleware.MiddleWareLog(
-			middleware.AuthMiddleWare(
-				ratelimit.RateLimitMiddleware(deleteFriendLimiter, userHandler.DeleteFriReq, logger),
-				apicfg.secret, logger)))
-	mux.Handle("GET /api/friends", middleware.MiddleWareLog(middleware.AuthMiddleWare(
-		userHandler.GetFriendList, apicfg.secret, logger)))
-
+	//
 	// endpoint for send message
 	// maybe need to consider about making the chatID
-	mux.Handle("POST /api/chats/message", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.SendMessage, apicfg.secret, logger)))
+	// this is really wrong but i don't wanna fix it anymore
+	// cuz what is the point of asking the chatid(toID) in body
+	// should be like those get endpoint
+	// this end point should be like this
+	// for private, POST /api/chats/{otherUser_id}/messages
+	// for public, POST /api/chats/groups/{group_id}/messages
+	// for private ,PATCH /api/chats/{otherUser_id}/messages (the service should be called based on the type like "edit","seen" //cuz this route is for both )
+	// for group ,PATH /api/chats/groups/{group_id}/messages (this should use for maybe edit )
+	mux.Handle("POST /api/chats/message", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.SendMessage, apicfg.Secret, &apicfg.Logger)))
+	handlerWithCORS := corsMiddleware(mux)
 	server := http.Server{
 		Addr:    Port,
-		Handler: mux,
+		Handler: handlerWithCORS,
 	}
 
-	mux.Handle("GET /api/chat/{otherUser_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMesagesForPrivateID, apicfg.secret, logger)))
-	mux.Handle("GET /api/chat/groups/{group_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMessagesForPublicID, apicfg.secret, logger)))
-	mux.Handle("GET /api/users/search",
-		middleware.MiddleWareLog(
-			middleware.AuthMiddleWare(
-				ratelimit.RateLimitMiddleware(searchUserLimiter, userHandler.SearchUser, logger),
-				apicfg.secret, logger)))
-
-	mux.Handle("POST /api/users/configs", middleware.MiddleWareLog(middleware.AuthMiddleWare(
-		userHandler.SaveConfig, apicfg.secret, logger)))
-	mux.Handle("GET /api/users/configs", middleware.MiddleWareLog(middleware.AuthMiddleWare(
-		userHandler.GetConfig, apicfg.secret, logger)))
+	mux.Handle("GET /api/chat/{otherUser_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMesagesForPrivateID, apicfg.Secret, &apicfg.Logger)))
+	mux.Handle("POST /api/chat/{otherUser_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.UpdateSeen, apicfg.Secret, &apicfg.Logger)))
+	mux.Handle("GET /api/chat/groups/{group_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMessagesForPublicID, apicfg.Secret, &apicfg.Logger)))
 	log.Printf("The server is running on %q\n", Port)
 	log.Fatal(server.ListenAndServe())
 }

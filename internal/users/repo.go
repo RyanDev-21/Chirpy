@@ -56,6 +56,7 @@ type userRepo struct {
 func toUserFormat(dbUser database.User) *User {
 	return &User{
 		ID:        dbUser.ID,
+		Name:      dbUser.Name,
 		CreatedAt: dbUser.CreatedAt,
 		UpdatedAt: dbUser.UpdatedAt,
 		Email:     dbUser.Email,
@@ -278,16 +279,13 @@ func (r *userRepo) SaveEleConfig(userID uuid.UUID, eleconfigs *[]ElementCustom) 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Millisecond)
 	defer cancel()
 	var byteArr []byte
-	for _, v := range *eleconfigs {
-		bytes, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
-		byteArr = append(byteArr, bytes...)
+	byteArr, err := json.Marshal(eleconfigs)
+	if err != nil {
+		return err
 	}
-	_, err := r.queries.SavePosition(ctx, database.SavePositionParams{
-		UserID: userID,
-		Pref:   byteArr,
+	err = r.queries.SavePosition(ctx, database.SavePositionParams{
+		UserID:  userID,
+		Column2: byteArr,
 	})
 	if err != nil {
 		return err

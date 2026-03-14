@@ -12,23 +12,49 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addLastSeenMessage = `-- name: AddLastSeenMessage :one
+INSERT INTO seen_messages(chat_id,message_id,seen_id)
+VALUES ($1,$2,$3) ON CONFLICT(seen_id) DO UPDATE SET message_id = $1 RETURNING id, chat_id, message_id, seen_id, updated_time
+`
+
+type AddLastSeenMessageParams struct {
+	ChatID    string
+	MessageID uuid.UUID
+	SeenID    pgtype.UUID
+}
+
+func (q *Queries) AddLastSeenMessage(ctx context.Context, arg AddLastSeenMessageParams) (SeenMessage, error) {
+	row := q.db.QueryRow(ctx, addLastSeenMessage, arg.ChatID, arg.MessageID, arg.SeenID)
+	var i SeenMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatID,
+		&i.MessageID,
+		&i.SeenID,
+		&i.UpdatedTime,
+	)
+	return i, err
+}
+
 const addMessagePrivate = `-- name: AddMessagePrivate :one
-INSERT INTO message(id,content,parentId,from_id,to_id)VALUES(
+INSERT INTO message(id,content,parentId,from_id,to_id,created_at)VALUES(
     $1,
     $2,
     $3,
     $4,
-    $5
+    $5,
+    $6
 )
 RETURNING id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at
 `
 
 type AddMessagePrivateParams struct {
-	ID       uuid.UUID
-	Content  pgtype.Text
-	Parentid pgtype.UUID
-	FromID   pgtype.UUID
-	ToID     pgtype.UUID
+	ID        uuid.UUID
+	Content   pgtype.Text
+	Parentid  pgtype.UUID
+	FromID    pgtype.UUID
+	ToID      pgtype.UUID
+	CreatedAt pgtype.Timestamp
 }
 
 func (q *Queries) AddMessagePrivate(ctx context.Context, arg AddMessagePrivateParams) (Message, error) {
@@ -38,6 +64,7 @@ func (q *Queries) AddMessagePrivate(ctx context.Context, arg AddMessagePrivatePa
 		arg.Parentid,
 		arg.FromID,
 		arg.ToID,
+		arg.CreatedAt,
 	)
 	var i Message
 	err := row.Scan(
@@ -54,23 +81,25 @@ func (q *Queries) AddMessagePrivate(ctx context.Context, arg AddMessagePrivatePa
 }
 
 const addMessagePublic = `-- name: AddMessagePublic :one
-INSERT INTO GroupMessage(id,content,group_id,from_id,parent_id)
+INSERT INTO GroupMessage(id,content,group_id,from_id,parent_id,created_at)
 VALUES(
     $1,
     $2,
     $3,
     $4,
-    $5
+    $5, 
+    $6
 )
 RETURNING id, content, group_id, from_id, parent_id, created_at, updated_at, deleted_at
 `
 
 type AddMessagePublicParams struct {
-	ID       uuid.UUID
-	Content  pgtype.Text
-	GroupID  pgtype.UUID
-	FromID   pgtype.UUID
-	ParentID pgtype.UUID
+	ID        uuid.UUID
+	Content   pgtype.Text
+	GroupID   pgtype.UUID
+	FromID    pgtype.UUID
+	ParentID  pgtype.UUID
+	CreatedAt pgtype.Timestamp
 }
 
 func (q *Queries) AddMessagePublic(ctx context.Context, arg AddMessagePublicParams) (Groupmessage, error) {
@@ -80,6 +109,7 @@ func (q *Queries) AddMessagePublic(ctx context.Context, arg AddMessagePublicPara
 		arg.GroupID,
 		arg.FromID,
 		arg.ParentID,
+		arg.CreatedAt,
 	)
 	var i Groupmessage
 	err := row.Scan(
@@ -172,6 +202,45 @@ type GetMessagesForPrivateParams struct {
 
 func (q *Queries) GetMessagesForPrivate(ctx context.Context, arg GetMessagesForPrivateParams) ([]Message, error) {
 	rows, err := q.db.Query(ctx, getMessagesForPrivate, arg.FromID, arg.ToID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.Parentid,
+			&i.FromID,
+			&i.ToID,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getMessagesForPrivateWithTime = `-- name: GetMessagesForPrivateWithTime :many
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at FROM message WHERE (from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id= $1) AND created_at >$3
+`
+
+type GetMessagesForPrivateWithTimeParams struct {
+	FromID    pgtype.UUID
+	ToID      pgtype.UUID
+	CreatedAt pgtype.Timestamp
+}
+
+func (q *Queries) GetMessagesForPrivateWithTime(ctx context.Context, arg GetMessagesForPrivateWithTimeParams) ([]Message, error) {
+	rows, err := q.db.Query(ctx, getMessagesForPrivateWithTime, arg.FromID, arg.ToID, arg.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

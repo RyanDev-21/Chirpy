@@ -29,8 +29,11 @@ func AuthMiddleWare(next http.HandlerFunc, secret string, logger *slog.Logger) h
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, err := auth.GetBearerToken(r.Header)
 		if err != nil {
-			response.Error(w, 400, "token is required")
-			return
+			token = r.URL.Query().Get("token")
+			if token == "" {
+				response.Error(w, 400, "token is required")
+				return
+			}
 		}
 
 		userID, err := auth.ValidateJWT(token, secret)
