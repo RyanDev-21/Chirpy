@@ -73,6 +73,14 @@ type RefreshToken struct {
 	RevokedAt pgtype.Timestamp
 }
 
+type SeenMessage struct {
+	ID          uuid.UUID
+	ChatID      string
+	MessageID   uuid.UUID
+	SeenID      pgtype.UUID
+	UpdatedTime pgtype.Timestamp
+}
+
 type User struct {
 	ID          uuid.UUID
 	CreatedAt   time.Time

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"time"
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
@@ -28,7 +29,13 @@ func getPayload(userID, msgID uuid.UUID, msg *chatmodel.InCommingMessage) *chatm
 		ID: msgID,
 		MsgInfo: &chatmodel.MessageCache{
 			FromID: userID,
-			Msg:    *msg,
+			Msg: chatmodel.InCommingMessage{
+				ToID:     msg.ToID,
+				Content:  msg.Content,
+				ParendID: msg.ParendID,
+				Type:     msg.Type,	
+			},
+			CreatedAt: time.Now().UTC(),
 		},
 	}
 }
@@ -37,7 +44,7 @@ func getPayload(userID, msgID uuid.UUID, msg *chatmodel.InCommingMessage) *chatm
 // this one needs a parseID as the chatID need to generate and stuff
 func (s *chatService) handlePrivateMsg(ctx context.Context, userID, parseID uuid.UUID, msg *chatmodel.MessageMetaData) error {
 	key := getChatKey(userID, parseID)
-	redisKey := s.rediscache.generateRedisKey(userID, key)
+	redisKey := s.rediscache.generateRedisKey(key, "private")
 	err := s.rediscache.addMessage(ctx, redisKey, msg)
 	if err != nil {
 		s.logger.Error("failed to store message into cache", "err", err)
@@ -50,7 +57,7 @@ func (s *chatService) handlePrivateMsg(ctx context.Context, userID, parseID uuid
 // gen msgID and store it in cache and group db
 func (s *chatService) handlePublicMsg(ctx context.Context, userID uuid.UUID, msg *chatmodel.MessageMetaData) error {
 	chatID := msg.MsgInfo.Msg.ToID
-	key := s.rediscache.generateRedisKey(userID, chatID)
+	key := s.rediscache.generateRedisKey(chatID, "public")
 	err := s.rediscache.addMessage(ctx, key, msg)
 	if err != nil {
 		s.logger.Error("failed to store group message into cache", "err", err)
@@ -80,6 +87,8 @@ func convertFromMessageToMeta(msg database.Message) *chatmodel.MessageMetaData {
 				ParendID: msg.Parentid.String(),
 				Type:     "private",
 			},
+			CreatedAt: msg.CreatedAt.Time.UTC(),
+
 		},
 	}
 }
@@ -95,7 +104,9 @@ func convertFromGroupMessageToMeta(msg database.Groupmessage) *chatmodel.Message
 				ParendID: msg.ParentID.String(),
 				Type:     "public",
 			},
+			CreatedAt: msg.CreatedAt.Time.UTC(),
 		},
+		
 	}
 }
 
@@ -107,14 +118,16 @@ func convertToMsgMetaList[T any](msgList *[]T) (*chatmodel.MessageListRes, error
 		case database.Message:
 			msgMetaData := convertFromMessageToMeta(value)
 			payload = &chatmodel.MessageMetaDataRes{
-				ID:      msgMetaData.ID,
-				MsgInfo: *msgMetaData.MsgInfo,
+				ID:        msgMetaData.ID,
+				MsgInfo:   *msgMetaData.MsgInfo,
+				CreatedAt: msgMetaData.MsgInfo.CreatedAt,
 			}
 		case database.Groupmessage:
 			msgMetaData := convertFromGroupMessageToMeta(value)
 			payload = &chatmodel.MessageMetaDataRes{
-				ID:      msgMetaData.ID,
-				MsgInfo: *msgMetaData.MsgInfo,
+				ID:        msgMetaData.ID,
+				MsgInfo:   *msgMetaData.MsgInfo,
+				CreatedAt: msgMetaData.MsgInfo.CreatedAt,
 			}
 		default:
 			return nil, errors.New("not supported type")
