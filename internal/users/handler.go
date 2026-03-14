@@ -142,6 +142,10 @@ func (h *UserHandler) AddFriend(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, 400, "invalid request")
 			return
 		}
+		if err == chatmodel.ErrNotConnectedToWs {
+			response.Error(w, 403, "not connected to ws")
+			return
+		}
 
 		response.Error(w, 500, "internal server error")
 		return
@@ -184,6 +188,10 @@ func (h *UserHandler) UpdateReq(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if err == chatmodel.ErrNoClientFound {
 			response.Error(w, 400, "client is not connect to ws, consider connecting first")
+			return
+		}
+		if err == chatmodel.ErrNotConnectedToWs {
+			response.Error(w, 403, "not connected to ws")
 			return
 		}
 		if err == ErrNoRedFound {

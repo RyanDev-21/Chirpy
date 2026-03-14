@@ -1,6 +1,7 @@
 package chat
 
 import (
+//	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -47,14 +48,16 @@ func (h *chatHandler) GetMesagesForPrivateID(w http.ResponseWriter, r *http.Requ
 		response.Error(w, 401, "unauthorized")
 		return
 	}
-	toID, err := middleware.GetPathValue("id", r)
+	toID, err := middleware.GetPathValue("otherUser_id", r)
 	if err != nil {
 		h.logger.Error("failed to get toID from path", "err", err)
 		response.Error(w, 400, "invalid id")
 		return
+	
 	}
-
-	msgList, err := h.chatService.fetchMessagePrivate(r.Context(), *userID, *toID)
+	sinceStr := r.URL.Query().Get("since")
+	
+	msgList, err := h.chatService.fetchMessagePrivate(r.Context(), *userID, *toID,sinceStr)
 	if err != nil {
 		h.logger.Error("failed to fetch private messages", "err", err)
 		response.Error(w, 500, "internal server error")
@@ -70,7 +73,7 @@ func (h *chatHandler) GetMessagesForPublicID(w http.ResponseWriter, r *http.Requ
 		response.Error(w, 401, "unauthorized")
 		return
 	}
-	toID, err := middleware.GetPathValue("id", r)
+	toID, err := middleware.GetPathValue("group_id", r)
 	if err != nil {
 		h.logger.Error("failed to get groupID from path", "err", err)
 		response.Error(w, 400, "invalid id")
@@ -111,4 +114,40 @@ func (h *chatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.JSON(w, 200, chatmodel.ResponseMessageID{MsgID: *msgID})
+}
+
+func (h *chatHandler)UpdateSeen(w http.ResponseWriter,r *http.Request){
+	userID,err:= middleware.GetContextKey(r.Context(),"user")
+	if err !=nil{
+		response.Error(w,401,"unauthorized")
+		return
+	}
+	toID ,err:= middleware.GetPathValue("otherUser_id",r)
+	if err !=nil{
+		response.Error(w,400,"invalid request")
+		return
+	}
+	//there might be better one than this
+	//i am too tired to rethink
+	body := &chatmodel.PayloadForSeen{}
+	err = encoder.Decode(r,body)
+	if err != nil {
+		h.logger.Error("failed to decode message payload", "err", err)
+		response.Error(w, 400, "invalid parameters")
+		return
+	}
+	payload := &chatmodel.InCommingEventForSeen{
+		ToID: toID.String(),
+		MsgID: body.MsgID,
+	}
+	err= h.chatService.updateLastSeen(r.Context(),*userID,payload)
+	 if err !=nil{
+		if err == chatmodel.ErrNotValidUUID{
+			response.Error(w,400,"invalid request")
+			return
+		}
+		response.Error(w,500,"something went wrong")
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
 }

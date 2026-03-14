@@ -163,11 +163,13 @@ func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, rec
 
 	exist := s.userCache.CheckUserRsWithLable(senderID, "send", recieverID)
 	if exist {
+		s.logger.Info("already exists", "reqID", reqID, "receiverID", recieverID)
 		return nil, ErrReqExist
 	}
 
 	exist = s.userCache.CheckUserFriWithOtherUserID(senderID, recieverID)
 	if exist {
+		s.logger.Info("already friends", "reqID", reqID, "receiverID", recieverID, "senderID", senderID)
 		return nil, ErrReqExist
 	}
 
@@ -237,8 +239,14 @@ func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, rec
 func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.UUID, status string) error {
 	reqIDVal, _ := middleware.GetContextKey(ctx, "request")
 
-	s.logger.Info("confirm friend request started", "reqID", reqIDVal, "fromID", fromID, "reqID", reqID)
+	s.logger.Info("checking the ws connection ...", "reqID", reqIDVal, "fromID", fromID)
+	valid := s.hub.CheckWsConnection(fromID)
+	if !valid {
+		s.logger.Warn("the client is not connected to ws", "reqID", reqIDVal, "fromID", fromID)
+		return chatmodel.ErrNotConnectedToWs
+	}
 
+	s.logger.Info("confirm friend request started", "reqID", reqIDVal, "fromID", fromID, "reqID", reqID)
 	// this gets the opp userID  of the current one
 	toID := s.userCache.GetOtherUserIDByReqID(fromID, reqID, "pending")
 	if toID == nil {
@@ -299,12 +307,6 @@ func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.U
 		},
 		Lable: "friend",
 	})
-	s.logger.Info("checking the ws connection ...", "reqID", reqIDVal, "fromID", fromID)
-	valid := s.hub.CheckWsConnection(fromID)
-	if !valid {
-		s.logger.Warn("the client is not connected to ws", "reqID", reqIDVal, "fromID", fromID)
-		return chatmodel.ErrNotConnectedToWs
-	}
 
 	s.logger.Info("writing into connection", "reqID", reqIDVal, "fromID", fromID)
 	// need to change this to get the infriEvent
@@ -338,7 +340,12 @@ func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.U
 // need to handle the errorr from that PublishWithContext
 func (s *userService) CancelFriReq(ctx context.Context, userID, reqID uuid.UUID) error {
 	reqIDVal, _ := middleware.GetContextKey(ctx, "request")
-
+	s.logger.Info("checking the ws connection ...", "reqID", reqIDVal, "fromID", userID)
+	valid := s.hub.CheckWsConnection(userID)
+	if !valid {
+		s.logger.Warn("the client is not connected to ws", "reqID", reqIDVal, "fromID", userID)
+		return chatmodel.ErrNotConnectedToWs
+	}
 	s.logger.Info("confirm friend request started", "reqID", reqIDVal, "fromID", userID, "reqID", reqID)
 	toID := s.userCache.GetOtherUserIDByReqID(userID, reqID, "pending")
 
@@ -377,12 +384,7 @@ func (s *userService) CancelFriReq(ctx context.Context, userID, reqID uuid.UUID)
 		ReqID:  reqID,
 		Lable:  "send",
 	})
-	s.logger.Info("checking the ws connection ...", "reqID", reqIDVal, "fromID", userID)
-	valid := s.hub.CheckWsConnection(userID)
-	if !valid {
-		s.logger.Warn("the client is not connected to ws", "reqID", reqIDVal, "fromID", userID)
-		return chatmodel.ErrNotConnectedToWs
-	}
+
 	s.logger.Info("writing into connection", "reqID", reqIDVal, "fromID", userID)
 	err := s.hub.WriteIntoConnection(toID.UserID, chatmodel.Event{
 		Event: "DenyFri",
@@ -655,7 +657,7 @@ func (s *userService) GetConfig(ctx context.Context, userID uuid.UUID) (*ConfigL
 			s.logger.Error("failed to get from db", "reqID", reqID, "userID", userID, "error", err)
 			return nil, err
 		}
-		s.logger.Info("trying to update the config to the cache", "reqID", reqID, "userID", userID)
+		s.logger.Info("trying to update the config to the cache", "reqID", reqID, "userID", userID, "configList", res)
 		s.configCache.UpdateConfig(userID, &ConfigList{
 			List: *res,
 		})

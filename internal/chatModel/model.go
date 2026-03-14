@@ -7,6 +7,7 @@ import (
 
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -25,6 +26,25 @@ type Event struct {
 type InCommingEvent struct {
 	Event   string          `json:"event"`
 	Payload json.RawMessage `json:"payload"`
+}
+
+type InCommingEventForSeen struct {
+	ToID  string `json:"to_id,omitempty"`
+	MsgID string `json:"msg_id"`
+}
+
+type PayloadForSeen struct {
+	MsgID string `json:"msg_id"`
+}
+type OutGoingEventForSeen struct {
+	MsgID  string `json:"msg_id"`
+	FromID string `json:"from_id"`
+}
+
+type SeenEvent struct {
+	ToID   string
+	FromID string
+	MsgID  string
 }
 
 // type Event struct {
@@ -58,10 +78,12 @@ type InCommingEventForTyping struct {
 //		Event  string `json:"event"`
 //	}
 type OutGoingMessage struct {
-	Content  string `json:"msg"`
-	ParentID string `json:"parent_id,omitempty"`
-	FromID   string `json:"from_id"`
-	Type     string `json:"type"`
+	ID        string    `json:"id"`
+	Content   string    `json:"msg"`
+	ParentID  string    `json:"parent_id,omitempty"`
+	FromID    string    `json:"from_id"`
+	Type      string    `json:"type"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Message struct {
@@ -83,6 +105,7 @@ type GroupActionInfo struct {
 type MessageCache struct {
 	Msg    InCommingMessage
 	FromID uuid.UUID
+	CreatedAt time.Time
 }
 type MessageList struct {
 	MsgList *[]MessageMetaData
@@ -93,18 +116,27 @@ type MessageListRes struct {
 	MsgList []MessageMetaDataRes `json:"msgList"`
 }
 type MessageMetaData struct {
-	ID      uuid.UUID
-	MsgInfo *MessageCache
+	ID        uuid.UUID
+	MsgInfo   *MessageCache
 }
 
 type MessageMetaDataRes struct {
-	ID      uuid.UUID    `json:"message_id"`
-	MsgInfo MessageCache `json:"message_info"`
+	ID        uuid.UUID    `json:"message_id"`
+	MsgInfo   MessageCache `json:"message_info"`
+	CreatedAt time.Time    `json:"created_at"`
 }
 
 type ResponseMessageID struct {
 	MsgID uuid.UUID `json:"msg_id"`
 }
+
+type JobForSeen struct {
+	ChatID string
+	MsgID  uuid.UUID
+	SeenID uuid.UUID
+}
+
+
 
 // var (
 //
@@ -116,8 +148,11 @@ var (
 	ErrNotAuthorized    = errors.New("not in group")
 	ErrNotValidToID     = errors.New("not valid toID(type uuid)")
 	ErrNotConnectedToWs = errors.New("not connected to ws")
+	ErrNotValidUUID     = errors.New("not valid uuid")
+	ErrNotValidStruct = errors.New("not valid request")
+	ErrNotValidTimeFmt = errors.New("not valit time")
 )
-
+	
 const (
 	PrivateMessageConstant = "addPrivateMessage"
 	PublicMessageConstant  = "addPublicMessage"

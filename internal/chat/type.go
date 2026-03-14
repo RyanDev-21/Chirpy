@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -17,6 +19,13 @@ func GetStringType(val string) *pgtype.Text {
 func GetUUIDType(val any) *pgtype.UUID {
 	return &pgtype.UUID{
 		Bytes: val.(uuid.UUID),
+		Valid: true,
+	}
+}
+
+func GetTimeStampType(val time.Time)pgtype.Timestamp{
+	return pgtype.Timestamp{
+		Time: val,
 		Valid: true,
 	}
 }
