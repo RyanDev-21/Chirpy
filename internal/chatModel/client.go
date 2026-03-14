@@ -87,6 +87,21 @@ func (c *Client) ReadPump() {
 					ToID:   p.ToID,
 				},
 			}
+		case "Seen":
+			var p InCommingEventForSeen
+			if err:= json.Unmarshal(eventMap.Payload,&p);err!=nil{
+				log.Printf("not valid json")
+				continue
+			}
+			c.Hub.Broadcast<-Event{
+				Event: "Seen",
+				Payload:SeenEvent{
+					FromID: c.UserID.String(),
+					ToID: p.ToID,
+					MsgID: p.MsgID,	
+				},
+			}
+			
 		}
 	}
 }
