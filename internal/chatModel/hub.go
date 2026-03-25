@@ -15,9 +15,9 @@ type Hub struct {
 
 	// contains all the users id of the specific chat
 	ChatToUser map[string]map[string]bool
-		
-	Clients    map[string]*Client
-	ClientMux  sync.RWMutex
+
+	Clients   map[string]*Client
+	ClientMux sync.RWMutex
 	// register and unregister are for the connection
 	Register   chan *Client
 	Unregister chan *Client
@@ -40,7 +40,7 @@ func NewHub() *Hub {
 	return &Hub{
 		UsertoChannel: make(map[string]map[string]bool),
 		ChatToUser:    make(map[string]map[string]bool),
-		Broadcast:     make(chan interface{},1000),
+		Broadcast:     make(chan interface{}, 1000),
 		Register:      make(chan *Client),
 		Unregister:    make(chan *Client),
 		Clients:       make(map[string]*Client),
@@ -180,17 +180,16 @@ func (h *Hub) Run() {
 				// 			FromID: inPayload.fromID,
 				// 		},
 				// 	}
-		
-		case SeenEvent:		
+
+			case SeenEvent:
 				payload = Event{
 					Event: eventType.Event,
 					Payload: OutGoingEventForSeen{
 						FromID: inPayload.FromID,
-						MsgID: inPayload.MsgID,
+						MsgID:  inPayload.MsgID,
 					},
-
 				}
-			targetIds  = append(targetIds, inPayload.ToID)
+				targetIds = append(targetIds, inPayload.ToID)
 			}
 			bytes, err := json.Marshal(payload)
 			if err != nil {
@@ -208,21 +207,20 @@ func (h *Hub) broadcast(targetIds []string, bytes []byte) {
 			h.ClientMux.Lock()
 			client, ok := h.Clients[clientID]
 			h.ClientMux.Unlock()
-			if !ok{
+			if !ok {
 				continue
 			}
 			select {
-				case client.Send <- bytes:
-				default:
-			
+			case client.Send <- bytes:
+			default:
+
 				h.ClientMux.Lock()
 				close(h.Clients[clientID].Send)
-					delete(h.Clients, clientID)
+				delete(h.Clients, clientID)
 				h.ClientMux.Unlock()
 			}
-			
-		}
 
+		}
 	}
 }
 
@@ -234,7 +232,6 @@ func (h *Hub) getTarGetIdsForMsg(msgType string, toID uuid.UUID) []string {
 	case "public":
 		log.Printf("userIds list and its chats #%v#", h.ChatToUser[toID.String()])
 		if userIdsInChat, ok := h.ChatToUser[toID.String()]; ok {
-
 			for userID := range userIdsInChat {
 				targetIds = append(targetIds, userID)
 			}
