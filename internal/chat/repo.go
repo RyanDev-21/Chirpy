@@ -18,11 +18,11 @@ type ChatRepo interface {
 	addMessagePublic(payload *database.AddMessagePublicParams) (*database.Groupmessage, error)
 	getMessagesForPrivate(ctx context.Context, fromID, toID uuid.UUID) (*[]database.Message, error)
 
-	getMessagesForPrivateWithTime(ctx context.Context, fromID, toID uuid.UUID,since time.Time) (*[]database.Message, error)
+	getMessagesForPrivateWithTime(ctx context.Context, fromID, toID uuid.UUID, since time.Time) (*[]database.Message, error)
 	getMessagesForPublic(ctx context.Context, toID uuid.UUID) (*[]database.Groupmessage, error)
 	getAllPrivateMessages(ctx context.Context) (*[]database.Message, error)
 	getAllPublicMessages(ctx context.Context) (*[]database.Groupmessage, error)
-	updateLastSeen(chatID string,userID uuid.UUID,msgID uuid.UUID)error
+	updateLastSeen(chatID string, userID uuid.UUID, msgID uuid.UUID) error
 }
 
 func NewChatRepo(queries *database.Queries) ChatRepo {
@@ -56,16 +56,16 @@ func (r *chatRepo) getMessagesForPrivate(ctx context.Context, fromID, toID uuid.
 	return &message, nil
 }
 
-func (r *chatRepo)getMessagesForPrivateWithTime(ctx context.Context, fromID, toID uuid.UUID,since time.Time) (*[]database.Message, error){
-	message,err:=r.queries.GetMessagesForPrivateWithTime(ctx,database.GetMessagesForPrivateWithTimeParams{
-			FromID: *GetUUIDType(fromID),
-			ToID: *GetUUIDType(toID),
-			CreatedAt:GetTimeStampType(since) ,
+func (r *chatRepo) getMessagesForPrivateWithTime(ctx context.Context, fromID, toID uuid.UUID, since time.Time) (*[]database.Message, error) {
+	message, err := r.queries.GetMessagesForPrivateWithTime(ctx, database.GetMessagesForPrivateWithTimeParams{
+		FromID:    *GetUUIDType(fromID),
+		ToID:      *GetUUIDType(toID),
+		CreatedAt: GetTimeStampType(since),
 	})
-	if err !=nil{
-		return nil,err
+	if err != nil {
+		return nil, err
 	}
-	return &message,nil
+	return &message, nil
 }
 
 func (r *chatRepo) getMessagesForPublic(ctx context.Context, toID uuid.UUID) (*[]database.Groupmessage, error) {
@@ -86,13 +86,13 @@ func (r *chatRepo) getAllPublicMessages(ctx context.Context) (*[]database.Groupm
 	return &msgs, err
 }
 
-func (r *chatRepo)updateLastSeen(chatID string,userID uuid.UUID,msgID uuid.UUID)error{
-	context,cancel:= context.WithTimeout(context.Background(),1*time.Second)
+func (r *chatRepo) updateLastSeen(chatID string, userID uuid.UUID, msgID uuid.UUID) error {
+	context, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	_,err:= r.queries.AddLastSeenMessage(context,database.AddLastSeenMessageParams{
+	_, err := r.queries.AddLastSeenMessage(context, database.AddLastSeenMessageParams{
 		MessageID: msgID,
-		SeenID: *GetUUIDType(userID),
-		ChatID: chatID,
+		SeenID:    *GetUUIDType(userID),
+		ChatID:    chatID,
 	})
 	return err
 }
