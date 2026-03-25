@@ -59,8 +59,8 @@ type StatusFriendParameters struct {
 }
 
 type FriendMetaData struct {
-	UserID uuid.UUID
-	Name   string
+	UserID uuid.UUID `json:"user_id"`
+	Name   string    `json:"name"`
 }
 type CacheUpdateStruct struct {
 	UserID        uuid.UUID
