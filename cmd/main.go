@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	//"database/sql"
 	"RyanDev-21.com/Chirpy/cmd/setup"
+	aimodels "RyanDev-21.com/Chirpy/internal/aiModels"
 	authClient "RyanDev-21.com/Chirpy/internal/auth"
 	"RyanDev-21.com/Chirpy/internal/chat"
 	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
@@ -16,8 +19,13 @@ import (
 	"RyanDev-21.com/Chirpy/internal/groups"
 	rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
 
+	//"golang.org/x/crypto/acme/autocert"
+	"google.golang.org/genai"
+
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
+	"github.com/go-chi/chi/v5"
+	chi_middleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -52,6 +60,15 @@ func main() {
 	redisAddr := os.Getenv("REDIS_ADDR")
 	redisUsr := os.Getenv("REDIS_USR")
 	redisPass := os.Getenv("REDIS_PASS")
+	geminiKey := os.Getenv("GENMINI_API_KEY")
+	genAiClientConfig := &genai.ClientConfig{
+		APIKey: geminiKey,
+	}
+	client, err := genai.NewClient(ctx, genAiClientConfig)
+	if err != nil {
+		log.Printf("failed to create the ai %s", err)
+		log.Fatal(err)
+	}
 	db, err := pgxpool.New(ctx, dURL)
 	if err != nil {
 		log.Fatal("Failed connection to the db ")
@@ -96,13 +113,14 @@ func main() {
 	authService := authClient.NewAuthService(userRepo, authRepo, apicfg.Secret, &apicfg.Logger)
 	chatService := chat.NewChatService(chatRepo, hub, mq, chatCache, groupCache, &apicfg.Logger)
 	groupService := groups.NewGroupService(groupRepo, hub, mq, groupCache, &apicfg.Logger)
+	genAIService := aimodels.NewAiService(client, hub)
 
 	// Create Hanlders
 	userHandler := users.NewUserHandler(userService)
 	authHandler := authClient.NewAuthHandler(authService)
 	chatHandler := chat.NewChatHandler(chatService, &apicfg.Logger)
 	groupHandler := groups.NewGroupHandler(groupService)
-
+	genAIHandler := aimodels.NewGenAIHandler(genAIService)
 	// right now the topic name for job are hand coded should change that later
 	go mq.Run()
 	// set up jobs consumer for userService
@@ -121,6 +139,9 @@ func main() {
 
 	setup.SetUpUserRoutes(mux, apicfg, *userHandler)
 	// Users routes moved
+
+	// GeminiAi route  testing
+	mux.HandleFunc("GET /genai/messages", genAIHandler.GenAIDummyHandler)
 
 	// POST route
 	mux.HandleFunc("POST /admin/metrics/reset", apicfg.ResetHandle)
@@ -171,15 +192,38 @@ func main() {
 	// for private ,PATCH /api/chats/{otherUser_id}/messages (the service should be called based on the type like "edit","seen" //cuz this route is for both )
 	// for group ,PATH /api/chats/groups/{group_id}/messages (this should use for maybe edit )
 	mux.Handle("POST /api/chats/message", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.SendMessage, apicfg.Secret, &apicfg.Logger)))
+	// m := &autocert.Manager{
+	// 	Cache:      autocert.DirCache("certs"),
+	// 	Prompt:     autocert.AcceptTOS,
+	// 	HostPolicy: autocert.HostWhitelist("ponypigeon.com"),
+	// }
+
 	handlerWithCORS := corsMiddleware(mux)
+	cfg := &tls.Config{
+		MinVersion:               tls.VersionTLS12,
+		CurvePreferences:         []tls.CurveID{tls.CurveP521, tls.CurveP256, tls.CurveP384},
+		PreferServerCipherSuites: true,
+		CipherSuites: []uint16{
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+			tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+		},
+	}
 	server := http.Server{
-		Addr:    Port,
-		Handler: handlerWithCORS,
+		Addr:         Port,
+		Handler:      handlerWithCORS,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		TLSConfig:    cfg,
+		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
+		//	TLSConfig: m.TLSConfig(),
 	}
 
 	mux.Handle("GET /api/chat/{otherUser_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMesagesForPrivateID, apicfg.Secret, &apicfg.Logger)))
 	mux.Handle("POST /api/chat/{otherUser_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.UpdateSeen, apicfg.Secret, &apicfg.Logger)))
 	mux.Handle("GET /api/chat/groups/{group_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMessagesForPublicID, apicfg.Secret, &apicfg.Logger)))
+
 	log.Printf("The server is running on %q\n", Port)
-	log.Fatal(server.ListenAndServe())
+	log.Fatal(server.ListenAndServeTLS("../server.crt", "../server.key"))
 }
