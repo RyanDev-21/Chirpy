@@ -24,8 +24,6 @@ import (
 
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
-	"github.com/go-chi/chi/v5"
-	chi_middleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -219,7 +217,6 @@ func main() {
 		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 		//	TLSConfig: m.TLSConfig(),
 	}
-
 	mux.Handle("GET /api/chat/{otherUser_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMesagesForPrivateID, apicfg.Secret, &apicfg.Logger)))
 	mux.Handle("POST /api/chat/{otherUser_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.UpdateSeen, apicfg.Secret, &apicfg.Logger)))
 	mux.Handle("GET /api/chat/groups/{group_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMessagesForPublicID, apicfg.Secret, &apicfg.Logger)))
