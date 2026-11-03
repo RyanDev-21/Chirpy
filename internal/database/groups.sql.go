@@ -13,7 +13,6 @@ import (
 
 const addMember = `-- name: AddMember :exec
 INSERT INTO member_table(group_id, member_id) VALUES ($1, $2)
-ON CONFLICT (group_id, member_id) DO NOTHING
 `
 
 type AddMemberParams struct {
@@ -28,16 +27,14 @@ func (q *Queries) AddMember(ctx context.Context, arg AddMemberParams) error {
 
 const createGroup = `-- name: CreateGroup :exec
 INSERT INTO chat_groups(id, name, description, max_member, current_member)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (id) DO NOTHING
+VALUES ($1, $2, $3, $4, 1)
 `
 
 type CreateGroupParams struct {
-	ID            uuid.UUID
-	Name          string
-	Description   string
-	MaxMember     int16
-	CurrentMember int16
+	ID          uuid.UUID
+	Name        string
+	Description string
+	MaxMember   int16
 }
 
 func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) error {
@@ -46,29 +43,26 @@ func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) error 
 		arg.Name,
 		arg.Description,
 		arg.MaxMember,
-		arg.CurrentMember,
 	)
 	return err
 }
 
 const createGroupLeaderRole = `-- name: CreateGroupLeaderRole :exec
 INSERT INTO member_table(group_id, member_id, role)
-VALUES ($1, $2, $3)
-ON CONFLICT (group_id, member_id) DO NOTHING
+VALUES ($1, $2, 'Leader')
 `
 
 type CreateGroupLeaderRoleParams struct {
 	GroupID  uuid.UUID
 	MemberID uuid.UUID
-	Role     string
 }
 
 func (q *Queries) CreateGroupLeaderRole(ctx context.Context, arg CreateGroupLeaderRoleParams) error {
-	_, err := q.db.Exec(ctx, createGroupLeaderRole, arg.GroupID, arg.MemberID, arg.Role)
+	_, err := q.db.Exec(ctx, createGroupLeaderRole, arg.GroupID, arg.MemberID)
 	return err
 }
 
-const deleteMemFromGroup = `-- name: DeleteMemFromGroup :execrows
+const deleteMemFromGroup = `-- name: DeleteMemFromGroup :exec
 DELETE FROM member_table WHERE group_id = $1 AND member_id = $2
 `
 
@@ -77,12 +71,9 @@ type DeleteMemFromGroupParams struct {
 	MemberID uuid.UUID
 }
 
-func (q *Queries) DeleteMemFromGroup(ctx context.Context, arg DeleteMemFromGroupParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteMemFromGroup, arg.GroupID, arg.MemberID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+func (q *Queries) DeleteMemFromGroup(ctx context.Context, arg DeleteMemFromGroupParams) error {
+	_, err := q.db.Exec(ctx, deleteMemFromGroup, arg.GroupID, arg.MemberID)
+	return err
 }
 
 const getGroupInfoByID = `-- name: GetGroupInfoByID :one
@@ -115,28 +106,6 @@ func (q *Queries) GetGroupLeader(ctx context.Context, groupID uuid.UUID) (uuid.U
 	return member_id, err
 }
 
-const getMemFromGroup = `-- name: GetMemFromGroup :one
-SELECT id, group_id, member_id, joined_at, role FROM member_table WHERE group_id = $1 AND member_id = $2
-`
-
-type GetMemFromGroupParams struct {
-	GroupID  uuid.UUID
-	MemberID uuid.UUID
-}
-
-func (q *Queries) GetMemFromGroup(ctx context.Context, arg GetMemFromGroupParams) (MemberTable, error) {
-	row := q.db.QueryRow(ctx, getMemFromGroup, arg.GroupID, arg.MemberID)
-	var i MemberTable
-	err := row.Scan(
-		&i.ID,
-		&i.GroupID,
-		&i.MemberID,
-		&i.JoinedAt,
-		&i.Role,
-	)
-	return i, err
-}
-
 const getMemberListByID = `-- name: GetMemberListByID :many
 SELECT member_id FROM member_table WHERE group_id = $1
 `
@@ -161,32 +130,49 @@ func (q *Queries) GetMemberListByID(ctx context.Context, groupID uuid.UUID) ([]u
 	return items, nil
 }
 
-const searchInfoByName = `-- name: SearchInfoByName :one
-SELECT id, name, description, max_member, created_at, updated_at, current_member FROM chat_groups WHERE name = $1
+const getMemberRole = `-- name: GetMemberRole :one
+SELECT role FROM member_table WHERE group_id = $1 AND member_id = $2
 `
 
-func (q *Queries) SearchInfoByName(ctx context.Context, name string) (ChatGroup, error) {
-	row := q.db.QueryRow(ctx, searchInfoByName, name)
-	var i ChatGroup
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Description,
-		&i.MaxMember,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.CurrentMember,
-	)
+type GetMemberRoleParams struct {
+	GroupID  uuid.UUID
+	MemberID uuid.UUID
+}
+
+func (q *Queries) GetMemberRole(ctx context.Context, arg GetMemberRoleParams) (string, error) {
+	row := q.db.QueryRow(ctx, getMemberRole, arg.GroupID, arg.MemberID)
+	var role string
+	err := row.Scan(&role)
+	return role, err
+}
+
+const lockGroup = `-- name: LockGroup :one
+SELECT max_member, current_member FROM chat_groups WHERE id = $1 FOR UPDATE
+`
+
+type LockGroupRow struct {
+	MaxMember     int16
+	CurrentMember int16
+}
+
+// serialises membership changes for one group inside a transaction
+func (q *Queries) LockGroup(ctx context.Context, id uuid.UUID) (LockGroupRow, error) {
+	row := q.db.QueryRow(ctx, lockGroup, id)
+	var i LockGroupRow
+	err := row.Scan(&i.MaxMember, &i.CurrentMember)
 	return i, err
 }
 
-const updateGroupCurrentMemberByID = `-- name: UpdateGroupCurrentMemberByID :exec
-UPDATE chat_groups
-SET current_member = (SELECT COUNT(*) FROM member_table WHERE group_id = $1), updated_at = NOW()
-WHERE id = $1
+const setGroupMemberCount = `-- name: SetGroupMemberCount :exec
+UPDATE chat_groups SET current_member = $2, updated_at = NOW() WHERE id = $1
 `
 
-func (q *Queries) UpdateGroupCurrentMemberByID(ctx context.Context, groupID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, updateGroupCurrentMemberByID, groupID)
+type SetGroupMemberCountParams struct {
+	ID            uuid.UUID
+	CurrentMember int16
+}
+
+func (q *Queries) SetGroupMemberCount(ctx context.Context, arg SetGroupMemberCountParams) error {
+	_, err := q.db.Exec(ctx, setGroupMemberCount, arg.ID, arg.CurrentMember)
 	return err
 }

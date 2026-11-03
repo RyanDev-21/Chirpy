@@ -18,13 +18,6 @@ var (
 
 const RoleLeader = "Leader"
 
-// queue topics owned by the groups package
-const (
-	TopicCreateGroup  = "group.create"
-	TopicAddMember    = "group.member.add"
-	TopicRemoveMember = "group.member.remove"
-)
-
 const (
 	maxGroupNameLen = 30
 	maxDescLen      = 1000
@@ -39,19 +32,4 @@ type createGroupRequest struct {
 
 type GroupInfo struct {
 	ChatID uuid.UUID `json:"chat_id"`
-}
-
-// JobCreate is the payload of TopicCreateGroup.
-type JobCreate struct {
-	GroupID     uuid.UUID `json:"group_id"`
-	CreatorID   uuid.UUID `json:"creator_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	MaxMembers  int16     `json:"max_members"`
-}
-
-// JobMember is the payload of TopicAddMember and TopicRemoveMember.
-type JobMember struct {
-	GroupID uuid.UUID `json:"group_id"`
-	UserID  uuid.UUID `json:"user_id"`
 }

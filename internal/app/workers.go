@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"RyanDev-21.com/Chirpy/internal/chat"
-	"RyanDev-21.com/Chirpy/internal/groups"
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
 	"RyanDev-21.com/Chirpy/internal/users"
 )
@@ -19,10 +18,6 @@ type subscription struct {
 func (a *App) subscriptions() []subscription {
 	return []subscription{
 		{users.TopicSaveConfig, 2, queue.Typed(a.users.HandleSaveConfig)},
-
-		{groups.TopicCreateGroup, 2, queue.Typed(a.groups.HandleCreate)},
-		{groups.TopicAddMember, 4, queue.Typed(a.groups.HandleAddMember)},
-		{groups.TopicRemoveMember, 4, queue.Typed(a.groups.HandleRemoveMember)},
 
 		{chat.TopicSeen, 2, queue.Typed(a.chat.HandleSeen)},
 	}

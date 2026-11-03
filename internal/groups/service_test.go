@@ -3,139 +3,160 @@ package groups
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 
 	"RyanDev-21.com/Chirpy/internal/testutil"
 	"github.com/google/uuid"
 )
 
+// fakeRepo applies the same rules the postgres transactions enforce.
 type fakeRepo struct {
-	snaps   map[uuid.UUID]GroupSnapshot
-	names   map[string]bool
-	deleted bool
+	mu     sync.Mutex
+	groups map[uuid.UUID]*GroupSnapshot
+	reads  int
 }
 
-func (f *fakeRepo) CreateWithLeader(context.Context, JobCreate) error { return nil }
-func (f *fakeRepo) NameTaken(_ context.Context, n string) (bool, error) {
-	return f.names[n], nil
+func (f *fakeRepo) Create(_ context.Context, id, creator uuid.UUID, req createGroupRequest) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, g := range f.groups {
+		if strings.EqualFold(g.Name, req.GroupName) {
+			return ErrDuplicateName
+		}
+	}
+	f.groups[id] = &GroupSnapshot{Name: req.GroupName, MaxMem: req.MaxMems, LeaderID: creator, Members: []uuid.UUID{creator}}
+	return nil
 }
+
 func (f *fakeRepo) Snapshot(_ context.Context, id uuid.UUID) (GroupSnapshot, error) {
-	s, ok := f.snaps[id]
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reads++
+	g, ok := f.groups[id]
 	if !ok {
 		return GroupSnapshot{}, ErrNotFoundGroup
 	}
-	return s, nil
-}
-func (f *fakeRepo) AddMember(context.Context, uuid.UUID, uuid.UUID) error { return nil }
-func (f *fakeRepo) RemoveMember(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
-	return f.deleted, nil
+	cp := *g
+	cp.Members = slices.Clone(g.Members)
+	return cp, nil
 }
 
-type nopQueue struct{ n int }
+func (f *fakeRepo) Join(_ context.Context, id, user uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	g, ok := f.groups[id]
+	switch {
+	case !ok:
+		return ErrNotFoundGroup
+	case slices.Contains(g.Members, user):
+		return ErrAlreadyMember
+	case len(g.Members) >= int(g.MaxMem):
+		return ErrGroupFull
+	}
+	g.Members = append(g.Members, user)
+	return nil
+}
 
-func (q *nopQueue) Publish(context.Context, string, any) error { q.n++; return nil }
+func (f *fakeRepo) Leave(_ context.Context, id, user uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	g, ok := f.groups[id]
+	if !ok {
+		return ErrNotFoundGroup
+	}
+	i := slices.Index(g.Members, user)
+	switch {
+	case i == -1:
+		return ErrNotMember
+	case user == g.LeaderID:
+		return ErrLeaderCannotLeave
+	}
+	g.Members = slices.Delete(g.Members, i, i+1)
+	return nil
+}
 
-func newSvc(t *testing.T) (GroupService, *fakeRepo, *nopQueue) {
+func newSvc(t *testing.T) (GroupService, *fakeRepo) {
 	t.Helper()
 	rdb, _ := testutil.Redis(t)
-	repo := &fakeRepo{snaps: map[uuid.UUID]GroupSnapshot{}, names: map[string]bool{}}
-	q := &nopQueue{}
-	return NewGroupService(repo, NewStore(rdb), q, testutil.Logger()), repo, q
+	repo := &fakeRepo{groups: map[uuid.UUID]*GroupSnapshot{}}
+	return NewGroupService(repo, NewStore(rdb), testutil.Logger()), repo
 }
 
-func TestCreateJoinLeave(t *testing.T) {
-	svc, _, q := newSvc(t)
-	ctx := context.Background()
-	leader, a, b := uuid.New(), uuid.New(), uuid.New()
+func TestCreateValidation(t *testing.T) {
+	svc, _ := newSvc(t)
+	bad := []createGroupRequest{
+		{GroupName: "", MaxMems: 5},
+		{GroupName: "   ", MaxMems: 5},
+		{GroupName: strings.Repeat("x", maxGroupNameLen+1), MaxMems: 5},
+		{GroupName: "ok", MaxMems: 1},
+		{GroupName: "ok", MaxMems: maxGroupSize + 1},
+		{GroupName: "ok", MaxMems: 5, Description: strings.Repeat("d", maxDescLen+1)},
+	}
+	for _, req := range bad {
+		if _, err := svc.CreateGroup(context.Background(), uuid.New(), req); !errors.Is(err, ErrInvalidGroupReq) {
+			t.Errorf("CreateGroup(%q, %d) err = %v", req.GroupName, req.MaxMems, err)
+		}
+	}
+}
 
-	g, err := svc.CreateGroup(ctx, leader, createGroupRequest{GroupName: "devs", MaxMems: 2})
+func TestMembershipCacheFollowsWrites(t *testing.T) {
+	svc, repo := newSvc(t)
+	ctx := context.Background()
+	leader, a := uuid.New(), uuid.New()
+
+	g, err := svc.CreateGroup(ctx, leader, createGroupRequest{GroupName: "devs", MaxMems: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, _ := svc.IsMember(ctx, g.ChatID, leader); !ok {
-		t.Fatal("creator must be a member")
+	// warm the cache, then change membership and check it is not stale
+	if ok, _ := svc.IsMember(ctx, g.ChatID, a); ok {
+		t.Fatal("a is not a member yet")
 	}
 	if err := svc.JoinGroup(ctx, g.ChatID, a); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.JoinGroup(ctx, g.ChatID, a); !errors.Is(err, ErrAlreadyMember) {
+	if ok, _ := svc.IsMember(ctx, g.ChatID, a); !ok {
+		t.Fatal("join not visible: cache was not invalidated")
+	}
+	if err := svc.LeaveGroup(ctx, g.ChatID, a); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := svc.IsMember(ctx, g.ChatID, a); ok {
+		t.Fatal("leave not visible: cache was not invalidated")
+	}
+
+	reads := repo.reads
+	for range 3 {
+		_, _ = svc.Members(ctx, g.ChatID)
+	}
+	if repo.reads != reads {
+		t.Fatalf("repeated reads hit postgres %d times", repo.reads-reads)
+	}
+}
+
+func TestErrorsFromRepoArePassedThrough(t *testing.T) {
+	svc, _ := newSvc(t)
+	ctx := context.Background()
+	leader := uuid.New()
+	g, _ := svc.CreateGroup(ctx, leader, createGroupRequest{GroupName: "Team", MaxMems: 2})
+
+	if _, err := svc.CreateGroup(ctx, leader, createGroupRequest{GroupName: "team", MaxMems: 2}); !errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("duplicate name: %v", err)
+	}
+	if err := svc.JoinGroup(ctx, g.ChatID, leader); !errors.Is(err, ErrAlreadyMember) {
 		t.Fatalf("rejoin: %v", err)
 	}
-	if err := svc.JoinGroup(ctx, g.ChatID, b); !errors.Is(err, ErrGroupFull) {
+	_ = svc.JoinGroup(ctx, g.ChatID, uuid.New())
+	if err := svc.JoinGroup(ctx, g.ChatID, uuid.New()); !errors.Is(err, ErrGroupFull) {
 		t.Fatalf("full: %v", err)
 	}
 	if err := svc.LeaveGroup(ctx, g.ChatID, leader); !errors.Is(err, ErrLeaderCannotLeave) {
 		t.Fatalf("leader leave: %v", err)
 	}
-	if err := svc.LeaveGroup(ctx, g.ChatID, b); !errors.Is(err, ErrNotMember) {
-		t.Fatalf("non-member leave: %v", err)
-	}
-	if err := svc.LeaveGroup(ctx, g.ChatID, a); err != nil {
-		t.Fatal(err)
-	}
-	members, _ := svc.Members(ctx, g.ChatID)
-	if len(members) != 1 || members[0] != leader {
-		t.Fatalf("members = %v", members)
-	}
-	if q.n != 3 { // create, join, leave
-		t.Fatalf("published %d jobs, want 3", q.n)
-	}
-}
-
-func TestCreateValidationAndNames(t *testing.T) {
-	svc, repo, _ := newSvc(t)
-	ctx := context.Background()
-	u := uuid.New()
-
-	bad := []createGroupRequest{
-		{GroupName: "", MaxMems: 5},
-		{GroupName: "   ", MaxMems: 5},
-		{GroupName: "this name is far too long for a group", MaxMems: 5},
-		{GroupName: "ok", MaxMems: 1},
-		{GroupName: "ok", MaxMems: 5000},
-	}
-	for _, req := range bad {
-		if _, err := svc.CreateGroup(ctx, u, req); !errors.Is(err, ErrInvalidGroupReq) {
-			t.Errorf("CreateGroup(%+v) err = %v", req, err)
-		}
-	}
-
-	if _, err := svc.CreateGroup(ctx, u, createGroupRequest{GroupName: "Team", MaxMems: 5}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.CreateGroup(ctx, u, createGroupRequest{GroupName: "team", MaxMems: 5}); !errors.Is(err, ErrDuplicateName) {
-		t.Fatalf("case-insensitive duplicate: %v", err)
-	}
-	repo.names["inpg"] = true
-	if _, err := svc.CreateGroup(ctx, u, createGroupRequest{GroupName: "inpg", MaxMems: 5}); !errors.Is(err, ErrDuplicateName) {
-		t.Fatalf("postgres duplicate: %v", err)
-	}
-}
-
-func TestLoadsExistingGroupFromPostgres(t *testing.T) {
-	svc, repo, _ := newSvc(t)
-	ctx := context.Background()
-	id, leader, member := uuid.New(), uuid.New(), uuid.New()
-	repo.snaps[id] = GroupSnapshot{Name: "old", MaxMem: 3, LeaderID: leader, Members: []uuid.UUID{leader, member}}
-
-	if ok, _ := svc.IsMember(ctx, id, member); !ok {
-		t.Fatal("member from postgres not found")
-	}
-	if err := svc.LeaveGroup(ctx, id, leader); !errors.Is(err, ErrLeaderCannotLeave) {
-		t.Fatalf("leader from postgres: %v", err)
-	}
-	if err := svc.JoinGroup(ctx, uuid.New(), member); !errors.Is(err, ErrNotFoundGroup) {
+	if _, err := svc.Members(ctx, uuid.New()); !errors.Is(err, ErrNotFoundGroup) {
 		t.Fatalf("unknown group: %v", err)
-	}
-}
-
-func TestRemoveWorkerRetriesWhenNothingDeleted(t *testing.T) {
-	svc, repo, _ := newSvc(t)
-	if err := svc.HandleRemoveMember(context.Background(), JobMember{}); !errors.Is(err, errMemberNotPersisted) {
-		t.Fatalf("err = %v", err)
-	}
-	repo.deleted = true
-	if err := svc.HandleRemoveMember(context.Background(), JobMember{}); err != nil {
-		t.Fatal(err)
 	}
 }
