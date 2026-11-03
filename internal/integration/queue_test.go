@@ -117,3 +117,31 @@ func TestQueueReclaimsAbandonedJobs(t *testing.T) {
 	_ = q2.Subscribe(ctx2, "t", 1, queue.Typed(func(_ context.Context, j job) error { got.Store(int32(j.ID)); return nil }))
 	waitUntil(t, func() bool { return got.Load() == 7 })
 }
+
+// Regression: every worker used to hold a blocking connection, so with
+// more workers than pool connections (e.g. a 2-CPU CI runner) ordinary
+// commands timed out.
+func TestQueueWorkersDoNotExhaustThePool(t *testing.T) {
+	rdb := redis.NewClient(&redis.Options{Addr: redisAddr, PoolSize: 4, PoolTimeout: 500 * time.Millisecond})
+	t.Cleanup(func() { _ = rdb.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	q := queue.NewRedis(rdb, queue.RedisOptions{BlockFor: time.Second}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	t.Cleanup(func() { cancel(); q.Wait() })
+
+	var handled atomic.Int32
+	for _, topic := range []string{"a", "b", "c"} {
+		if err := q.Subscribe(ctx, topic, 16, queue.Typed(func(context.Context, job) error { handled.Add(1); return nil })); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(200 * time.Millisecond) // readers are now blocked in XREADGROUP
+	for range 20 {
+		if err := rdb.Ping(ctx).Err(); err != nil {
+			t.Fatalf("pool exhausted by idle workers: %v", err)
+		}
+	}
+	for _, topic := range []string{"a", "b", "c"} {
+		_ = q.Publish(ctx, topic, job{})
+	}
+	waitUntil(t, func() bool { return handled.Load() == 3 })
+}

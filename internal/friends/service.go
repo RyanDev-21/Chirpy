@@ -100,25 +100,9 @@ func (s *service) Cancel(ctx context.Context, me, reqID uuid.UUID) error {
 }
 
 func (s *service) Relationships(ctx context.Context, me uuid.UUID) (Snapshot, error) {
-	snap, ok, err := s.store.Get(ctx, me)
-	if err != nil {
-		s.logger.Warn("friends cache read failed", "error", err)
-	}
-	if ok {
-		return snap, nil
-	}
-	version, err := s.store.Version(ctx, me)
-	if err != nil {
-		s.logger.Warn("friends cache version read failed", "error", err)
-	}
-	snap, err = s.repo.Snapshot(ctx, me)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	if err := s.store.Put(ctx, me, version, snap); err != nil {
-		s.logger.Warn("failed to cache relationships", "error", err)
-	}
-	return snap, nil
+	return s.store.Load(ctx, me.String(), func(ctx context.Context) (Snapshot, error) {
+		return s.repo.Snapshot(ctx, me)
+	}, func(err error) { s.logger.Warn("friends cache error", "error", err) })
 }
 
 func (s *service) AreFriends(ctx context.Context, a, b uuid.UUID) (bool, error) {
@@ -130,7 +114,11 @@ func (s *service) AreFriends(ctx context.Context, a, b uuid.UUID) (bool, error) 
 }
 
 func (s *service) invalidate(ctx context.Context, ids ...uuid.UUID) {
-	if err := s.store.Invalidate(ctx, ids...); err != nil {
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = id.String()
+	}
+	if err := s.store.Invalidate(ctx, keys...); err != nil {
 		// the write is committed; a stale cache entry expires with its TTL
 		s.logger.Error("failed to invalidate friends cache", "error", err)
 	}

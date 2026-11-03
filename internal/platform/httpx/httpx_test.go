@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const secret = "0123456789abcdef0123456789abcdef"
+var secret = uuid.NewString()
 
 func TestAuthenticate(t *testing.T) {
 	userID := uuid.New()

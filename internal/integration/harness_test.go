@@ -25,13 +25,18 @@ import (
 
 	"RyanDev-21.com/Chirpy/internal/app"
 	"RyanDev-21.com/Chirpy/internal/config"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/redis/go-redis/v9"
 )
 
-const secret = "integration-secret-integration-secret"
+// fixtures are generated per run so nothing credential-shaped is committed
+var (
+	secret   = uuid.NewString() + uuid.NewString()
+	password = "Pw-" + uuid.NewString()[:8] + "!"
+)
 
 var (
 	dbURL     = os.Getenv("TEST_DATABASE_URL")
@@ -168,8 +173,6 @@ type user struct {
 	RefreshToken string `json:"refresh_token"`
 	email        string
 }
-
-const password = "passw0rd!"
 
 func (e *env) signup(name string) user {
 	e.t.Helper()

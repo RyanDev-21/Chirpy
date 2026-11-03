@@ -33,8 +33,11 @@ type App struct {
 	logger *slog.Logger
 	db     *pgxpool.Pool
 	redis  *redis.Client
-	queue  queue.Broker
-	hub    *ws.Hub
+	// queueRedis is a separate pool for the job queue: its blocking reads
+	// must never take connections away from request handling
+	queueRedis *redis.Client
+	queue      queue.Broker
+	hub        *ws.Hub
 
 	users   users.UserService
 	friends friends.Service
@@ -65,19 +68,29 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		db.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
-	rdb, err := redisx.NewClient(ctx, redisx.Options{Addr: cfg.RedisAddr, Username: cfg.RedisUser, Password: cfg.RedisPass, DB: cfg.RedisDB})
+	redisOpts := redisx.Options{Addr: cfg.RedisAddr, Username: cfg.RedisUser, Password: cfg.RedisPass, DB: cfg.RedisDB}
+	rdb, err := redisx.NewClient(ctx, redisOpts)
 	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	queueOpts := redisOpts
+	queueOpts.PoolSize = 32
+	qrdb, err := redisx.NewClient(ctx, queueOpts)
+	if err != nil {
+		_ = rdb.Close()
 		db.Close()
 		return nil, err
 	}
 
 	a := &App{
-		cfg:    cfg,
-		logger: logger,
-		db:     db,
-		redis:  rdb,
-		queue:  queue.NewRedis(rdb, queue.RedisOptions{}, logger),
-		hub:    ws.NewHub(),
+		cfg:        cfg,
+		logger:     logger,
+		db:         db,
+		redis:      rdb,
+		queueRedis: qrdb,
+		queue:      queue.NewRedis(qrdb, queue.RedisOptions{}, logger),
+		hub:        ws.NewHub(),
 	}
 	queries := database.New(db)
 
@@ -161,6 +174,9 @@ func (a *App) Run(ctx context.Context) error {
 
 // Close releases database and redis connections.
 func (a *App) Close() {
+	if a.queueRedis != nil {
+		_ = a.queueRedis.Close()
+	}
 	if a.redis != nil {
 		_ = a.redis.Close()
 	}

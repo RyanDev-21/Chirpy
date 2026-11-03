@@ -53,14 +53,15 @@ func TestProtectedRoutesRequireAuth(t *testing.T) {
 
 func TestAuthLifecycle(t *testing.T) {
 	e := newEnv(t)
+	newPassword := password + "2"
 	alice := e.signup("alice")
 
 	e.expect(e.do("POST", "/api/users", "", map[string]string{"name": "alice2", "email": alice.email, "password": password}), 409)
 	e.expect(e.do("POST", "/api/users", "", map[string]string{"name": "alice", "email": "other@example.io", "password": password}), 409)
 
 	// unknown email and wrong password look the same
-	wrong := e.expect(e.do("POST", "/api/login", "", map[string]string{"email": alice.email, "password": "nope!nope!"}), 401)
-	unknown := e.expect(e.do("POST", "/api/login", "", map[string]string{"email": "ghost@example.io", "password": "nope!nope!"}), 401)
+	wrong := e.expect(e.do("POST", "/api/login", "", map[string]string{"email": alice.email, "password": "wrong-" + password}), 401)
+	unknown := e.expect(e.do("POST", "/api/login", "", map[string]string{"email": "ghost@example.io", "password": "wrong-" + password}), 401)
 	if string(wrong.body) != string(unknown.body) {
 		t.Fatalf("login errors differ: %s vs %s", wrong.body, unknown.body)
 	}
@@ -75,9 +76,9 @@ func TestAuthLifecycle(t *testing.T) {
 	e.expect(e.do("GET", "/api/friends", rotated.AccessToken, nil), 200)
 
 	// changing the password revokes every refresh token
-	e.expect(e.do("POST", "/api/users/password", alice.Token, map[string]string{"old_password": password, "new_password": "brandnew!pass"}), 200)
+	e.expect(e.do("POST", "/api/users/password", alice.Token, map[string]string{"old_password": password, "new_password": newPassword}), 200)
 	e.expect(e.do("POST", "/api/refresh", rotated.RefreshToken, nil), 401)
-	e.expect(e.do("POST", "/api/login", "", map[string]string{"email": alice.email, "password": "brandnew!pass"}), 200)
+	e.expect(e.do("POST", "/api/login", "", map[string]string{"email": alice.email, "password": newPassword}), 200)
 }
 
 func TestSearchHidesEmails(t *testing.T) {
@@ -234,7 +235,7 @@ func TestUserConfigPersists(t *testing.T) {
 
 func TestLoginRateLimit(t *testing.T) {
 	e := newEnv(t)
-	body := map[string]string{"email": "x@example.io", "password": "whatever!"}
+	body := map[string]string{"email": "x@example.io", "password": "wrong-" + password}
 	for range 10 {
 		e.expect(e.do("POST", "/api/login", "", body), 401)
 	}

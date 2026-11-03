@@ -17,6 +17,7 @@ type Options struct {
 	Username string
 	Password string
 	DB       int
+	PoolSize int // 0: go-redis default (10 per CPU)
 }
 
 // NewClient connects and pings Redis.
@@ -26,6 +27,7 @@ func NewClient(ctx context.Context, o Options) (*redis.Client, error) {
 		Username: o.Username,
 		Password: o.Password,
 		DB:       o.DB,
+		PoolSize: o.PoolSize,
 	})
 	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

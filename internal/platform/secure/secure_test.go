@@ -10,20 +10,21 @@ import (
 )
 
 func TestPasswordHashing(t *testing.T) {
-	hash, err := HashPassword("correct horse!")
+	pw := "Pw-" + uuid.NewString()[:8] + "!"
+	hash, err := HashPassword(pw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := CheckPassword("correct horse!", hash); err != nil || !ok {
+	if ok, err := CheckPassword(pw, hash); err != nil || !ok {
 		t.Fatalf("correct password rejected: ok=%v err=%v", ok, err)
 	}
-	if ok, _ := CheckPassword("wrong horse!", hash); ok {
+	if ok, _ := CheckPassword(pw+"x", hash); ok {
 		t.Fatal("wrong password accepted")
 	}
 }
 
 func TestJWT(t *testing.T) {
-	const secret = "0123456789abcdef0123456789abcdef"
+	secret := uuid.NewString()
 	userID := uuid.New()
 
 	tests := []struct {
@@ -46,7 +47,7 @@ func TestJWT(t *testing.T) {
 		{
 			name:    "wrong secret",
 			token:   func(t *testing.T) string { return mustJWT(t, userID, secret, time.Minute) },
-			secret:  "another-secret-another-secret-xx",
+			secret:  uuid.NewString(),
 			wantErr: ErrInvalidToken,
 		},
 		{

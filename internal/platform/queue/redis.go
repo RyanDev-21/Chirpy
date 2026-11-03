@@ -104,7 +104,9 @@ func (q *Redis) add(ctx context.Context, c redis.Cmdable, topic string, payload 
 	}).Err()
 }
 
-// Subscribe starts `workers` consumers for topic. They stop when ctx ends.
+// Subscribe starts one reader for topic that hands jobs to `workers`
+// goroutines. Only the reader holds a blocking Redis connection, so the
+// pool is never exhausted by idle consumers. They stop when ctx ends.
 func (q *Redis) Subscribe(ctx context.Context, topic string, workers int, h Handler) error {
 	stream := streamPrefix + topic
 	err := q.rdb.XGroupCreateMkStream(ctx, stream, q.opts.Group, "0").Err()
@@ -112,16 +114,23 @@ func (q *Redis) Subscribe(ctx context.Context, topic string, workers int, h Hand
 		return fmt.Errorf("create consumer group for %s: %w", topic, err)
 	}
 	q.moverOn.Do(func() { q.goLoop(ctx, q.moveDue, 250*time.Millisecond) })
-	for i := range workers {
-		consumer := fmt.Sprintf("%s-%d", q.consumer, i)
+
+	jobs := make(chan redis.XMessage)
+	for range max(workers, 1) {
 		q.wg.Add(1)
 		go func() {
 			defer q.wg.Done()
-			q.consume(ctx, topic, stream, consumer, h)
+			for msg := range jobs {
+				q.process(ctx, topic, stream, msg, h)
+			}
 		}()
 	}
-	// one reclaimer per topic picks up jobs left by crashed consumers
-	q.goLoop(ctx, func(ctx context.Context) { q.reclaim(ctx, topic, stream, h) }, q.opts.ClaimIdle/2)
+	q.wg.Add(1)
+	go func() {
+		defer q.wg.Done()
+		defer close(jobs)
+		q.consume(ctx, topic, stream, max(workers, 1), jobs)
+	}()
 	return nil
 }
 
@@ -145,13 +154,42 @@ func (q *Redis) goLoop(ctx context.Context, fn func(context.Context), every time
 	}()
 }
 
-func (q *Redis) consume(ctx context.Context, topic, stream, consumer string, h Handler) {
+// consume reads new entries and, every ClaimIdle/2, entries abandoned by
+// crashed consumers, and feeds both to the workers. Sending on the
+// unbuffered channel blocks until a worker is free, which is the
+// backpressure: at most `batch` entries are read ahead.
+func (q *Redis) consume(ctx context.Context, topic, stream string, batch int, jobs chan<- redis.XMessage) {
+	consumer := q.consumer + "-" + topic
+	nextClaim := time.Now().Add(q.opts.ClaimIdle / 2)
+	send := func(msgs []redis.XMessage) bool {
+		for _, m := range msgs {
+			select {
+			case jobs <- m:
+			case <-ctx.Done():
+				return false // unprocessed entries stay pending and are reclaimed later
+			}
+		}
+		return true
+	}
 	for ctx.Err() == nil {
+		if time.Now().After(nextClaim) {
+			nextClaim = time.Now().Add(q.opts.ClaimIdle / 2)
+			msgs, _, err := q.rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+				Stream: stream, Group: q.opts.Group, Consumer: consumer,
+				MinIdle: q.opts.ClaimIdle, Start: "0", Count: int64(batch),
+			}).Result()
+			if err != nil && ctx.Err() == nil {
+				q.logger.Error("queue reclaim failed", "topic", topic, "error", err)
+			}
+			if !send(msgs) {
+				return
+			}
+		}
 		res, err := q.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
 			Group:    q.opts.Group,
 			Consumer: consumer,
 			Streams:  []string{stream, ">"},
-			Count:    10,
+			Count:    int64(batch),
 			Block:    q.opts.BlockFor,
 		}).Result()
 		if errors.Is(err, redis.Nil) || ctx.Err() != nil {
@@ -162,31 +200,11 @@ func (q *Redis) consume(ctx context.Context, topic, stream, consumer string, h H
 			sleep(ctx, time.Second)
 			continue
 		}
-		for _, s := range res {
-			for _, msg := range s.Messages {
-				q.process(ctx, topic, stream, msg, h)
+		for _, st := range res {
+			if !send(st.Messages) {
+				return
 			}
 		}
-	}
-}
-
-func (q *Redis) reclaim(ctx context.Context, topic, stream string, h Handler) {
-	msgs, _, err := q.rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{
-		Stream:   stream,
-		Group:    q.opts.Group,
-		Consumer: q.consumer + "-reclaim",
-		MinIdle:  q.opts.ClaimIdle,
-		Start:    "0",
-		Count:    50,
-	}).Result()
-	if err != nil {
-		if ctx.Err() == nil {
-			q.logger.Error("queue reclaim failed", "topic", topic, "error", err)
-		}
-		return
-	}
-	for _, msg := range msgs {
-		q.process(ctx, topic, stream, msg, h)
 	}
 }
 

@@ -230,18 +230,19 @@ func TestStaleReadIsNotCached(t *testing.T) {
 	ctx := context.Background()
 	stale := Snapshot{Friends: []FriendMetaData{{UserID: f.bob, Name: "bob"}}}
 
-	v, _ := f.store.Version(ctx, f.alice)
-	_ = f.store.Invalidate(ctx, f.alice) // a write lands while the reader is in postgres
-	if err := f.store.Put(ctx, f.alice, v, stale); err != nil {
+	id := f.alice.String()
+	v, _ := f.store.Version(ctx, id)
+	_ = f.store.Invalidate(ctx, id) // a write lands while the reader is in postgres
+	if err := f.store.Put(ctx, id, v, stale); err != nil {
 		t.Fatal(err)
 	}
-	if _, found, _ := f.store.Get(ctx, f.alice); found {
+	if _, found, _ := f.store.Get(ctx, id); found {
 		t.Fatal("a snapshot read before a write must not be cached")
 	}
 
-	v, _ = f.store.Version(ctx, f.alice)
-	_ = f.store.Put(ctx, f.alice, v, stale)
-	if _, found, _ := f.store.Get(ctx, f.alice); !found {
+	v, _ = f.store.Version(ctx, id)
+	_ = f.store.Put(ctx, id, v, stale)
+	if _, found, _ := f.store.Get(ctx, id); !found {
 		t.Fatal("an up-to-date snapshot should be cached")
 	}
 }
