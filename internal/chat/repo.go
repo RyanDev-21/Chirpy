@@ -2,11 +2,14 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"RyanDev-21.com/Chirpy/internal/database"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -22,6 +25,12 @@ type ChatRepo interface {
 	// to the same conversation.
 	ParentInPrivate(ctx context.Context, parentID, a, b uuid.UUID) (bool, error)
 	ParentInGroup(ctx context.Context, parentID, groupID uuid.UUID) (bool, error)
+	// *Before return up to n messages older than the cursor message, in
+	// chronological order; ErrBadCursor if it isn't in that chat.
+	PrivateBefore(ctx context.Context, a, b, before uuid.UUID, n int) ([]MessageMetaDataRes, error)
+	GroupBefore(ctx context.Context, groupID, before uuid.UUID, n int) ([]MessageMetaDataRes, error)
+	MarkGroupRead(ctx context.Context, groupID, userID, msgID uuid.UUID) error
+	Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error)
 }
 
 type chatRepo struct {
@@ -154,4 +163,93 @@ func (r *chatRepo) ParentInPrivate(ctx context.Context, parentID, a, b uuid.UUID
 
 func (r *chatRepo) ParentInGroup(ctx context.Context, parentID, groupID uuid.UUID) (bool, error) {
 	return r.q.GroupMessageInGroup(ctx, database.GroupMessageInGroupParams{ID: parentID, GroupID: pgUUID(groupID)})
+}
+
+func (r *chatRepo) PrivateBefore(ctx context.Context, a, b, before uuid.UUID, n int) ([]MessageMetaDataRes, error) {
+	at, err := r.q.PrivateMessageCursor(ctx, database.PrivateMessageCursorParams{ID: before, UserA: pgUUID(a), UserB: pgUUID(b)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrBadCursor
+	}
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.q.GetPrivateMessagesBefore(ctx, database.GetPrivateMessagesBeforeParams{
+		UserA: pgUUID(a), UserB: pgUUID(b), BeforeTime: at, BeforeID: before, Lim: int32(n),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := fromPrivate(rows)
+	slices.Reverse(out)
+	return out, nil
+}
+
+func (r *chatRepo) GroupBefore(ctx context.Context, groupID, before uuid.UUID, n int) ([]MessageMetaDataRes, error) {
+	at, err := r.q.GroupMessageCursor(ctx, database.GroupMessageCursorParams{ID: before, GroupID: pgUUID(groupID)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrBadCursor
+	}
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.q.GetGroupMessagesBefore(ctx, database.GetGroupMessagesBeforeParams{
+		GroupID: pgUUID(groupID), BeforeTime: at, BeforeID: before, Lim: int32(n),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := fromPublic(rows)
+	slices.Reverse(out)
+	return out, nil
+}
+
+func (r *chatRepo) MarkGroupRead(ctx context.Context, groupID, userID, msgID uuid.UUID) error {
+	if _, err := r.q.GroupMessageCursor(ctx, database.GroupMessageCursorParams{ID: msgID, GroupID: pgUUID(groupID)}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrMessageNotInChat
+		}
+		return err
+	}
+	return r.q.MarkGroupRead(ctx, database.MarkGroupReadParams{GroupID: groupID, UserID: userID, MessageID: msgID})
+}
+
+func lastMessage(id uuid.UUID, content pgtype.Text, from pgtype.UUID, at pgtype.Timestamp) *LastMessage {
+	if !at.Valid {
+		return nil
+	}
+	return &LastMessage{ID: id, Msg: content.String, FromID: uuid.UUID(from.Bytes), CreatedAt: at.Time.UTC()}
+}
+
+// Conversations lists private chats and groups, most recent activity first;
+// groups without messages come last, by name.
+func (r *chatRepo) Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error) {
+	priv, err := r.q.ListPrivateConversations(ctx, me)
+	if err != nil {
+		return nil, err
+	}
+	grp, err := r.q.ListGroupConversations(ctx, me)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Conversation, 0, len(priv)+len(grp))
+	for _, p := range priv {
+		out = append(out, Conversation{Type: TypePrivate, ID: p.OtherID, Name: p.OtherName,
+			LastMessage: lastMessage(p.LastID, p.LastContent, p.LastFrom, p.LastAt), Unread: int(p.Unread)})
+	}
+	for _, g := range grp {
+		out = append(out, Conversation{Type: TypePublic, ID: g.GroupID, Name: g.GroupName,
+			LastMessage: lastMessage(g.LastID, g.LastContent, g.LastFrom, g.LastAt), Unread: int(g.Unread)})
+	}
+	slices.SortStableFunc(out, func(a, b Conversation) int {
+		switch {
+		case a.LastMessage == nil && b.LastMessage == nil:
+			return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+		case a.LastMessage == nil:
+			return 1
+		case b.LastMessage == nil:
+			return -1
+		}
+		return b.LastMessage.CreatedAt.Compare(a.LastMessage.CreatedAt)
+	})
+	return out, nil
 }

@@ -15,11 +15,12 @@ import (
 )
 
 type fakeRepo struct {
-	history []MessageMetaDataRes
-	since   int
-	saved   []MessageMetaDataRes
-	parents map[uuid.UUID]bool // parent ids that belong to the chat
-	failAdd error
+	history     []MessageMetaDataRes
+	since       int
+	saved       []MessageMetaDataRes
+	parents     map[uuid.UUID]bool // parent ids that belong to the chat
+	beforeCalls int
+	failAdd     error
 }
 
 func (f *fakeRepo) AddPrivate(_ context.Context, m MessageMetaDataRes) error {
@@ -32,6 +33,16 @@ func (f *fakeRepo) AddPrivate(_ context.Context, m MessageMetaDataRes) error {
 func (f *fakeRepo) AddPublic(ctx context.Context, m MessageMetaDataRes) error {
 	return f.AddPrivate(ctx, m)
 }
+func (f *fakeRepo) PrivateBefore(_ context.Context, _, _, before uuid.UUID, n int) ([]MessageMetaDataRes, error) {
+	f.beforeCalls++
+	return nil, nil
+}
+func (f *fakeRepo) GroupBefore(context.Context, uuid.UUID, uuid.UUID, int) ([]MessageMetaDataRes, error) {
+	f.beforeCalls++
+	return nil, nil
+}
+func (f *fakeRepo) MarkGroupRead(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error { return nil }
+func (f *fakeRepo) Conversations(context.Context, uuid.UUID) ([]Conversation, error)     { return nil, nil }
 func (f *fakeRepo) ParentInPrivate(_ context.Context, p, _, _ uuid.UUID) (bool, error) {
 	return f.parents[p], nil
 }
@@ -144,7 +155,7 @@ func TestPrivateMessagesKeepHistoryOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := f.svc.PrivateMessages(ctx, f.bob, f.alice, "")
+	got, err := f.svc.PrivateMessages(ctx, f.bob, f.alice, HistoryQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +177,7 @@ func TestPrivateMessagesKeepHistoryOrder(t *testing.T) {
 func TestPrivateMessagesSince(t *testing.T) {
 	f := setup(t)
 	ctx := context.Background()
-	if _, err := f.svc.PrivateMessages(ctx, f.alice, f.bob, "yesterday"); !errors.Is(err, ErrNotValidTimeFmt) {
+	if _, err := f.svc.PrivateMessages(ctx, f.alice, f.bob, HistoryQuery{Since: "yesterday"}); !errors.Is(err, ErrNotValidTimeFmt) {
 		t.Fatalf("bad since: %v", err)
 	}
 	cutoff := time.Now().UTC()
@@ -174,7 +185,7 @@ func TestPrivateMessagesSince(t *testing.T) {
 	if _, err := f.svc.SendMessage(ctx, f.alice, msg(f.bob, TypePrivate, "new")); err != nil {
 		t.Fatal(err)
 	}
-	got, err := f.svc.PrivateMessages(ctx, f.alice, f.bob, cutoff.Format(time.RFC3339Nano))
+	got, err := f.svc.PrivateMessages(ctx, f.alice, f.bob, HistoryQuery{Since: cutoff.Format(time.RFC3339Nano)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,11 +206,11 @@ func TestGroupMessages(t *testing.T) {
 	if got := f.push.targets[0]; len(got) != 1 || got[0] != f.bob {
 		t.Fatalf("fan-out should skip the sender: %v", got)
 	}
-	got, err := f.svc.GroupMessages(ctx, f.bob, f.group)
+	got, err := f.svc.GroupMessages(ctx, f.bob, f.group, HistoryQuery{})
 	if err != nil || len(got) != 1 {
 		t.Fatalf("GroupMessages = %v, %v", got, err)
 	}
-	if _, err := f.svc.GroupMessages(ctx, f.carol, f.group); !errors.Is(err, ErrNotAuthorized) {
+	if _, err := f.svc.GroupMessages(ctx, f.carol, f.group, HistoryQuery{}); !errors.Is(err, ErrNotAuthorized) {
 		t.Fatalf("non-member read: %v", err)
 	}
 }
@@ -254,7 +265,7 @@ func TestDatabaseFailureFailsSendAndSkipsDelivery(t *testing.T) {
 	if len(f.push.targets) != 0 {
 		t.Fatal("an unsaved message must not be delivered")
 	}
-	got, _ := f.svc.PrivateMessages(context.Background(), f.bob, f.alice, "")
+	got, _ := f.svc.PrivateMessages(context.Background(), f.bob, f.alice, HistoryQuery{})
 	if len(got) != 0 {
 		t.Fatalf("an unsaved message must not be cached: %+v", got)
 	}
@@ -287,5 +298,34 @@ func TestRealtimeEventPolicy(t *testing.T) {
 	}
 	if ok, _ := f.svc.SeenAllowed(ctx, f.carol, f.bob); ok {
 		t.Fatal("strangers must not send read receipts")
+	}
+}
+
+func TestHistoryQueryRules(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	if _, err := f.svc.PrivateMessages(ctx, f.alice, f.bob, HistoryQuery{Since: "2026-01-01T00:00:00Z", Before: uuid.NewString()}); !errors.Is(err, ErrSinceAndBefore) {
+		t.Fatalf("since+before: %v", err)
+	}
+	if _, err := f.svc.PrivateMessages(ctx, f.alice, f.bob, HistoryQuery{Before: "nope"}); !errors.Is(err, ErrBadCursor) {
+		t.Fatalf("bad cursor: %v", err)
+	}
+	if _, err := f.svc.GroupMessages(ctx, f.alice, f.group, HistoryQuery{Since: "2026-01-01T00:00:00Z"}); !errors.Is(err, ErrSinceNotSupported) {
+		t.Fatalf("group since: %v", err)
+	}
+	if _, err := f.svc.GroupMessages(ctx, f.carol, f.group, HistoryQuery{Before: uuid.NewString()}); !errors.Is(err, ErrNotAuthorized) {
+		t.Fatalf("non-member paging: %v", err)
+	}
+	// older pages come from postgres, not the cache
+	_, _ = f.svc.PrivateMessages(ctx, f.alice, f.bob, HistoryQuery{Before: uuid.NewString()})
+	_, _ = f.svc.GroupMessages(ctx, f.alice, f.group, HistoryQuery{Before: uuid.NewString()})
+	if f.repo.beforeCalls != 2 {
+		t.Fatalf("before calls = %d, want 2", f.repo.beforeCalls)
+	}
+	if _, limit, _ := (HistoryQuery{Limit: 5000}).parse(); limit != maxPage {
+		t.Fatalf("limit not capped: %d", limit)
+	}
+	if err := f.svc.MarkGroupRead(ctx, f.carol, f.group, uuid.NewString()); !errors.Is(err, ErrNotAuthorized) {
+		t.Fatalf("non-member read marker: %v", err)
 	}
 }

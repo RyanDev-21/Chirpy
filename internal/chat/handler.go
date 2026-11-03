@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"RyanDev-21.com/Chirpy/internal/platform/httpx"
 	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
@@ -28,7 +29,8 @@ func (h *ChatHandler) writeErr(w http.ResponseWriter, r *http.Request, err error
 		httpx.Error(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrNotValidToID), errors.Is(err, ErrNotValidParentID), errors.Is(err, ErrNotSupportedTypeMsg),
 		errors.Is(err, ErrEmptyMessage), errors.Is(err, ErrNotValidTimeFmt), errors.Is(err, ErrNotValidUUID),
-		errors.Is(err, ErrMessageNotInChat):
+		errors.Is(err, ErrMessageNotInChat), errors.Is(err, ErrBadCursor), errors.Is(err, ErrSinceAndBefore),
+		errors.Is(err, ErrSinceNotSupported):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	default:
 		httpx.ServerError(w, r, err)
@@ -58,7 +60,7 @@ func (h *ChatHandler) GetMesagesForPrivateID(w http.ResponseWriter, r *http.Requ
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	msgs, err := h.svc.PrivateMessages(r.Context(), me, other, r.URL.Query().Get("since"))
+	msgs, err := h.svc.PrivateMessages(r.Context(), me, other, historyQuery(r))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -78,7 +80,7 @@ func (h *ChatHandler) GetMessagesForPublicID(w http.ResponseWriter, r *http.Requ
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	msgs, err := h.svc.GroupMessages(r.Context(), me, groupID)
+	msgs, err := h.svc.GroupMessages(r.Context(), me, groupID, historyQuery(r))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -124,6 +126,53 @@ func (h *ChatHandler) UpdateSeen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.MarkSeen(r.Context(), me, other, body.MsgID); err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+}
+
+// historyQuery reads ?since=, ?before=<message id> and ?limit= (1-100).
+func historyQuery(r *http.Request) HistoryQuery {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	return HistoryQuery{Since: q.Get("since"), Before: q.Get("before"), Limit: limit}
+}
+
+// Conversations handles GET /api/chats: every chat with its last message
+// and unread count, most recent first.
+func (h *ChatHandler) Conversations(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	list, err := h.svc.Conversations(r.Context(), me)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string][]Conversation{"conversations": list})
+}
+
+// MarkGroupRead handles POST /api/chat/groups/{group_id}/messages {"msg_id"}.
+func (h *ChatHandler) MarkGroupRead(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	groupID, err := httpx.PathUUID(r, "group_id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body PayloadForSeen
+	if err := httpx.Decode(w, r, &body); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid parameters")
+		return
+	}
+	if err := h.svc.MarkGroupRead(r.Context(), me, groupID, body.MsgID); err != nil {
 		h.writeErr(w, r, err)
 		return
 	}

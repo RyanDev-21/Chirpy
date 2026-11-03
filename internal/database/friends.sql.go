@@ -203,3 +203,23 @@ func (q *Queries) PairStatus(ctx context.Context, arg PairStatusParams) (string,
 	err := row.Scan(&status)
 	return status, err
 }
+
+const unfriend = `-- name: Unfriend :one
+DELETE FROM user_relationships
+WHERE status = 'confirm'
+  AND LEAST(user_id, otherUser_id) = LEAST($1::uuid, $2::uuid)
+  AND GREATEST(user_id, otherUser_id) = GREATEST($1::uuid, $2::uuid)
+RETURNING id
+`
+
+type UnfriendParams struct {
+	A uuid.UUID
+	B uuid.UUID
+}
+
+func (q *Queries) Unfriend(ctx context.Context, arg UnfriendParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, unfriend, arg.A, arg.B)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}

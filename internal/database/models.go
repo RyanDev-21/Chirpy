@@ -44,6 +44,13 @@ type EmailCode struct {
 	CreatedAt pgtype.Timestamp
 }
 
+type GroupRead struct {
+	GroupID   uuid.UUID
+	UserID    uuid.UUID
+	MessageID uuid.UUID
+	UpdatedAt pgtype.Timestamp
+}
+
 type Groupmessage struct {
 	ID        uuid.UUID
 	Content   pgtype.Text

@@ -21,6 +21,8 @@ type Repo interface {
 	Accept(ctx context.Context, reqID, receiverID uuid.UUID) (uuid.UUID, error)
 	Deny(ctx context.Context, reqID, receiverID uuid.UUID) (uuid.UUID, error)
 	Cancel(ctx context.Context, reqID, senderID uuid.UUID) (uuid.UUID, error)
+	// Unfriend removes a confirmed friendship; ErrNotFriends if there is none.
+	Unfriend(ctx context.Context, a, b uuid.UUID) error
 }
 
 type repo struct {
@@ -97,4 +99,12 @@ func (r *repo) Deny(ctx context.Context, reqID, receiverID uuid.UUID) (uuid.UUID
 
 func (r *repo) Cancel(ctx context.Context, reqID, senderID uuid.UUID) (uuid.UUID, error) {
 	return notFound(r.q.CancelFriendRequest(ctx, database.CancelFriendRequestParams{ID: reqID, UserID: senderID}))
+}
+
+func (r *repo) Unfriend(ctx context.Context, a, b uuid.UUID) error {
+	_, err := r.q.Unfriend(ctx, database.UnfriendParams{A: a, B: b})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFriends
+	}
+	return err
 }

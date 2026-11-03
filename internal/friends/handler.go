@@ -19,7 +19,7 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrSelfRequest):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, ErrUnknownUser), errors.Is(err, ErrNotFound):
+	case errors.Is(err, ErrUnknownUser), errors.Is(err, ErrNotFound), errors.Is(err, ErrNotFriends):
 		httpx.Error(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrRequestExists), errors.Is(err, ErrAlreadyFriends):
 		httpx.Error(w, http.StatusConflict, err.Error())
@@ -130,4 +130,23 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, ResponseFriListStruct{FriendList: snap.Friends})
+}
+
+// Unfriend handles DELETE /api/friends/{user_id}.
+func (h *Handler) Unfriend(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	other, err := httpx.PathUUID(r, "user_id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	if err := h.svc.Unfriend(r.Context(), me, other); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

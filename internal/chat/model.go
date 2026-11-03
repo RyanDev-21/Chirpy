@@ -28,6 +28,9 @@ var (
 	ErrNotSupportedTypeMsg = errors.New(`type must be "private" or "public"`)
 	ErrEmptyMessage        = errors.New("msg must be 1-500 characters")
 	ErrMessageNotInChat    = errors.New("msg_id is not a message in this chat")
+	ErrBadCursor           = errors.New("before must be the id of a message in this chat")
+	ErrSinceAndBefore      = errors.New("use either since or before, not both")
+	ErrSinceNotSupported   = errors.New("since is not supported for group history")
 )
 
 const maxMessageLen = 500 // matches message.content VARCHAR(500)
@@ -65,6 +68,22 @@ type MessageListRes struct {
 
 type ResponseMessageID struct {
 	MsgID uuid.UUID `json:"msg_id"`
+}
+
+// Conversation is one row of the chat list (GET /api/chats).
+type Conversation struct {
+	Type        string       `json:"type"` // "private" or "public"
+	ID          uuid.UUID    `json:"id"`   // the other user, or the group
+	Name        string       `json:"name"`
+	LastMessage *LastMessage `json:"last_message"` // null for a group with no messages
+	Unread      int          `json:"unread"`
+}
+
+type LastMessage struct {
+	ID        uuid.UUID `json:"id"`
+	Msg       string    `json:"msg"`
+	FromID    uuid.UUID `json:"from_id"` // zero uuid if the sender deleted their account
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // JobSeen is the payload of TopicSeen.

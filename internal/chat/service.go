@@ -34,8 +34,10 @@ type Pusher interface {
 
 type ChatService interface {
 	SendMessage(ctx context.Context, from uuid.UUID, in InCommingMessage) (uuid.UUID, error)
-	PrivateMessages(ctx context.Context, me, other uuid.UUID, since string) ([]MessageMetaDataRes, error)
-	GroupMessages(ctx context.Context, me, groupID uuid.UUID) ([]MessageMetaDataRes, error)
+	PrivateMessages(ctx context.Context, me, other uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error)
+	GroupMessages(ctx context.Context, me, groupID uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error)
+	MarkGroupRead(ctx context.Context, me, groupID uuid.UUID, msgID string) error
+	Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error)
 	MarkSeen(ctx context.Context, me, other uuid.UUID, msgID string) error
 
 	HandleSeen(ctx context.Context, j JobSeen) error
@@ -198,8 +200,42 @@ func parseSince(since string) (time.Time, error) {
 	return t, nil
 }
 
-func (s *chatService) PrivateMessages(ctx context.Context, me, other uuid.UUID, since string) ([]MessageMetaDataRes, error) {
-	sinceT, err := parseSince(since)
+// HistoryQuery selects a page of history: the latest page by default,
+// newer messages with Since, or older ones with Before (a message id).
+type HistoryQuery struct {
+	Since  string
+	Before string
+	Limit  int
+}
+
+const maxPage = 100
+
+func (q HistoryQuery) parse() (before uuid.UUID, limit int, err error) {
+	if q.Since != "" && q.Before != "" {
+		return uuid.Nil, 0, ErrSinceAndBefore
+	}
+	limit = pageSize
+	if q.Limit > 0 {
+		limit = min(q.Limit, maxPage)
+	}
+	if q.Before != "" {
+		if before, err = uuid.Parse(q.Before); err != nil {
+			return uuid.Nil, 0, ErrBadCursor
+		}
+	}
+	return before, limit, nil
+}
+
+func (s *chatService) PrivateMessages(ctx context.Context, me, other uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error) {
+	before, limit, err := q.parse()
+	if err != nil {
+		return nil, err
+	}
+	if before != uuid.Nil {
+		// older history is read from postgres; the cache only holds the tail
+		return s.repo.PrivateBefore(ctx, me, other, before, limit)
+	}
+	sinceT, err := parseSince(q.Since)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +244,7 @@ func (s *chatService) PrivateMessages(ctx context.Context, me, other uuid.UUID, 
 		return nil, err
 	}
 	if sinceT.IsZero() {
-		return s.cache.Recent(ctx, key, pageSize)
+		return s.cache.Recent(ctx, key, limit)
 	}
 	cached, err := s.cache.Recent(ctx, key, streamCap)
 	if err != nil {
@@ -221,7 +257,14 @@ func (s *chatService) PrivateMessages(ctx context.Context, me, other uuid.UUID, 
 	return s.repo.PrivateSince(ctx, me, other, sinceT, streamCap)
 }
 
-func (s *chatService) GroupMessages(ctx context.Context, me, groupID uuid.UUID) ([]MessageMetaDataRes, error) {
+func (s *chatService) GroupMessages(ctx context.Context, me, groupID uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error) {
+	if q.Since != "" {
+		return nil, ErrSinceNotSupported
+	}
+	before, limit, err := q.parse()
+	if err != nil {
+		return nil, err
+	}
 	ok, err := s.groups.IsMember(ctx, groupID, me)
 	if err != nil {
 		return nil, err
@@ -229,11 +272,35 @@ func (s *chatService) GroupMessages(ctx context.Context, me, groupID uuid.UUID) 
 	if !ok {
 		return nil, ErrNotAuthorized
 	}
+	if before != uuid.Nil {
+		return s.repo.GroupBefore(ctx, groupID, before, limit)
+	}
 	key := groupKey(groupID)
 	if err := s.ensureSeeded(ctx, key, me, groupID, TypePublic); err != nil {
 		return nil, err
 	}
-	return s.cache.Recent(ctx, key, pageSize)
+	return s.cache.Recent(ctx, key, limit)
+}
+
+// MarkGroupRead records the last group message the caller has read.
+// Markers only move forward.
+func (s *chatService) MarkGroupRead(ctx context.Context, me, groupID uuid.UUID, msgIDStr string) error {
+	msgID, err := uuid.Parse(msgIDStr)
+	if err != nil {
+		return ErrNotValidUUID
+	}
+	ok, err := s.groups.IsMember(ctx, groupID, me)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotAuthorized
+	}
+	return s.repo.MarkGroupRead(ctx, groupID, me, msgID)
+}
+
+func (s *chatService) Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error) {
+	return s.repo.Conversations(ctx, me)
 }
 
 func (s *chatService) MarkSeen(ctx context.Context, me, other uuid.UUID, msgIDStr string) error {
