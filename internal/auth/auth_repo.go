@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 
 	"github.com/jackc/pgx/v5"
@@ -22,6 +24,15 @@ type AuthRepo interface {
 	CreateRefreshToken(ctx context.Context, payload PayloadForRefresh) error
 }
 
+// hashToken is what the database stores instead of the refresh token, so a
+// leaked table cannot be used to sign in. Refresh tokens are 32 random
+// bytes, so a plain (unsalted, fast) SHA-256 is enough: there is nothing to
+// brute-force, unlike passwords.
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 func NewAuthRepo(queries *database.Queries) AuthRepo {
 	return &authRepo{
 		queries: queries,
@@ -30,7 +41,6 @@ func NewAuthRepo(queries *database.Queries) AuthRepo {
 
 func convertToDomainModel(payload database.RefreshToken) *RefreshToken {
 	return &RefreshToken{
-		Token:     payload.Token,
 		UserID:    payload.UserID,
 		ExpiresAt: payload.ExpireAt,
 		UpdatedAt: payload.UpdatedAt,
@@ -38,11 +48,11 @@ func convertToDomainModel(payload database.RefreshToken) *RefreshToken {
 }
 
 func (r *authRepo) RevokeToken(ctx context.Context, token string) error {
-	return r.queries.RevokeRefreshToken(ctx, token)
+	return r.queries.RevokeRefreshToken(ctx, hashToken(token))
 }
 
 func (r *authRepo) GetRefreshToken(ctx context.Context, token string) (*RefreshToken, error) {
-	response, err := r.queries.GetRefreshToken(ctx, token)
+	response, err := r.queries.GetRefreshToken(ctx, hashToken(token))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotAuthorized
@@ -54,7 +64,7 @@ func (r *authRepo) GetRefreshToken(ctx context.Context, token string) (*RefreshT
 
 func (r *authRepo) CreateRefreshToken(ctx context.Context, payload PayloadForRefresh) error {
 	_, err := r.queries.CreateARefreshToken(ctx, database.CreateARefreshTokenParams{
-		Token:    payload.token,
+		Token:    hashToken(payload.token),
 		UserID:   payload.userID,
 		ExpireAt: payload.expiresAt,
 	})

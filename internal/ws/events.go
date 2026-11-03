@@ -35,8 +35,11 @@ type InCommingEventForSeen struct {
 	MsgID string `json:"msg_id"`
 }
 
+// InCommingEventForTyping: to_id is a user (type "private", the default)
+// or a group (type "public").
 type InCommingEventForTyping struct {
 	ToID string `json:"to_id"`
+	Type string `json:"type,omitempty"`
 }
 
 type OutGoingEventForSeen struct {
@@ -45,7 +48,8 @@ type OutGoingEventForSeen struct {
 }
 
 type OutGoingEventForTyping struct {
-	FromID string `json:"from_id"`
+	FromID  string `json:"from_id"`
+	GroupID string `json:"group_id,omitempty"`
 }
 
 type OutFriEvent struct {
@@ -60,16 +64,4 @@ type OutGoingMessage struct {
 	FromID    string    `json:"from_id"`
 	Type      string    `json:"type"`
 	CreatedAt time.Time `json:"created_at"`
-}
-
-// SeenEvent and TypoEvent are client-originated events routed by the hub.
-type SeenEvent struct {
-	ToID   string
-	FromID string
-	MsgID  string
-}
-
-type TypoEvent struct {
-	FromID string
-	ToID   string
 }

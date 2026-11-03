@@ -62,16 +62,14 @@ func RoutePattern(r *http.Request) string {
 	return "unmatched"
 }
 
-// Authenticate requires a valid bearer token. With allowQuery, ?token= is
-// also accepted (for websocket upgrades from browsers).
-func Authenticate(secret string, allowQuery bool) func(http.Handler) http.Handler {
+// Authenticate requires a valid "Authorization: Bearer <token>" header.
+// Tokens in the URL are never accepted: URLs end up in proxy, CDN and crash
+// reporter logs.
+func Authenticate(secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token, err := secure.GetBearerToken(r.Header)
-			if err != nil && allowQuery {
-				token = r.URL.Query().Get("token")
-			}
-			if token == "" {
+			if err != nil {
 				Error(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}

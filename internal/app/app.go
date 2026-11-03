@@ -125,6 +125,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	a.friends = friends.NewService(friends.NewRepo(queries), friends.NewStore(rdb), a.users, a.hub, logger)
 	a.groups = groups.NewGroupService(groups.NewGroupRepo(db), groups.NewStore(rdb), logger)
 	a.chat = chat.NewChatService(chat.NewChatRepo(queries), chat.NewCache(rdb), a.groups, a.friends, a.hub, a.queue, logger)
+	a.hub.SetPolicy(a.chat)
 	a.auth = authsvc.NewAuthService(users.NewUserRepo(queries), authsvc.NewAuthRepo(queries), cfg.JWTSecret, logger)
 
 	a.handlers = handlers{

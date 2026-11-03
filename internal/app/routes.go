@@ -43,7 +43,7 @@ func (a *App) Router() http.Handler {
 	limit := func(p limitPolicy) func(http.Handler) http.Handler {
 		return ratelimit.Middleware(a.limiter(p), p.name, a.logger)
 	}
-	authed := httpx.Authenticate(a.cfg.JWTSecret, false)
+	authed := httpx.Authenticate(a.cfg.JWTSecret)
 
 	// livez only proves the process is up and touches nothing else, so an
 	// external keep-alive ping does not keep the database awake. readyz
@@ -62,8 +62,9 @@ func (a *App) Router() http.Handler {
 			r.Post("/revoke", a.handlers.auth.Revoke)
 		})
 
-		// websocket: browsers cannot set headers on upgrade, so ?token= is allowed here only
-		r.With(httpx.Authenticate(a.cfg.JWTSecret, true), limit(limitWS)).Get("/chats/ws", a.handlers.chat.ServeWs)
+		// websocket: the Android client sends the Authorization header on the
+		// upgrade request (OkHttp/Ktor support it); ?token= is not accepted
+		r.With(authed, limit(limitWS)).Get("/chats/ws", a.handlers.chat.ServeWs)
 
 		// authenticated
 		r.Group(func(r chi.Router) {
