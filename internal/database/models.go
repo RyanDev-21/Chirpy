@@ -19,6 +19,7 @@ type ChatGroup struct {
 	CreatedAt     pgtype.Timestamp
 	UpdatedAt     pgtype.Timestamp
 	CurrentMember int16
+	InviteCode    string
 }
 
 type Chirp struct {

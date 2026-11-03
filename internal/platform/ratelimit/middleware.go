@@ -30,13 +30,24 @@ func ClientKey(r *http.Request) string {
 		return "user:" + userID.String()
 	}
 	if ip := reqctx.ClientIP(r.Context()); ip != "" {
-		return "ip:" + ip
+		return "ip:" + limitKeyForIP(ip)
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
 	return "ip:" + host
+}
+
+// limitKeyForIP groups IPv6 addresses by /64: one phone or home network
+// usually gets a whole /64 and can rotate through its addresses freely, so
+// limiting single IPv6 addresses would be trivial to dodge.
+func limitKeyForIP(s string) string {
+	ip := net.ParseIP(s)
+	if ip == nil || ip.To4() != nil {
+		return s
+	}
+	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
 // Middleware rejects requests over the limit with 429. name scopes the

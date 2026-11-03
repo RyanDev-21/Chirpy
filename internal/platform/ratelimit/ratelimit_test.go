@@ -107,3 +107,18 @@ func TestMiddlewareFailsOpen(t *testing.T) {
 		t.Fatalf("code = %d, want 200 when the limiter is down", rec.Code)
 	}
 }
+
+func TestLimitKeyGroupsIPv6By64(t *testing.T) {
+	a := limitKeyForIP("2001:fb1:59:52b3:f5ee:4b03:e22f:ca7d")
+	b := limitKeyForIP("2001:fb1:59:52b3::1")
+	c := limitKeyForIP("2001:fb1:59:52b4::1")
+	if a != b || a != "2001:fb1:59:52b3::/64" {
+		t.Fatalf("same /64 must share a key: %q %q", a, b)
+	}
+	if a == c {
+		t.Fatal("different /64s must not share a key")
+	}
+	if got := limitKeyForIP("171.96.138.164"); got != "171.96.138.164" {
+		t.Fatalf("IPv4 must stay as-is, got %q", got)
+	}
+}

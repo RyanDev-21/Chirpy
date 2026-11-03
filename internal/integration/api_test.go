@@ -55,8 +55,14 @@ func TestProtectedRoutesRequireAuth(t *testing.T) {
 		{"GET", "/api/users/configs"},
 		{"POST", "/api/users/configs"},
 		{"POST", "/api/chats/groups"},
-		{"POST", "/api/chats/groups/00000000-0000-0000-0000-000000000000/members"},
+		{"GET", "/api/chats/groups"},
+		{"GET", "/api/chats/groups/00000000-0000-0000-0000-000000000000"},
+		{"POST", "/api/chats/groups/join"},
+		{"GET", "/api/chats/groups/invites/ABCD2345"},
+		{"GET", "/api/chats/groups/00000000-0000-0000-0000-000000000000/invite"},
+		{"POST", "/api/chats/groups/00000000-0000-0000-0000-000000000000/invite"},
 		{"DELETE", "/api/chats/groups/00000000-0000-0000-0000-000000000000/members"},
+		{"GET", "/api/users/me"},
 		{"POST", "/api/chats/message"},
 		{"GET", "/api/chat/00000000-0000-0000-0000-000000000000/messages"},
 		{"GET", "/api/chat/groups/00000000-0000-0000-0000-000000000000/messages"},
@@ -221,10 +227,15 @@ func TestGroups(t *testing.T) {
 	e.now(`SELECT name FROM chat_groups WHERE id = $1`, "devs", g.ChatID)
 
 	members := "/api/chats/groups/" + g.ChatID + "/members"
+	code := e.invite(leader.Token, g.ChatID)
 	memberWS := e.dial(member.Token)
-	e.expect(e.do("POST", members, member.Token, nil), 201)
-	e.expect(e.do("POST", members, member.Token, nil), 409)
-	e.expect(e.do("POST", members, outsider.Token, nil), 409) // full
+	e.expect(e.join(member.Token, code), 201)
+	e.expect(e.join(member.Token, code), 409)
+	e.expect(e.join(outsider.Token, code), 409) // full
+	// the old join-by-id route is gone: knowing a group id is not enough
+	if r := e.do("POST", members, outsider.Token, nil); r.code != 405 && r.code != 404 {
+		t.Fatalf("join by id status = %d, want 404/405", r.code)
+	}
 	e.now(`SELECT current_member::text FROM chat_groups WHERE id = $1`, "2", g.ChatID)
 
 	send := map[string]string{"msg": "standup?", "to_id": g.ChatID, "type": "public"}
@@ -284,6 +295,7 @@ func TestConcurrentJoinsRespectCapacity(t *testing.T) {
 	}
 	e.expect(e.do("POST", "/api/chats/groups", leader.Token, map[string]any{"group_name": "race", "max_mems": 5}), 201).json(t, &g)
 
+	code := e.invite(leader.Token, g.ChatID)
 	joiners := make([]user, 20)
 	for i := range joiners {
 		joiners[i] = e.seedUser(fmt.Sprintf("joiner%d", i))
@@ -294,7 +306,7 @@ func TestConcurrentJoinsRespectCapacity(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			codes <- e.do("POST", "/api/chats/groups/"+g.ChatID+"/members", u.Token, nil).code
+			codes <- e.join(u.Token, code).code
 		}()
 	}
 	wg.Wait()
@@ -408,7 +420,7 @@ func TestMyGroupsAndGroupDetail(t *testing.T) {
 	}
 	e.expect(e.do("POST", "/api/chats/groups", leader.Token, map[string]any{"group_name": "Beta", "description": "b", "max_mems": 5}), 201).json(t, &g)
 	e.expect(e.do("POST", "/api/chats/groups", leader.Token, map[string]any{"group_name": "alpha", "max_mems": 5}), 201)
-	e.expect(e.do("POST", "/api/chats/groups/"+g.ChatID+"/members", member.Token, nil), 201)
+	e.expect(e.join(member.Token, e.invite(leader.Token, g.ChatID)), 201)
 
 	var mine struct {
 		Groups []struct {
@@ -440,11 +452,60 @@ func TestMyGroupsAndGroupDetail(t *testing.T) {
 	if !d.IsMember || d.Count != 2 || len(d.Members) != 2 || d.Members[0].UserID != leader.ID || d.Members[0].Role != "Leader" {
 		t.Fatalf("member's view = %+v", d)
 	}
-	// non-members see the group but not who is in it
-	d.Members = nil
-	e.expect(e.do("GET", "/api/chats/groups/"+g.ChatID, outsider.Token, nil), 200).json(t, &d)
-	if d.IsMember || d.Members != nil || d.Name != "Beta" || d.Count != 2 {
-		t.Fatalf("outsider's view = %+v", d)
-	}
+	// groups are private: a non-member can't see the group at all
+	e.expect(e.do("GET", "/api/chats/groups/"+g.ChatID, outsider.Token, nil), 404)
 	e.expect(e.do("GET", "/api/chats/groups/00000000-0000-0000-0000-000000000000", member.Token, nil), 404)
+}
+
+func TestGroupInvites(t *testing.T) {
+	e := newEnv(t)
+	leader, member, outsider := e.signup("leader"), e.signup("member"), e.signup("outsider")
+	var g struct {
+		ChatID string `json:"chat_id"`
+	}
+	e.expect(e.do("POST", "/api/chats/groups", leader.Token, map[string]any{"group_name": "Devs", "description": "d", "max_mems": 5}), 201).json(t, &g)
+
+	code := e.invite(leader.Token, g.ChatID)
+	if len(code) != 9 || code[4] != '-' {
+		t.Fatalf("code %q is not XXXX-XXXX", code)
+	}
+	// outsiders can't read the code
+	e.expect(e.do("GET", "/api/chats/groups/"+g.ChatID+"/invite", outsider.Token, nil), 404)
+
+	// preview before joining, typed sloppily
+	var p struct {
+		ID    string `json:"id"`
+		Name  string `json:"name"`
+		Count int    `json:"member_count"`
+	}
+	loose := strings.ToLower(strings.ReplaceAll(code, "-", ""))
+	e.expect(e.do("GET", "/api/chats/groups/invites/"+loose, outsider.Token, nil), 200).json(t, &p)
+	if p.ID != g.ChatID || p.Name != "Devs" || p.Count != 1 {
+		t.Fatalf("preview = %+v", p)
+	}
+	e.expect(e.do("GET", "/api/chats/groups/invites/ZZZZ2222", outsider.Token, nil), 404)
+	e.expect(e.do("GET", "/api/chats/groups/invites/not-a-code", outsider.Token, nil), 404)
+
+	var joined struct {
+		ChatID string `json:"chat_id"`
+	}
+	e.expect(e.join(member.Token, code), 201).json(t, &joined)
+	if joined.ChatID != g.ChatID {
+		t.Fatalf("joined %q, want %q", joined.ChatID, g.ChatID)
+	}
+	if e.invite(member.Token, g.ChatID) != code {
+		t.Fatal("members see the same code")
+	}
+
+	// only the leader regenerates; the old code then stops working
+	e.expect(e.do("POST", "/api/chats/groups/"+g.ChatID+"/invite", member.Token, nil), 403)
+	var fresh struct {
+		Code string `json:"code"`
+	}
+	e.expect(e.do("POST", "/api/chats/groups/"+g.ChatID+"/invite", leader.Token, nil), 200).json(t, &fresh)
+	if fresh.Code == code || len(fresh.Code) != 9 {
+		t.Fatalf("regenerated code %q", fresh.Code)
+	}
+	e.expect(e.join(outsider.Token, code), 404)
+	e.expect(e.join(outsider.Token, fresh.Code), 201)
 }
