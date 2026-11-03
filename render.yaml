@@ -2,37 +2,37 @@
 # Values marked `sync: false` are asked for in the dashboard on first
 # deploy and never stored in git.
 services:
-  - type: web
-    name: chirpy-api
-    runtime: docker
-    plan: free
-    region: singapore
-    branch: main
-    # deploy only after the GitHub checks (CI) on the commit pass
-    autoDeployTrigger: checksPass
-    # /livez touches neither Postgres nor Redis, so health checks do not
-    # keep the serverless database awake
-    healthCheckPath: /livez
-    envVars:
-      - key: PLATFORM
-        value: prod
-      - key: SECRET
-        generateValue: true
-      - key: DB_URL
-        sync: false
-      - key: REDIS_URL
-        sync: false
-      # free Upstash is billed per command; Redis Streams polling would
-      # use the monthly allowance while idle
-      - key: QUEUE_BACKEND
-        value: memory
-      - key: DB_MAX_CONNS
-        value: "5"
-      - key: DB_MAX_IDLE_TIME
-        value: 2m
-      - key: REDIS_POOL_SIZE
-        value: "10"
-      - key: LOG_FORMAT
-        value: json
-      - key: LOG_LEVEL
-        value: info
+    - type: web
+      name: chirpy-api
+      runtime: docker
+      plan: free
+      region: singapore
+      branch: main
+      # deploy only after the GitHub checks (CI) on the commit pass
+      autoDeployTrigger: checksPass
+      # /livez touches neither Postgres nor Redis, so health checks do not
+      # keep the serverless database awake
+      healthCheckPath: /livez
+      envVars:
+          - key: PLATFORM
+            value: prod
+          - key: SECRET
+            generateValue: true
+          - key: DB_URL
+            sync: false
+          - key: REDIS_URL
+            sync: false
+          # free Upstash is billed per command; Redis Streams polling would
+          # use the monthly allowance while idle
+          - key: QUEUE_BACKEND
+            value: memory
+          - key: DB_MAX_CONNS
+            value: "5"
+          - key: DB_MAX_IDLE_TIME
+            value: 2m
+          - key: REDIS_POOL_SIZE
+            value: "10"
+          - key: LOG_FORMAT
+            value: json
+          - key: LOG_LEVEL
+            value: info

@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -64,6 +65,21 @@ type Config struct {
 }
 
 func (c Config) IsDev() bool { return c.Platform == "dev" }
+
+// Warnings lists settings that work but are unsafe outside development.
+func (c Config) Warnings() []string {
+	if c.IsDev() {
+		return nil
+	}
+	var w []string
+	if u, err := url.Parse(c.DatabaseURL); err == nil && u.Query().Get("sslmode") != "verify-full" {
+		w = append(w, "DB_URL does not use sslmode=verify-full: the database certificate is not verified")
+	}
+	if c.RedisURL != "" && !strings.HasPrefix(c.RedisURL, "rediss://") {
+		w = append(w, "REDIS_URL is not rediss://: Redis traffic is not encrypted")
+	}
+	return w
+}
 
 // Load reads an optional .env file (ENV_FILE, ./.env or ../.env) and then
 // the environment. Real environment variables take precedence.

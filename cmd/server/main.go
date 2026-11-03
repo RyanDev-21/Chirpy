@@ -21,6 +21,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	for _, w := range cfg.Warnings() {
+		logger.Warn("insecure configuration", "detail", w)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

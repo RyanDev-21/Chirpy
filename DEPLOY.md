@@ -17,11 +17,15 @@ Limits change; check each provider's pricing page.
 ### 1. Postgres on Neon
 1. Create a project, region **AWS Asia Pacific (Singapore)**.
 2. Copy the **direct** connection string (not the `-pooler` one: the server
-   keeps its own small pool) and make sure it ends with `?sslmode=require`.
+   keeps its own small pool) and change `sslmode=require` to
+   **`sslmode=verify-full`**. `require` only encrypts; `verify-full` also checks
+   the certificate really belongs to Neon. The server logs an
+   "insecure configuration" warning on start if this is missing.
 
 ### 2. Redis on Upstash
 1. Create a Redis database, region **ap-southeast-1 (Singapore)**, TLS on.
-2. Copy the `rediss://default:…@….upstash.io:6379` URL.
+2. Copy the `rediss://default:…@….upstash.io:6379` URL. It must start with
+   `rediss://` (two s: TLS); Upstash closes plain `redis://` connections.
 
 ### 3. API on Render
 1. Render dashboard → **New → Blueprint** → select `RyanDev-21/Chirpy`.

@@ -82,3 +82,20 @@ func TestRejectsBadDeploySettings(t *testing.T) {
 		})
 	}
 }
+
+func TestWarnsAboutUnverifiedTLS(t *testing.T) {
+	base(t)
+	t.Setenv("PLATFORM", "prod")
+	t.Setenv("DB_URL", "postgres://u:p@h/db?sslmode=require")
+	t.Setenv("REDIS_URL", "redis://h:6379")
+	cfg, _ := Load()
+	if len(cfg.Warnings()) != 2 {
+		t.Fatalf("warnings = %v", cfg.Warnings())
+	}
+	t.Setenv("DB_URL", "postgres://u:p@h/db?sslmode=verify-full")
+	t.Setenv("REDIS_URL", "rediss://h:6379")
+	cfg, _ = Load()
+	if len(cfg.Warnings()) != 0 {
+		t.Fatalf("warnings = %v", cfg.Warnings())
+	}
+}

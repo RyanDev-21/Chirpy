@@ -27,7 +27,8 @@ func NewClient(ctx context.Context, o Options) (*redis.Client, error) {
 	if o.URL != "" {
 		parsed, err := redis.ParseURL(o.URL)
 		if err != nil {
-			return nil, fmt.Errorf("parse REDIS_URL: %w", err)
+			// not wrapped: url.Parse errors quote the whole URL, password included
+			return nil, errors.New("parse REDIS_URL: invalid URL (expected redis:// or rediss://user:password@host:port)")
 		}
 		opts = parsed
 	}
