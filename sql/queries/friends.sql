@@ -2,16 +2,26 @@
 INSERT INTO user_relationships (id, user_id, otherUser_id)
 VALUES ($1, $2, $3);
 
--- name: AcceptFriendRequest :execrows
+-- name: PairStatus :one
+SELECT status FROM user_relationships
+WHERE LEAST(user_id, otherUser_id) = LEAST(@a::uuid, @b::uuid)
+  AND GREATEST(user_id, otherUser_id) = GREATEST(@a::uuid, @b::uuid);
+
+-- name: AcceptFriendRequest :one
 UPDATE user_relationships
 SET status = 'confirm', updated_at = NOW()
-WHERE id = $1 AND otherUser_id = $2 AND status = 'pending';
+WHERE id = $1 AND otherUser_id = $2 AND status = 'pending'
+RETURNING user_id;
 
--- name: DeleteFriendRequestBySender :execrows
-DELETE FROM user_relationships WHERE id = $1 AND user_id = $2 AND status = 'pending';
+-- name: DenyFriendRequest :one
+DELETE FROM user_relationships
+WHERE id = $1 AND otherUser_id = $2 AND status = 'pending'
+RETURNING user_id;
 
--- name: DeleteFriendRequestByReceiver :execrows
-DELETE FROM user_relationships WHERE id = $1 AND otherUser_id = $2 AND status = 'pending';
+-- name: CancelFriendRequest :one
+DELETE FROM user_relationships
+WHERE id = $1 AND user_id = $2 AND status = 'pending'
+RETURNING otherUser_id;
 
 -- name: ListIncomingFriendRequests :many
 SELECT ur.id, ur.user_id AS from_id, u.name AS from_name

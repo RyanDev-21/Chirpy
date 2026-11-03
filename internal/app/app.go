@@ -82,7 +82,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	queries := database.New(db)
 
 	a.users = users.NewUserService(users.NewUserRepo(queries), users.NewStore(rdb), a.queue, logger)
-	a.friends = friends.NewService(friends.NewRepo(queries), friends.NewStore(rdb), a.users, a.hub, a.queue, logger)
+	a.friends = friends.NewService(friends.NewRepo(queries), friends.NewStore(rdb), a.users, a.hub, logger)
 	a.groups = groups.NewGroupService(groups.NewGroupRepo(db), groups.NewStore(rdb), a.queue, logger)
 	a.chat = chat.NewChatService(chat.NewChatRepo(queries), chat.NewCache(rdb), a.groups, a.friends, a.hub, a.queue, logger)
 	a.auth = authsvc.NewAuthService(users.NewUserRepo(queries), authsvc.NewAuthRepo(queries), cfg.JWTSecret, logger)

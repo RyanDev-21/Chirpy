@@ -15,14 +15,6 @@ var (
 	ErrUnknownUser    = errors.New("user does not exist")
 )
 
-// queue topics owned by the friends package
-const (
-	TopicCreate = "friend.request.create"
-	TopicAccept = "friend.request.accept"
-	TopicDeny   = "friend.request.deny"
-	TopicCancel = "friend.request.cancel"
-)
-
 type FriendMetaData struct {
 	UserID uuid.UUID `json:"user_id"`
 	Name   string    `json:"name"`
@@ -33,13 +25,6 @@ type Snapshot struct {
 	Friends  []FriendMetaData
 	Incoming map[uuid.UUID]FriendMetaData // reqID -> sender
 	Outgoing map[uuid.UUID]FriendMetaData // reqID -> receiver
-}
-
-// JobRequest is the payload for every friend request topic.
-type JobRequest struct {
-	ReqID  uuid.UUID `json:"req_id"`
-	FromID uuid.UUID `json:"from_id"`
-	ToID   uuid.UUID `json:"to_id"`
 }
 
 // HTTP shapes (kept compatible with the previous API)

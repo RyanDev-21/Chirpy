@@ -11,10 +11,11 @@ import (
 	"github.com/google/uuid"
 )
 
-const acceptFriendRequest = `-- name: AcceptFriendRequest :execrows
+const acceptFriendRequest = `-- name: AcceptFriendRequest :one
 UPDATE user_relationships
 SET status = 'confirm', updated_at = NOW()
 WHERE id = $1 AND otherUser_id = $2 AND status = 'pending'
+RETURNING user_id
 `
 
 type AcceptFriendRequestParams struct {
@@ -22,12 +23,29 @@ type AcceptFriendRequestParams struct {
 	OtheruserID uuid.UUID
 }
 
-func (q *Queries) AcceptFriendRequest(ctx context.Context, arg AcceptFriendRequestParams) (int64, error) {
-	result, err := q.db.Exec(ctx, acceptFriendRequest, arg.ID, arg.OtheruserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+func (q *Queries) AcceptFriendRequest(ctx context.Context, arg AcceptFriendRequestParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, acceptFriendRequest, arg.ID, arg.OtheruserID)
+	var user_id uuid.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
+const cancelFriendRequest = `-- name: CancelFriendRequest :one
+DELETE FROM user_relationships
+WHERE id = $1 AND user_id = $2 AND status = 'pending'
+RETURNING otherUser_id
+`
+
+type CancelFriendRequestParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+func (q *Queries) CancelFriendRequest(ctx context.Context, arg CancelFriendRequestParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, cancelFriendRequest, arg.ID, arg.UserID)
+	var otheruser_id uuid.UUID
+	err := row.Scan(&otheruser_id)
+	return otheruser_id, err
 }
 
 const createFriendRequest = `-- name: CreateFriendRequest :exec
@@ -46,38 +64,22 @@ func (q *Queries) CreateFriendRequest(ctx context.Context, arg CreateFriendReque
 	return err
 }
 
-const deleteFriendRequestByReceiver = `-- name: DeleteFriendRequestByReceiver :execrows
-DELETE FROM user_relationships WHERE id = $1 AND otherUser_id = $2 AND status = 'pending'
+const denyFriendRequest = `-- name: DenyFriendRequest :one
+DELETE FROM user_relationships
+WHERE id = $1 AND otherUser_id = $2 AND status = 'pending'
+RETURNING user_id
 `
 
-type DeleteFriendRequestByReceiverParams struct {
+type DenyFriendRequestParams struct {
 	ID          uuid.UUID
 	OtheruserID uuid.UUID
 }
 
-func (q *Queries) DeleteFriendRequestByReceiver(ctx context.Context, arg DeleteFriendRequestByReceiverParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteFriendRequestByReceiver, arg.ID, arg.OtheruserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const deleteFriendRequestBySender = `-- name: DeleteFriendRequestBySender :execrows
-DELETE FROM user_relationships WHERE id = $1 AND user_id = $2 AND status = 'pending'
-`
-
-type DeleteFriendRequestBySenderParams struct {
-	ID     uuid.UUID
-	UserID uuid.UUID
-}
-
-func (q *Queries) DeleteFriendRequestBySender(ctx context.Context, arg DeleteFriendRequestBySenderParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteFriendRequestBySender, arg.ID, arg.UserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+func (q *Queries) DenyFriendRequest(ctx context.Context, arg DenyFriendRequestParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, denyFriendRequest, arg.ID, arg.OtheruserID)
+	var user_id uuid.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
 }
 
 const listFriends = `-- name: ListFriends :many
@@ -182,4 +184,22 @@ func (q *Queries) ListOutgoingFriendRequests(ctx context.Context, userID uuid.UU
 		return nil, err
 	}
 	return items, nil
+}
+
+const pairStatus = `-- name: PairStatus :one
+SELECT status FROM user_relationships
+WHERE LEAST(user_id, otherUser_id) = LEAST($1::uuid, $2::uuid)
+  AND GREATEST(user_id, otherUser_id) = GREATEST($1::uuid, $2::uuid)
+`
+
+type PairStatusParams struct {
+	A uuid.UUID
+	B uuid.UUID
+}
+
+func (q *Queries) PairStatus(ctx context.Context, arg PairStatusParams) (string, error) {
+	row := q.db.QueryRow(ctx, pairStatus, arg.A, arg.B)
+	var status string
+	err := row.Scan(&status)
+	return status, err
 }
