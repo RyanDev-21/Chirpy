@@ -25,6 +25,7 @@ import (
 
 	"RyanDev-21.com/Chirpy/internal/app"
 	"RyanDev-21.com/Chirpy/internal/config"
+	"RyanDev-21.com/Chirpy/internal/platform/secure"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -182,6 +183,32 @@ func (e *env) signup(name string) user {
 	e.expect(e.do("POST", "/api/login", "", map[string]string{"email": email, "password": password}), 200).json(e.t, &u)
 	u.email = email
 	return u
+}
+
+// now asserts a SQL query returns want (as text) right away: for writes
+// that must be committed before the API responds.
+func (e *env) now(query, want string, args ...any) {
+	e.t.Helper()
+	var got string
+	if err := e.db.QueryRow(query, args...).Scan(&got); err != nil || got != want {
+		e.t.Fatalf("%s = %q (err %v), want %q", query, got, err, want)
+	}
+}
+
+// seedUser creates a user directly in postgres and mints a token, for
+// tests that need many users without hitting the signup rate limit.
+func (e *env) seedUser(name string) user {
+	e.t.Helper()
+	var id string
+	if err := e.db.QueryRow(`INSERT INTO users (name, email, password) VALUES ($1, $2, 'unused') RETURNING id`,
+		name, name+"@example.io").Scan(&id); err != nil {
+		e.t.Fatal(err)
+	}
+	token, err := secure.MakeJWT(uuid.MustParse(id), secret, time.Hour)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return user{ID: id, Token: token, email: name + "@example.io"}
 }
 
 // eventually polls a SQL query until it returns want (as text).

@@ -34,6 +34,12 @@ type Config struct {
 
 	CORSOrigins []string
 
+	// TrustProxyHeaders makes the server take the client IP from
+	// X-Forwarded-For / X-Real-IP. Only enable it behind a proxy you control
+	// that overwrites those headers; otherwise clients can spoof their IP
+	// and bypass per-IP rate limits.
+	TrustProxyHeaders bool
+
 	ShutdownTimeout time.Duration
 }
 
@@ -61,6 +67,9 @@ func Load() (Config, error) {
 		ShutdownTimeout: 15 * time.Second,
 	}
 	var err error
+	if c.TrustProxyHeaders, err = strconv.ParseBool(getenv("TRUST_PROXY_HEADERS", "false")); err != nil {
+		return c, fmt.Errorf("TRUST_PROXY_HEADERS: %w", err)
+	}
 	if c.RedisDB, err = strconv.Atoi(getenv("REDIS_DB", "0")); err != nil {
 		return c, fmt.Errorf("REDIS_DB: %w", err)
 	}

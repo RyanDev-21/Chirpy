@@ -33,7 +33,9 @@ var (
 // what protects a route is visible next to the route itself.
 func (a *App) Router() http.Handler {
 	r := chi.NewRouter()
-	r.Use(chimw.RealIP)
+	if a.cfg.TrustProxyHeaders {
+		r.Use(chimw.RealIP)
+	}
 	r.Use(httpx.RequestLogger(a.logger))
 	r.Use(chimw.Recoverer)
 	r.Use(httpx.CORS(a.cfg.CORSOrigins))

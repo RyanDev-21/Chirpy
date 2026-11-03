@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -117,10 +119,12 @@ func TestFriendsAndPrivateChat(t *testing.T) {
 
 	e.expect(e.do("PUT", "/api/friends/requests/"+sent.ReqID, alice.Token, map[string]string{"status": "confirm"}), 404)
 	e.expect(e.do("PUT", "/api/friends/requests/"+sent.ReqID, bob.Token, map[string]string{"status": "confirm"}), 201)
-	e.eventually(`SELECT status FROM user_relationships WHERE id = $1`, "confirm", sent.ReqID)
+	e.now(`SELECT status FROM user_relationships WHERE id = $1`, "confirm", sent.ReqID)
 
 	for i := range 3 {
 		e.expect(e.do("POST", "/api/chats/message", alice.Token, map[string]string{"msg": fmt.Sprintf("hello %d", i), "to_id": bob.ID, "type": "private"}), 200)
+		// the message is in postgres as soon as the API answers
+		e.now(`SELECT count(*)::text FROM message`, fmt.Sprint(i+1))
 		ev := readEvent(t, bobWS)
 		var m struct {
 			Content string `json:"msg"`
@@ -131,7 +135,6 @@ func TestFriendsAndPrivateChat(t *testing.T) {
 			t.Fatalf("bob got %+v %+v", ev, m)
 		}
 	}
-	e.eventually(`SELECT count(*)::text FROM message`, "3")
 
 	checkHistory := func() {
 		t.Helper()
@@ -174,9 +177,9 @@ func TestFriendRequestDenyAllowsResend(t *testing.T) {
 		ReqID string `json:"req_id"`
 	}
 	e.expect(e.do("POST", "/api/friends/requests", alice.Token, map[string]string{"to_id": bob.ID}), 200).json(t, &sent)
-	e.eventually(`SELECT count(*)::text FROM user_relationships`, "1")
+	e.now(`SELECT count(*)::text FROM user_relationships`, "1")
 	e.expect(e.do("PUT", "/api/friends/requests/"+sent.ReqID, bob.Token, map[string]string{"status": "cancel"}), 201)
-	e.eventually(`SELECT count(*)::text FROM user_relationships`, "0")
+	e.now(`SELECT count(*)::text FROM user_relationships`, "0")
 	e.expect(e.do("POST", "/api/friends/requests", alice.Token, map[string]string{"to_id": bob.ID}), 200)
 }
 
@@ -190,14 +193,14 @@ func TestGroups(t *testing.T) {
 	}
 	e.expect(e.do("POST", "/api/chats/groups", leader.Token, map[string]any{"group_name": "devs", "description": "d", "max_mems": 2}), 201).json(t, &g)
 	e.expect(e.do("POST", "/api/chats/groups", member.Token, map[string]any{"group_name": "DEVS", "max_mems": 2}), 409)
-	e.eventually(`SELECT name FROM chat_groups WHERE id = $1`, "devs", g.ChatID)
+	e.now(`SELECT name FROM chat_groups WHERE id = $1`, "devs", g.ChatID)
 
 	members := "/api/chats/groups/" + g.ChatID + "/members"
 	memberWS := e.dial(member.Token)
 	e.expect(e.do("POST", members, member.Token, nil), 201)
 	e.expect(e.do("POST", members, member.Token, nil), 409)
 	e.expect(e.do("POST", members, outsider.Token, nil), 409) // full
-	e.eventually(`SELECT current_member::text FROM chat_groups WHERE id = $1`, "2", g.ChatID)
+	e.now(`SELECT current_member::text FROM chat_groups WHERE id = $1`, "2", g.ChatID)
 
 	send := map[string]string{"msg": "standup?", "to_id": g.ChatID, "type": "public"}
 	e.expect(e.do("POST", "/api/chats/message", outsider.Token, send), 403)
@@ -206,11 +209,11 @@ func TestGroups(t *testing.T) {
 	if ev := readEvent(t, memberWS); ev.Event != "msg" {
 		t.Fatalf("member got %q", ev.Event)
 	}
-	e.eventually(`SELECT count(*)::text FROM groupmessage WHERE group_id = $1`, "1", g.ChatID)
+	e.now(`SELECT count(*)::text FROM groupmessage WHERE group_id = $1`, "1", g.ChatID)
 
 	e.expect(e.do("DELETE", members, leader.Token, nil), 403)
 	e.expect(e.do("DELETE", members, member.Token, nil), 204)
-	e.eventually(`SELECT current_member::text FROM chat_groups WHERE id = $1`, "1", g.ChatID)
+	e.now(`SELECT current_member::text FROM chat_groups WHERE id = $1`, "1", g.ChatID)
 	e.expect(e.do("POST", "/api/chats/message", member.Token, send), 403)
 }
 
@@ -240,4 +243,113 @@ func TestLoginRateLimit(t *testing.T) {
 		e.expect(e.do("POST", "/api/login", "", body), 401)
 	}
 	e.expect(e.do("POST", "/api/login", "", body), 429)
+}
+
+func TestConcurrentJoinsRespectCapacity(t *testing.T) {
+	e := newEnv(t)
+	leader := e.signup("leader")
+	var g struct {
+		ChatID string `json:"chat_id"`
+	}
+	e.expect(e.do("POST", "/api/chats/groups", leader.Token, map[string]any{"group_name": "race", "max_mems": 5}), 201).json(t, &g)
+
+	joiners := make([]user, 20)
+	for i := range joiners {
+		joiners[i] = e.seedUser(fmt.Sprintf("joiner%d", i))
+	}
+	codes := make(chan int, len(joiners))
+	var wg sync.WaitGroup
+	for _, u := range joiners {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes <- e.do("POST", "/api/chats/groups/"+g.ChatID+"/members", u.Token, nil).code
+		}()
+	}
+	wg.Wait()
+	close(codes)
+	counts := map[int]int{}
+	for c := range codes {
+		counts[c]++
+	}
+	// the leader holds one of the 5 seats
+	if counts[201] != 4 || counts[409] != 16 {
+		t.Fatalf("join results = %v, want 4x201 and 16x409", counts)
+	}
+	e.now(`SELECT count(*)::text FROM member_table WHERE group_id = $1`, "5", g.ChatID)
+	e.now(`SELECT current_member::text FROM chat_groups WHERE id = $1`, "5", g.ChatID)
+}
+
+func TestConcurrentCrossingFriendRequests(t *testing.T) {
+	e := newEnv(t)
+	alice, bob := e.signup("alice"), e.signup("bob")
+	var wg sync.WaitGroup
+	codes := make(chan int, 10)
+	for i := range 10 {
+		from, to := alice, bob
+		if i%2 == 1 {
+			from, to = bob, alice
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes <- e.do("POST", "/api/friends/requests", from.Token, map[string]string{"to_id": to.ID}).code
+		}()
+	}
+	wg.Wait()
+	close(codes)
+	ok := 0
+	for c := range codes {
+		if c == 200 {
+			ok++
+		} else if c != 409 {
+			t.Fatalf("unexpected status %d", c)
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("%d requests succeeded, want exactly 1", ok)
+	}
+	e.now(`SELECT count(*)::text FROM user_relationships`, "1")
+}
+
+func TestReplyMustBeInSameChat(t *testing.T) {
+	e := newEnv(t)
+	alice, bob, carol := e.signup("alice"), e.signup("bob"), e.signup("carol")
+	befriend := func(a, b user) {
+		var r struct {
+			ReqID string `json:"req_id"`
+		}
+		e.expect(e.do("POST", "/api/friends/requests", a.Token, map[string]string{"to_id": b.ID}), 200).json(t, &r)
+		e.expect(e.do("PUT", "/api/friends/requests/"+r.ReqID, b.Token, map[string]string{"status": "confirm"}), 201)
+	}
+	befriend(alice, bob)
+	befriend(alice, carol)
+
+	var other struct {
+		MsgID string `json:"msg_id"`
+	}
+	e.expect(e.do("POST", "/api/chats/message", alice.Token, map[string]string{"msg": "to carol", "to_id": carol.ID, "type": "private"}), 200).json(t, &other)
+	var own struct {
+		MsgID string `json:"msg_id"`
+	}
+	e.expect(e.do("POST", "/api/chats/message", alice.Token, map[string]string{"msg": "to bob", "to_id": bob.ID, "type": "private"}), 200).json(t, &own)
+
+	e.expect(e.do("POST", "/api/chats/message", bob.Token, map[string]string{"msg": "reply", "to_id": alice.ID, "type": "private", "parent_id": other.MsgID}), 400)
+	e.expect(e.do("POST", "/api/chats/message", bob.Token, map[string]string{"msg": "reply", "to_id": alice.ID, "type": "private", "parent_id": own.MsgID}), 200)
+}
+
+func TestSpoofedForwardedForDoesNotBypassRateLimit(t *testing.T) {
+	e := newEnv(t)
+	for i := range 11 {
+		req, _ := http.NewRequest("POST", e.srv.URL+"/api/login", strings.NewReader(`{"email":"x@example.io","password":"nope"}`))
+		req.Header.Set("X-Forwarded-For", fmt.Sprintf("10.0.0.%d", i))
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if i == 10 && res.StatusCode != http.StatusTooManyRequests {
+			t.Fatalf("request %d with a spoofed IP got %d, want 429", i+1, res.StatusCode)
+		}
+	}
 }
