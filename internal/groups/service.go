@@ -74,7 +74,7 @@ func (s *groupService) LeaveGroup(ctx context.Context, groupID, userID uuid.UUID
 func (s *groupService) snapshot(ctx context.Context, groupID uuid.UUID) (GroupSnapshot, error) {
 	return s.store.Load(ctx, groupID.String(), func(ctx context.Context) (GroupSnapshot, error) {
 		return s.repo.Snapshot(ctx, groupID)
-	}, func(err error) { s.logger.Warn("group cache error", "error", err) })
+	}, func(err error) { s.logger.WarnContext(ctx, "group cache error", "error", err) })
 }
 
 func (s *groupService) IsMember(ctx context.Context, groupID, userID uuid.UUID) (bool, error) {
@@ -95,6 +95,6 @@ func (s *groupService) Members(ctx context.Context, groupID uuid.UUID) ([]uuid.U
 
 func (s *groupService) invalidate(ctx context.Context, groupID uuid.UUID) {
 	if err := s.store.Invalidate(ctx, groupID.String()); err != nil {
-		s.logger.Error("failed to invalidate group cache", "group", groupID, "error", err)
+		s.logger.ErrorContext(ctx, "failed to invalidate group cache", "group", groupID, "error", err)
 	}
 }

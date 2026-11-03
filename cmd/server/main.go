@@ -9,16 +9,20 @@ import (
 
 	"RyanDev-21.com/Chirpy/internal/app"
 	"RyanDev-21.com/Chirpy/internal/config"
+	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
-
 	cfg, err := config.Load()
+	logger := reqctx.NewLogger(os.Stdout, cfg.LogFormat, cfg.LogLevel)
+	slog.SetDefault(logger)
 	if err != nil {
 		logger.Error("invalid configuration", "error", err)
 		os.Exit(1)
+	}
+
+	for _, w := range cfg.Warnings() {
+		logger.Warn("insecure configuration", "detail", w)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -3,7 +3,7 @@ package ws
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"sync"
 
 	"github.com/google/uuid"
@@ -14,6 +14,7 @@ import (
 type Hub struct {
 	mu      sync.RWMutex
 	clients map[uuid.UUID]*Client
+	logger  *slog.Logger
 
 	Register   chan *Client
 	Unregister chan *Client
@@ -23,9 +24,10 @@ type Hub struct {
 
 var ErrNoClientFound = errors.New("no client exist")
 
-func NewHub() *Hub {
+func NewHub(logger *slog.Logger) *Hub {
 	return &Hub{
 		clients:    make(map[uuid.UUID]*Client),
+		logger:     logger,
 		Register:   make(chan *Client),
 		Unregister: make(chan *Client),
 		Broadcast:  make(chan Event, 1000),
@@ -87,7 +89,7 @@ func (h *Hub) Run() {
 				continue
 			}
 			if err := h.WriteIntoConnection(toID, out); err != nil {
-				log.Printf("hub: failed to marshal event: %v", err)
+				h.logger.Error("hub: failed to marshal event", "error", err)
 			}
 		}
 	}

@@ -45,14 +45,14 @@ func Middleware(l Limiter, name string, logger *slog.Logger) func(http.Handler) 
 			key := name + ":" + ClientKey(r)
 			res, err := l.Allow(r.Context(), key)
 			if err != nil {
-				logger.Error("rate limiter failed, allowing request", "key", key, "error", err)
+				logger.ErrorContext(r.Context(), "rate limiter failed, allowing request", "key", key, "error", err)
 				next.ServeHTTP(w, r)
 				return
 			}
 			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(res.Limit))
 			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(max(res.Remaining, 0)))
 			if !res.Allowed {
-				logger.Warn("rate limit exceeded", "key", key, "path", r.URL.Path)
+				logger.WarnContext(r.Context(), "rate limit exceeded", "policy", name, "route", httpx.RoutePattern(r))
 				httpx.Error(w, http.StatusTooManyRequests, "too many requests, please try again later")
 				return
 			}

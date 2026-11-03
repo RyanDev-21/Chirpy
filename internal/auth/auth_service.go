@@ -3,11 +3,10 @@ package auth
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
 	"log/slog"
 	"time"
 
-	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
 	"RyanDev-21.com/Chirpy/internal/platform/secure"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"github.com/google/uuid"
@@ -37,104 +36,81 @@ func NewAuthService(userRepo users.UserRepo, authRepo AuthRepo, secret string, l
 	}
 }
 
+// Login checks the credentials. Unexpected errors are returned wrapped and
+// logged once by the HTTP layer; failed attempts are logged here as
+// security events (without the email, which is personal data).
 func (s *authService) Login(ctx context.Context, email, password string) (accessToken, refreshToken string, user *users.User, err error) {
-	reqID := reqctx.RequestID(ctx)
 	dbUser, hashPassword, err := s.userRepo.GetUserByEmail(ctx, email)
-	if err != nil {
-		if errors.Is(err, users.ErrUserNotFound) {
-			// same response and timing as a wrong password
-			secure.BurnPasswordCheck(password)
-			s.logger.Info("login for unknown email", "reqID", reqID)
-			return "", "", nil, ErrInvalidCredentials
-		}
-		s.logger.Error("failed to hit the db", "reqID", reqID, "error", err)
-		return "", "", nil, err
+	if errors.Is(err, users.ErrUserNotFound) {
+		// same response and timing as a wrong password
+		secure.BurnPasswordCheck(password)
+		s.logger.WarnContext(ctx, "login failed", "reason", "unknown_email")
+		return "", "", nil, ErrInvalidCredentials
 	}
-
+	if err != nil {
+		return "", "", nil, fmt.Errorf("load user: %w", err)
+	}
 	valid, err := secure.CheckPassword(password, hashPassword)
 	if err != nil {
-		s.logger.Error("the password check funtion failed", "reqID", reqID)
-		return "", "", nil, err
+		return "", "", nil, fmt.Errorf("check password: %w", err)
 	}
 	if !valid {
-		s.logger.Info("the match password check failed", "reqID", reqID)
+		s.logger.WarnContext(ctx, "login failed", "reason", "wrong_password", "user_id", dbUser.ID)
 		return "", "", nil, ErrInvalidCredentials
 	}
 	accessToken, refreshToken, err = s.generateTokens(ctx, dbUser.ID)
 	if err != nil {
-		s.logger.Error("generateTokens function failed", "reqID", reqID)
 		return "", "", nil, err
 	}
-	s.logger.Info("the user logged in success", "reqID", reqID)
+	s.logger.InfoContext(ctx, "login succeeded", "user_id", dbUser.ID)
 	return accessToken, refreshToken, dbUser, nil
 }
 
 func (s *authService) Revoke(ctx context.Context, token string) error {
-	err := s.authRepo.RevokeToken(ctx, token)
-	if err != nil {
-		return err
-	}
-	return nil
-
+	return s.authRepo.RevokeToken(ctx, token)
 }
 
-// need to add the logic to check whether the token has already revoked or not
+// Refresh rotates a refresh token: the old one is revoked and a new pair
+// is issued. Revoked, unknown and expired tokens return ErrNotAuthorized.
 func (s *authService) Refresh(ctx context.Context, token string) (string, string, error) {
-	reqID := reqctx.RequestID(ctx)
-	s.logger.Info("getting the refresh token started", "reqID", reqID)
-	response, err := s.authRepo.GetRefreshToken(ctx, token)
-	if err != nil {
-		if !errors.Is(err, ErrNotAuthorized) {
-			s.logger.Error("failed to load refresh token", "reqID", reqID, "error", err)
-		}
+	rt, err := s.authRepo.GetRefreshToken(ctx, token)
+	if errors.Is(err, ErrNotAuthorized) {
+		s.logger.WarnContext(ctx, "refresh rejected", "reason", "unknown_or_revoked")
 		return "", "", err
 	}
-	if time.Now().After(response.ExpiresAt) {
-		s.logger.Info("trying to refresh with an expired token", "reqID", reqID)
+	if err != nil {
+		return "", "", fmt.Errorf("load refresh token: %w", err)
+	}
+	if time.Now().After(rt.ExpiresAt) {
+		s.logger.InfoContext(ctx, "refresh rejected", "reason", "expired", "user_id", rt.UserID)
 		return "", "", ErrNotAuthorized
 	}
-	err = s.authRepo.RevokeToken(ctx, token)
-	if err != nil {
-		s.logger.Error("Failed to revoke the token", "reqID", reqID, "error", err)
-		return "", "", err
+	if err := s.authRepo.RevokeToken(ctx, token); err != nil {
+		return "", "", fmt.Errorf("revoke old refresh token: %w", err)
 	}
-
-	//returns both tokens alongside the error(if exists)
-	accessToken, refreshToken, err := s.generateTokens(ctx, response.UserID)
-	if err != nil {
-		s.logger.Error("failed to generate both tokens ", "reqID", reqID, "error", err)
-		return "", "", err
-	}
-	s.logger.Info("returning the tokens", "reqID", reqID)
-	return accessToken, refreshToken, nil
+	return s.generateTokens(ctx, rt.UserID)
 }
 
-// uses auth pkg simply to create the tokens with specific expire date
-func (s *authService) generateTokens(ctx context.Context, userID uuid.UUID) (string, string, error) {
-	expireIn := 60 * time.Minute
+const (
+	accessTokenTTL  = time.Hour
+	refreshTokenTTL = 30 * 24 * time.Hour
+)
 
-	accessToken, err := secure.MakeJWT(userID, s.secret, expireIn)
+func (s *authService) generateTokens(ctx context.Context, userID uuid.UUID) (string, string, error) {
+	accessToken, err := secure.MakeJWT(userID, s.secret, accessTokenTTL)
 	if err != nil {
-		log.Printf("failed to make accessToken %s", err)
-		return "", "", err
+		return "", "", fmt.Errorf("make access token: %w", err)
 	}
 	refreshToken, err := secure.MakeRefreshToken()
 	if err != nil {
-		log.Printf("failed to make a refreshToken %s", err)
-		return "", "", err
+		return "", "", fmt.Errorf("make refresh token: %w", err)
 	}
-	refreshTokenExpireDate := 30 * (24 * time.Hour)
-
-	err = s.authRepo.CreateRefreshToken(ctx, PayloadForRefresh{
+	if err := s.authRepo.CreateRefreshToken(ctx, PayloadForRefresh{
 		token:     refreshToken,
 		userID:    userID,
-		expiresAt: time.Now().Add(refreshTokenExpireDate),
-	})
-	if err != nil {
-		log.Printf("failed to insert into db #%s#", err)
-		return "", "", err
+		expiresAt: time.Now().Add(refreshTokenTTL),
+	}); err != nil {
+		return "", "", fmt.Errorf("store refresh token: %w", err)
 	}
-
 	return accessToken, refreshToken, nil
-
 }

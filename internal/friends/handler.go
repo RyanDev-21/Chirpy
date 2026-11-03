@@ -15,7 +15,7 @@ type Handler struct {
 
 func NewHandler(svc Service) *Handler { return &Handler{svc: svc} }
 
-func writeErr(w http.ResponseWriter, err error) {
+func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrSelfRequest):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
@@ -24,7 +24,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrRequestExists), errors.Is(err, ErrAlreadyFriends):
 		httpx.Error(w, http.StatusConflict, err.Error())
 	default:
-		httpx.Error(w, http.StatusInternalServerError, "internal server error")
+		httpx.ServerError(w, r, err)
 	}
 }
 
@@ -42,7 +42,7 @@ func (h *Handler) Send(w http.ResponseWriter, r *http.Request) {
 	}
 	reqID, err := h.svc.Send(r.Context(), me, p.ToID)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, ResponseForAddFriend{ReqID: reqID})
@@ -76,7 +76,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -96,7 +96,7 @@ func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.Cancel(r.Context(), me, reqID); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -111,7 +111,7 @@ func (h *Handler) Requests(w http.ResponseWriter, r *http.Request) {
 	}
 	snap, err := h.svc.Relationships(r.Context(), me)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, ResponseReqList{PendingIDsList: snap.Incoming, RequestIDsList: snap.Outgoing})
@@ -126,7 +126,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	snap, err := h.svc.Relationships(r.Context(), me)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, ResponseFriListStruct{FriendList: snap.Friends})

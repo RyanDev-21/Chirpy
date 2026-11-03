@@ -3,7 +3,7 @@ package ai
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"google.golang.org/genai"
 )
@@ -12,8 +12,8 @@ type GenAi interface {
 	GetMessage(ctx context.Context, msgCh chan string) error
 }
 
-func NewAiService(client *genai.Client) GenAi {
-	return &genAi{client: client}
+func NewAiService(client *genai.Client, logger *slog.Logger) GenAi {
+	return &genAi{client: client, logger: logger}
 }
 
 func (ai *genAi) GetMessage(ctx context.Context, msgCh chan string) error {
@@ -37,7 +37,7 @@ func (ai *genAi) GetMessage(ctx context.Context, msgCh chan string) error {
 
 	for chunk, err := range stream {
 		if err != nil {
-			log.Printf("stream error from goroutine  %s", err)
+			ai.logger.ErrorContext(ctx, "ai stream failed", "error", err)
 			break
 		}
 

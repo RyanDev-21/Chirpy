@@ -9,7 +9,6 @@ import (
 	"unicode/utf8"
 
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
-	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
 	"RyanDev-21.com/Chirpy/internal/platform/secure"
 	"github.com/google/uuid"
 )
@@ -85,7 +84,7 @@ func (s *userService) Register(ctx context.Context, name, email, password string
 		return nil, err
 	}
 	if err := s.store.SetNames(ctx, PublicUser{ID: user.ID, Name: user.Name}); err != nil {
-		s.logger.Warn("failed to cache user name", "reqID", reqctx.RequestID(ctx), "error", err)
+		s.logger.WarnContext(ctx, "failed to cache user name", "error", err)
 	}
 	return user, nil
 }
@@ -130,7 +129,7 @@ func (s *userService) SearchUser(ctx context.Context, q string) ([]PublicUser, e
 		return nil, err
 	}
 	if err := s.store.SetNames(ctx, list...); err != nil {
-		s.logger.Warn("failed to cache searched names", "error", err)
+		s.logger.WarnContext(ctx, "failed to cache searched names", "error", err)
 	}
 	return list, nil
 }
@@ -138,7 +137,7 @@ func (s *userService) SearchUser(ctx context.Context, q string) ([]PublicUser, e
 func (s *userService) GetName(ctx context.Context, userID uuid.UUID) (string, error) {
 	name, ok, err := s.store.Name(ctx, userID)
 	if err != nil {
-		s.logger.Warn("name cache read failed", "error", err)
+		s.logger.WarnContext(ctx, "name cache read failed", "error", err)
 	}
 	if ok {
 		return name, nil
@@ -148,7 +147,7 @@ func (s *userService) GetName(ctx context.Context, userID uuid.UUID) (string, er
 		return "", err
 	}
 	if err := s.store.SetNames(ctx, PublicUser{ID: user.ID, Name: user.Name}); err != nil {
-		s.logger.Warn("failed to cache user name", "error", err)
+		s.logger.WarnContext(ctx, "failed to cache user name", "error", err)
 	}
 	return user.Name, nil
 }
@@ -171,7 +170,7 @@ func (s *userService) SaveConfig(ctx context.Context, userID uuid.UUID, list []E
 func (s *userService) GetConfig(ctx context.Context, userID uuid.UUID) ([]ElementCustom, error) {
 	list, ok, err := s.store.Config(ctx, userID)
 	if err != nil {
-		s.logger.Warn("config cache read failed", "error", err)
+		s.logger.WarnContext(ctx, "config cache read failed", "error", err)
 	}
 	if ok {
 		return list, nil
@@ -181,7 +180,7 @@ func (s *userService) GetConfig(ctx context.Context, userID uuid.UUID) ([]Elemen
 		return nil, err
 	}
 	if err := s.store.SetConfig(ctx, userID, list); err != nil {
-		s.logger.Warn("failed to cache config", "error", err)
+		s.logger.WarnContext(ctx, "failed to cache config", "error", err)
 	}
 	return list, nil
 }

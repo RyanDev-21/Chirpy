@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -20,7 +21,7 @@ func NewGenAIHandler(svc GenAi) *Handler {
 func (h *Handler) Suggest(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		httpx.Error(w, http.StatusInternalServerError, "streaming not supported")
+		httpx.ServerError(w, r, errors.New("response writer does not support streaming"))
 		return
 	}
 	// streaming outlives the server's default write timeout

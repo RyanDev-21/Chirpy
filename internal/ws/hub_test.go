@@ -2,6 +2,7 @@ package ws
 
 import (
 	"encoding/json"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func register(t *testing.T, h *Hub, c *Client) {
 }
 
 func TestWriteToUsers(t *testing.T) {
-	h := NewHub()
+	h := NewHub(slog.New(slog.DiscardHandler))
 	go h.Run()
 	a, b := newTestClient(h, 4), newTestClient(h, 4)
 	register(t, h, a)
@@ -49,7 +50,7 @@ func TestWriteToUsers(t *testing.T) {
 }
 
 func TestSlowClientIsDisconnected(t *testing.T) {
-	h := NewHub()
+	h := NewHub(slog.New(slog.DiscardHandler))
 	go h.Run()
 	c := newTestClient(h, 1)
 	register(t, h, c)
@@ -64,7 +65,7 @@ func TestSlowClientIsDisconnected(t *testing.T) {
 }
 
 func TestReconnectReplacesOldConnection(t *testing.T) {
-	h := NewHub()
+	h := NewHub(slog.New(slog.DiscardHandler))
 	go h.Run()
 	old := newTestClient(h, 1)
 	register(t, h, old)

@@ -2,7 +2,6 @@ package ws
 
 import (
 	"encoding/json"
-	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -58,7 +57,7 @@ func (c *Client) ReadPump() {
 		err := c.Conn.ReadJSON(&rawMsg)
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("error :%v", err)
+				c.Hub.logger.Debug("websocket closed unexpectedly", "user_id", c.UserID, "error", err)
 			}
 			break
 		}
@@ -72,7 +71,7 @@ func (c *Client) ReadPump() {
 		case "Typing":
 			var p InCommingEventForTyping
 			if err := json.Unmarshal(eventMap.Payload, &p); err != nil {
-				log.Printf("not valid json")
+				c.Hub.logger.Debug("ignoring malformed websocket event", "user_id", c.UserID, "event", eventMap.Event)
 				continue
 			}
 			c.Hub.Broadcast <- Event{
@@ -85,7 +84,7 @@ func (c *Client) ReadPump() {
 		case "Seen":
 			var p InCommingEventForSeen
 			if err := json.Unmarshal(eventMap.Payload, &p); err != nil {
-				log.Printf("not valid json")
+				c.Hub.logger.Debug("ignoring malformed websocket event", "user_id", c.UserID, "event", eventMap.Event)
 				continue
 			}
 			c.Hub.Broadcast <- Event{

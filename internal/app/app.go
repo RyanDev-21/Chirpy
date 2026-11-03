@@ -18,6 +18,7 @@ import (
 	"RyanDev-21.com/Chirpy/internal/database"
 	"RyanDev-21.com/Chirpy/internal/friends"
 	"RyanDev-21.com/Chirpy/internal/groups"
+	"RyanDev-21.com/Chirpy/internal/platform/migrate"
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
 	"RyanDev-21.com/Chirpy/internal/platform/redisx"
 	"RyanDev-21.com/Chirpy/internal/users"
@@ -60,7 +61,23 @@ type handlers struct {
 
 // New connects to Postgres and Redis and builds all services.
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
-	db, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	if cfg.MigrateOnStart {
+		if err := migrate.Up(ctx, cfg.DatabaseURL, logger); err != nil {
+			return nil, err
+		}
+	}
+	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse DB_URL: %w", err)
+	}
+	if cfg.DBMaxConns > 0 {
+		poolCfg.MaxConns = cfg.DBMaxConns
+	}
+	if cfg.DBMaxIdleTime > 0 {
+		poolCfg.MaxConnIdleTime = cfg.DBMaxIdleTime
+	}
+	poolCfg.MinConns = 0 // let serverless Postgres scale to zero when idle
+	db, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
@@ -68,19 +85,29 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		db.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
-	redisOpts := redisx.Options{Addr: cfg.RedisAddr, Username: cfg.RedisUser, Password: cfg.RedisPass, DB: cfg.RedisDB}
+	redisOpts := redisx.Options{URL: cfg.RedisURL, Addr: cfg.RedisAddr, Username: cfg.RedisUser, Password: cfg.RedisPass, DB: cfg.RedisDB, PoolSize: cfg.RedisPoolSize}
 	rdb, err := redisx.NewClient(ctx, redisOpts)
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
-	queueOpts := redisOpts
-	queueOpts.PoolSize = 32
-	qrdb, err := redisx.NewClient(ctx, queueOpts)
-	if err != nil {
-		_ = rdb.Close()
-		db.Close()
-		return nil, err
+	var (
+		qrdb   *redis.Client
+		broker queue.Broker
+	)
+	switch cfg.QueueBackend {
+	case "memory":
+		broker = queue.NewMemory(8, logger)
+		logger.Warn("QUEUE_BACKEND=memory: queued jobs are lost on restart")
+	default:
+		queueOpts := redisOpts
+		queueOpts.PoolSize = cfg.QueueRedisPoolSize
+		if qrdb, err = redisx.NewClient(ctx, queueOpts); err != nil {
+			_ = rdb.Close()
+			db.Close()
+			return nil, err
+		}
+		broker = queue.NewRedis(qrdb, queue.RedisOptions{}, logger)
 	}
 
 	a := &App{
@@ -89,8 +116,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		db:         db,
 		redis:      rdb,
 		queueRedis: qrdb,
-		queue:      queue.NewRedis(qrdb, queue.RedisOptions{}, logger),
-		hub:        ws.NewHub(),
+		queue:      broker,
+		hub:        ws.NewHub(logger),
 	}
 	queries := database.New(db)
 
@@ -114,7 +141,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			a.Close()
 			return nil, fmt.Errorf("create gemini client: %w", err)
 		}
-		a.handlers.ai = ai.NewGenAIHandler(ai.NewAiService(client))
+		a.handlers.ai = ai.NewGenAIHandler(ai.NewAiService(client, logger))
 	} else {
 		logger.Warn("GEMINI_API_KEY not set, AI routes disabled")
 	}

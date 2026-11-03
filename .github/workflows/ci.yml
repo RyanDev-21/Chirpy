@@ -88,3 +88,5 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go build -o bin/chirpy ./cmd/server
+      - name: Docker image builds
+        run: docker build -t chirpy:ci .

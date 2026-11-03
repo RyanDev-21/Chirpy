@@ -22,7 +22,7 @@ func NewChatHandler(svc ChatService, hub *ws.Hub, upgrader *websocket.Upgrader, 
 	return &ChatHandler{svc: svc, hub: hub, upgrader: upgrader, logger: logger}
 }
 
-func (h *ChatHandler) writeErr(w http.ResponseWriter, err error) {
+func (h *ChatHandler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrNotAuthorized), errors.Is(err, ErrNotFriends):
 		httpx.Error(w, http.StatusForbidden, err.Error())
@@ -30,8 +30,7 @@ func (h *ChatHandler) writeErr(w http.ResponseWriter, err error) {
 		errors.Is(err, ErrEmptyMessage), errors.Is(err, ErrNotValidTimeFmt), errors.Is(err, ErrNotValidUUID):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	default:
-		h.logger.Error("chat request failed", "error", err)
-		httpx.Error(w, http.StatusInternalServerError, "internal server error")
+		httpx.ServerError(w, r, err)
 	}
 }
 
@@ -42,7 +41,7 @@ func (h *ChatHandler) ServeWs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.hub.Serve(h.upgrader, w, r, userID); err != nil {
-		h.logger.Warn("websocket upgrade failed", "error", err)
+		h.logger.WarnContext(r.Context(), "websocket upgrade failed", "error", err)
 	}
 }
 
@@ -60,7 +59,7 @@ func (h *ChatHandler) GetMesagesForPrivateID(w http.ResponseWriter, r *http.Requ
 	}
 	msgs, err := h.svc.PrivateMessages(r.Context(), me, other, r.URL.Query().Get("since"))
 	if err != nil {
-		h.writeErr(w, err)
+		h.writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, MessageListRes{ChatID: PrivateChatID(me, other), MsgList: msgs})
@@ -80,7 +79,7 @@ func (h *ChatHandler) GetMessagesForPublicID(w http.ResponseWriter, r *http.Requ
 	}
 	msgs, err := h.svc.GroupMessages(r.Context(), me, groupID)
 	if err != nil {
-		h.writeErr(w, err)
+		h.writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, MessageListRes{ChatID: groupID.String(), MsgList: msgs})
@@ -100,7 +99,7 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	msgID, err := h.svc.SendMessage(r.Context(), me, in)
 	if err != nil {
-		h.writeErr(w, err)
+		h.writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, ResponseMessageID{MsgID: msgID})
@@ -124,7 +123,7 @@ func (h *ChatHandler) UpdateSeen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.MarkSeen(r.Context(), me, other, body.MsgID); err != nil {
-		h.writeErr(w, err)
+		h.writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)

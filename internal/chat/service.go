@@ -135,9 +135,9 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 	}
 	if err := s.cache.Append(ctx, key, msg); err != nil {
 		// the message is saved; drop the stream so the next read reseeds it
-		s.logger.Warn("failed to append message to cache, invalidating", "error", err)
+		s.logger.WarnContext(ctx, "failed to append message to cache, invalidating", "error", err)
 		if err := s.cache.Invalidate(ctx, key); err != nil {
-			s.logger.Error("failed to invalidate chat cache", "error", err)
+			s.logger.ErrorContext(ctx, "failed to invalidate chat cache", "error", err)
 		}
 	}
 	if err := s.push.WriteToUsers(targets, ws.Event{Event: ws.EventMessage, Payload: ws.OutGoingMessage{
@@ -148,7 +148,7 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 		Type:      in.Type,
 		CreatedAt: now,
 	}}); err != nil {
-		s.logger.Warn("failed to push message", "error", err)
+		s.logger.WarnContext(ctx, "failed to push message", "error", err)
 	}
 	return msgID, nil
 }
@@ -244,7 +244,7 @@ func (s *chatService) MarkSeen(ctx context.Context, me, other uuid.UUID, msgIDSt
 	if err := s.push.WriteToUsers([]uuid.UUID{other}, ws.Event{Event: ws.EventSeen, Payload: ws.OutGoingEventForSeen{
 		MsgID: msgID.String(), FromID: me.String(),
 	}}); err != nil {
-		s.logger.Warn("failed to push seen event", "error", err)
+		s.logger.WarnContext(ctx, "failed to push seen event", "error", err)
 	}
 	return nil
 }
