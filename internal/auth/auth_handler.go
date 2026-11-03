@@ -2,7 +2,6 @@ package auth
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
@@ -38,8 +37,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, 401, ErrInvalidCredentials.Error())
 			return
 		}
-		log.Printf("failed to get the tokens :%s", err)
-		httpx.Error(w, 500, "somthing went wrong")
+		httpx.ServerError(w, r, err)
 		return
 	}
 
@@ -67,7 +65,7 @@ func (h *AuthHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, 401, "unauthorized")
 			return
 		}
-		httpx.Error(w, 500, "internal server error")
+		httpx.ServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(204)
@@ -86,8 +84,7 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, 401, "unauthorized")
 			return
 		}
-		log.Printf("failed to get accessToken #%s#", err)
-		httpx.Error(w, 500, "internal server error")
+		httpx.ServerError(w, r, err)
 		return
 	}
 	httpx.JSON(w, 200, refreshResponse{

@@ -1,9 +1,14 @@
 package ai
 
-import "google.golang.org/genai"
+import (
+	"log/slog"
+
+	"google.golang.org/genai"
+)
 
 type genAi struct {
 	client *genai.Client
+	logger *slog.Logger
 }
 
 type Message struct {

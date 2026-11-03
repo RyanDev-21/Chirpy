@@ -34,7 +34,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrDuplicateName):
 		httpx.Error(w, http.StatusConflict, "the user name already exists")
 	default:
-		httpx.Error(w, http.StatusInternalServerError, "something went wrong")
+		httpx.ServerError(w, r, err)
 	}
 }
 
@@ -60,7 +60,7 @@ func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrUserNotFound):
 		httpx.Error(w, http.StatusNotFound, "no user found")
 	default:
-		httpx.Error(w, http.StatusInternalServerError, "internal server error")
+		httpx.ServerError(w, r, err)
 	}
 }
 
@@ -72,7 +72,7 @@ func (h *UserHandler) SearchUser(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrInvalidInput):
 		httpx.Error(w, http.StatusBadRequest, "q must be 1-25 characters")
 	default:
-		httpx.Error(w, http.StatusInternalServerError, "internal server error")
+		httpx.ServerError(w, r, err)
 	}
 }
 
@@ -93,7 +93,7 @@ func (h *UserHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrInvalidInput):
 		httpx.Error(w, http.StatusBadRequest, "too many config items")
 	default:
-		httpx.Error(w, http.StatusInternalServerError, "something went wrong")
+		httpx.ServerError(w, r, err)
 	}
 }
 
@@ -105,7 +105,7 @@ func (h *UserHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := h.svc.GetConfig(r.Context(), userID)
 	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "something went wrong")
+		httpx.ServerError(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, ConfigList{List: list})

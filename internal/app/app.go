@@ -90,7 +90,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		redis:      rdb,
 		queueRedis: qrdb,
 		queue:      queue.NewRedis(qrdb, queue.RedisOptions{}, logger),
-		hub:        ws.NewHub(),
+		hub:        ws.NewHub(logger),
 	}
 	queries := database.New(db)
 
@@ -114,7 +114,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			a.Close()
 			return nil, fmt.Errorf("create gemini client: %w", err)
 		}
-		a.handlers.ai = ai.NewGenAIHandler(ai.NewAiService(client))
+		a.handlers.ai = ai.NewGenAIHandler(ai.NewAiService(client, logger))
 	} else {
 		logger.Warn("GEMINI_API_KEY not set, AI routes disabled")
 	}

@@ -27,3 +27,13 @@ type errorBody struct {
 func Error(w http.ResponseWriter, code int, msg string) {
 	JSON(w, code, errorBody{Error: msg})
 }
+
+// ServerError logs err with the request's id and user, then answers 500
+// without leaking the cause to the client.
+func ServerError(w http.ResponseWriter, r *http.Request, err error) {
+	slog.ErrorContext(r.Context(), "request failed",
+		slog.String("route", RoutePattern(r)),
+		slog.String("error", err.Error()),
+	)
+	Error(w, http.StatusInternalServerError, "internal server error")
+}

@@ -41,6 +41,9 @@ type Config struct {
 	TrustProxyHeaders bool
 
 	ShutdownTimeout time.Duration
+
+	LogLevel  string // debug | info | warn | error
+	LogFormat string // json | text
 }
 
 func (c Config) IsDev() bool { return c.Platform == "dev" }
@@ -65,6 +68,8 @@ func Load() (Config, error) {
 		AccessTokenTTL:  time.Hour,
 		RefreshTokenTTL: 30 * 24 * time.Hour,
 		ShutdownTimeout: 15 * time.Second,
+		LogLevel:        getenv("LOG_LEVEL", "info"),
+		LogFormat:       getenv("LOG_FORMAT", "json"),
 	}
 	var err error
 	if c.TrustProxyHeaders, err = strconv.ParseBool(getenv("TRUST_PROXY_HEADERS", "false")); err != nil {

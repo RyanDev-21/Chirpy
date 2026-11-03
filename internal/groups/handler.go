@@ -16,7 +16,7 @@ func NewGroupHandler(groupService GroupService) *GroupHandler {
 	return &GroupHandler{groupService: groupService}
 }
 
-func writeGroupError(w http.ResponseWriter, err error) {
+func writeGroupError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrNotFoundGroup):
 		httpx.Error(w, http.StatusNotFound, err.Error())
@@ -27,7 +27,7 @@ func writeGroupError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrLeaderCannotLeave):
 		httpx.Error(w, http.StatusForbidden, err.Error())
 	default:
-		httpx.Error(w, http.StatusInternalServerError, "something went wrong")
+		httpx.ServerError(w, r, err)
 	}
 }
 
@@ -44,7 +44,7 @@ func (h *GroupHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.groupService.CreateGroup(r.Context(), creatorID, params)
 	if err != nil {
-		writeGroupError(w, err)
+		writeGroupError(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, res)
@@ -62,7 +62,7 @@ func (h *GroupHandler) JoinGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.groupService.JoinGroup(r.Context(), groupID, userID); err != nil {
-		writeGroupError(w, err)
+		writeGroupError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -80,7 +80,7 @@ func (h *GroupHandler) LeaveGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.groupService.LeaveGroup(r.Context(), groupID, userID); err != nil {
-		writeGroupError(w, err)
+		writeGroupError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
