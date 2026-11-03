@@ -14,6 +14,8 @@ type GroupService interface {
 	CreateGroup(ctx context.Context, creatorID uuid.UUID, req createGroupRequest) (*GroupInfo, error)
 	JoinGroup(ctx context.Context, groupID, userID uuid.UUID) error
 	LeaveGroup(ctx context.Context, groupID, userID uuid.UUID) error
+	MyGroups(ctx context.Context, userID uuid.UUID) ([]GroupSummary, error)
+	GroupDetail(ctx context.Context, groupID, viewer uuid.UUID) (GroupDetail, error)
 	// IsMember and Members are used by chat for authorization and fan-out.
 	IsMember(ctx context.Context, groupID, userID uuid.UUID) (bool, error)
 	Members(ctx context.Context, groupID uuid.UUID) ([]uuid.UUID, error)
@@ -69,6 +71,14 @@ func (s *groupService) LeaveGroup(ctx context.Context, groupID, userID uuid.UUID
 	}
 	s.invalidate(ctx, groupID)
 	return nil
+}
+
+func (s *groupService) MyGroups(ctx context.Context, userID uuid.UUID) ([]GroupSummary, error) {
+	return s.repo.ListForUser(ctx, userID)
+}
+
+func (s *groupService) GroupDetail(ctx context.Context, groupID, viewer uuid.UUID) (GroupDetail, error) {
+	return s.repo.Detail(ctx, groupID, viewer)
 }
 
 func (s *groupService) snapshot(ctx context.Context, groupID uuid.UUID) (GroupSnapshot, error) {

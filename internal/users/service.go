@@ -5,10 +5,8 @@ import (
 	"log/slog"
 	"net/mail"
 	"strings"
-	"time"
 	"unicode/utf8"
 
-	"RyanDev-21.com/Chirpy/internal/platform/queue"
 	"RyanDev-21.com/Chirpy/internal/platform/secure"
 	"github.com/google/uuid"
 )
@@ -30,21 +28,20 @@ type UserService interface {
 	SearchUser(ctx context.Context, q string) ([]PublicUser, error)
 	SaveConfig(ctx context.Context, userID uuid.UUID, list []ElementCustom) error
 	GetConfig(ctx context.Context, userID uuid.UUID) ([]ElementCustom, error)
+	// Me returns the caller's own profile.
+	Me(ctx context.Context, userID uuid.UUID) (*User, error)
 	// GetName returns a user's display name (cached).
 	GetName(ctx context.Context, userID uuid.UUID) (string, error)
-
-	HandleSaveConfig(ctx context.Context, job JobSaveConfig) error
 }
 
 type userService struct {
 	repo   UserRepo
 	store  Store
-	queue  queue.Publisher
 	logger *slog.Logger
 }
 
-func NewUserService(repo UserRepo, store Store, q queue.Publisher, logger *slog.Logger) UserService {
-	return &userService{repo: repo, store: store, queue: q, logger: logger}
+func NewUserService(repo UserRepo, store Store, logger *slog.Logger) UserService {
+	return &userService{repo: repo, store: store, logger: logger}
 }
 
 // ValidatePassword enforces the password policy.
@@ -134,6 +131,11 @@ func (s *userService) SearchUser(ctx context.Context, q string) ([]PublicUser, e
 	return list, nil
 }
 
+func (s *userService) Me(ctx context.Context, userID uuid.UUID) (*User, error) {
+	u, _, err := s.repo.GetUserByID(ctx, userID)
+	return u, err
+}
+
 func (s *userService) GetName(ctx context.Context, userID uuid.UUID) (string, error) {
 	name, ok, err := s.store.Name(ctx, userID)
 	if err != nil {
@@ -159,12 +161,15 @@ func (s *userService) SaveConfig(ctx context.Context, userID uuid.UUID, list []E
 	if list == nil {
 		list = []ElementCustom{}
 	}
-	if err := s.store.SetConfig(ctx, userID, list); err != nil {
+	// postgres first: with QUEUE_BACKEND=memory a queued save could be lost
+	// on restart, and saves are rare enough to do inline
+	if err := s.repo.SaveConfig(ctx, userID, list); err != nil {
 		return err
 	}
-	pubCtx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	return s.queue.Publish(pubCtx, TopicSaveConfig, JobSaveConfig{UserID: userID, List: list})
+	if err := s.store.SetConfig(ctx, userID, list); err != nil {
+		s.logger.WarnContext(ctx, "failed to cache config", "error", err)
+	}
+	return nil
 }
 
 func (s *userService) GetConfig(ctx context.Context, userID uuid.UUID) ([]ElementCustom, error) {
@@ -183,9 +188,4 @@ func (s *userService) GetConfig(ctx context.Context, userID uuid.UUID) ([]Elemen
 		s.logger.WarnContext(ctx, "failed to cache config", "error", err)
 	}
 	return list, nil
-}
-
-// HandleSaveConfig is the worker for TopicSaveConfig.
-func (s *userService) HandleSaveConfig(ctx context.Context, job JobSaveConfig) error {
-	return s.repo.SaveConfig(ctx, job.UserID, job.List)
 }

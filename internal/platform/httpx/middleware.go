@@ -2,8 +2,10 @@ package httpx
 
 import (
 	"log/slog"
+	"net"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
@@ -16,7 +18,13 @@ import (
 // RequestLogger assigns a request id and writes one access-log line per
 // request: route pattern, status, size, latency and (once authenticated)
 // the user. 5xx responses are logged at error level.
-func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
+//
+// trustedProxies is how many reverse proxies sit in front of the server
+// (Render: 1). The client IP is then the entry that many places from the
+// right of X-Forwarded-For: the one added by the outermost trusted proxy.
+// Anything a client writes into the header itself lands further left and is
+// ignored, so it cannot be spoofed. 0 means use the TCP peer address.
+func RequestLogger(logger *slog.Logger, trustedProxies int) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			reqID := r.Header.Get("X-Request-Id")
@@ -24,7 +32,8 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				reqID = uuid.NewString()
 			}
 			w.Header().Set("X-Request-Id", reqID)
-			ctx, _ := reqctx.Start(r.Context(), reqID)
+			ctx, info := reqctx.Start(r.Context(), reqID)
+			info.ClientIP = ClientIP(r, trustedProxies)
 			r = r.WithContext(ctx)
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 			start := time.Now()
@@ -46,9 +55,36 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				slog.Int("bytes", ww.BytesWritten()),
 				slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 				slog.String("remote", r.RemoteAddr),
+				slog.String("client_ip", info.ClientIP),
 			)
 		})
 	}
+}
+
+// ClientIP resolves the caller's address; see RequestLogger.
+func ClientIP(r *http.Request, trustedProxies int) string {
+	peer, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		peer = r.RemoteAddr
+	}
+	if trustedProxies <= 0 {
+		return peer
+	}
+	var hops []string
+	for _, h := range r.Header.Values("X-Forwarded-For") {
+		for _, p := range strings.Split(h, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				hops = append(hops, p)
+			}
+		}
+	}
+	if len(hops) < trustedProxies {
+		return peer // not behind the expected proxies (e.g. a direct health check)
+	}
+	if ip := net.ParseIP(hops[len(hops)-trustedProxies]); ip != nil {
+		return ip.String()
+	}
+	return peer
 }
 
 // RoutePattern is the matched chi route (e.g. /api/chat/{otherUser_id}/messages),

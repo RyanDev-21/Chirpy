@@ -78,6 +78,11 @@ func (f *fakeRepo) Leave(_ context.Context, id, user uuid.UUID) error {
 	return nil
 }
 
+func (f *fakeRepo) ListForUser(context.Context, uuid.UUID) ([]GroupSummary, error) { return nil, nil }
+func (f *fakeRepo) Detail(context.Context, uuid.UUID, uuid.UUID) (GroupDetail, error) {
+	return GroupDetail{}, nil
+}
+
 func newSvc(t *testing.T) (GroupService, *fakeRepo) {
 	t.Helper()
 	rdb, _ := testutil.Redis(t)

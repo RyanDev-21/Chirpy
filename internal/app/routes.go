@@ -33,10 +33,7 @@ var (
 // what protects a route is visible next to the route itself.
 func (a *App) Router() http.Handler {
 	r := chi.NewRouter()
-	if a.cfg.TrustProxyHeaders {
-		r.Use(chimw.RealIP)
-	}
-	r.Use(httpx.RequestLogger(a.logger))
+	r.Use(httpx.RequestLogger(a.logger, a.cfg.TrustedProxies))
 	r.Use(chimw.Recoverer)
 	r.Use(httpx.CORS(a.cfg.CORSOrigins))
 
@@ -70,6 +67,7 @@ func (a *App) Router() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(authed)
 
+			r.Get("/users/me", a.handlers.users.Me)
 			r.Post("/users/password", a.handlers.users.UpdatePassword)
 			r.With(limit(limitSearch)).Get("/users/search", a.handlers.users.SearchUser)
 			r.Get("/users/configs", a.handlers.users.GetConfig)
@@ -84,7 +82,9 @@ func (a *App) Router() http.Handler {
 			})
 
 			r.Route("/chats/groups", func(r chi.Router) {
+				r.Get("/", a.handlers.groups.MyGroups)
 				r.Post("/", a.handlers.groups.CreateGroup)
+				r.Get("/{group_id}", a.handlers.groups.Detail)
 				r.Post("/{group_id}/members", a.handlers.groups.JoinGroup)
 				r.Delete("/{group_id}/members", a.handlers.groups.LeaveGroup)
 			})

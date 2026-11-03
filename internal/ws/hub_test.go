@@ -87,3 +87,21 @@ func TestReconnectReplacesOldConnection(t *testing.T) {
 		t.Fatal("stale unregister removed the new connection")
 	}
 }
+
+func TestTypingIsThrottledPerChat(t *testing.T) {
+	c := &Client{}
+	a, b := uuid.New(), uuid.New()
+	now := time.Now()
+	if !c.allowTyping(a, now) {
+		t.Fatal("first typing event must pass")
+	}
+	if c.allowTyping(a, now.Add(time.Second)) {
+		t.Fatal("a second event within the interval must be dropped")
+	}
+	if !c.allowTyping(b, now.Add(time.Second)) {
+		t.Fatal("other chats have their own budget")
+	}
+	if !c.allowTyping(a, now.Add(typingInterval)) {
+		t.Fatal("after the interval typing passes again")
+	}
+}

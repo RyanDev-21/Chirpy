@@ -33,3 +33,31 @@ type createGroupRequest struct {
 type GroupInfo struct {
 	ChatID uuid.UUID `json:"chat_id"`
 }
+
+// GroupSummary is one entry of GET /api/chats/groups.
+type GroupSummary struct {
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	MaxMembers  int16     `json:"max_members"`
+	Members     int16     `json:"member_count"`
+	Role        string    `json:"role"` // the caller's role: "Leader" or "member"
+}
+
+type GroupMember struct {
+	UserID uuid.UUID `json:"user_id"`
+	Name   string    `json:"name"`
+	Role   string    `json:"role"`
+}
+
+// GroupDetail is GET /api/chats/groups/{group_id}. Members is only filled
+// in for members of the group.
+type GroupDetail struct {
+	ID          uuid.UUID     `json:"id"`
+	Name        string        `json:"name"`
+	Description string        `json:"description"`
+	MaxMembers  int16         `json:"max_members"`
+	MemberCount int16         `json:"member_count"`
+	IsMember    bool          `json:"is_member"`
+	Members     []GroupMember `json:"members,omitempty"`
+}

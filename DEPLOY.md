@@ -67,7 +67,7 @@ Render service.
 | `QUEUE_BACKEND` | `memory` | Upstash bills per command; idle stream polling alone would exceed 500K/month. Only seen receipts and UI config are queued, so losing them on a restart is harmless. |
 | `DB_MAX_CONNS` | `5` | Small pool for a small database. |
 | `DB_MAX_IDLE_TIME` | `2m` | Close idle connections so Neon can scale to zero. |
-| `TRUST_PROXY_HEADERS` | unset | Leave off unless you confirm Render overwrites `X-Forwarded-For`; otherwise rate limits key on Render's proxy IP. |
+| `TRUSTED_PROXIES` | `1` | Render's load balancer is one proxy; the real client IP is the last `X-Forwarded-For` entry. Without it every anonymous user shares one rate-limit budget. |
 
 ## Stage 2: VPS (~$7/month)
 
@@ -76,8 +76,8 @@ running the app, Postgres and Redis with Docker Compose:
 
 - set `QUEUE_BACKEND=redis` (durable queue; no per-command billing)
 - run Postgres with a daily `pg_dump` backup copied off the machine
-- put Caddy in front for automatic HTTPS on `api.ponypigeon.com`, and set
-  `TRUST_PROXY_HEADERS=true` since Caddy sets `X-Forwarded-For`
+- put Caddy in front for automatic HTTPS on `api.ponypigeon.com`, and keep
+  `TRUSTED_PROXIES=1` (Caddy appends the client IP to `X-Forwarded-For`)
 - keep monitoring on Grafana Cloud's free tier rather than self-hosting
   Prometheus/Loki/Grafana on a small server
 

@@ -60,18 +60,14 @@ func (f *fakeRepo) GetConfig(context.Context, uuid.UUID) ([]ElementCustom, error
 	return f.config, nil
 }
 
-type nopQueue struct{ n int }
-
-func (q *nopQueue) Publish(context.Context, string, any) error { q.n++; return nil }
-
-func newSvc(t *testing.T) (UserService, *fakeRepo, *nopQueue) {
+func newSvc(t *testing.T) (UserService, *fakeRepo) {
 	rdb, _ := testutil.Redis(t)
-	repo, q := newFakeRepo(), &nopQueue{}
-	return NewUserService(repo, NewStore(rdb), q, testutil.Logger()), repo, q
+	repo := newFakeRepo()
+	return NewUserService(repo, NewStore(rdb), testutil.Logger()), repo
 }
 
 func TestRegisterValidation(t *testing.T) {
-	svc, _, _ := newSvc(t)
+	svc, _ := newSvc(t)
 	ctx := context.Background()
 	cases := []struct{ name, email, pass string }{
 		{"ab", "a@b.io", testPassword},
@@ -97,7 +93,7 @@ func TestRegisterValidation(t *testing.T) {
 }
 
 func TestGetNameIsCached(t *testing.T) {
-	svc, repo, _ := newSvc(t)
+	svc, repo := newSvc(t)
 	ctx := context.Background()
 	id := uuid.New()
 	repo.users[id] = &User{ID: id, Name: "bob"}
@@ -116,7 +112,7 @@ func TestGetNameIsCached(t *testing.T) {
 }
 
 func TestUpdatePasswordRevokesSessions(t *testing.T) {
-	svc, repo, _ := newSvc(t)
+	svc, repo := newSvc(t)
 	ctx := context.Background()
 	u, err := svc.Register(ctx, "carol", "c@x.io", testPassword)
 	if err != nil {
@@ -137,7 +133,7 @@ func TestUpdatePasswordRevokesSessions(t *testing.T) {
 }
 
 func TestConfigCacheAndQueue(t *testing.T) {
-	svc, repo, q := newSvc(t)
+	svc, repo := newSvc(t)
 	ctx := context.Background()
 	id := uuid.New()
 	repo.config = []ElementCustom{{Label: "from-db"}}
@@ -150,8 +146,8 @@ func TestConfigCacheAndQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ = svc.GetConfig(ctx, id)
-	if got[0].Label != "new" || q.n != 1 {
-		t.Fatalf("after save: %v (queued %d)", got, q.n)
+	if got[0].Label != "new" {
+		t.Fatalf("after save: %v", got)
 	}
 	if err := svc.SaveConfig(ctx, id, make([]ElementCustom, maxConfigItems+1)); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("too many items: %v", err)

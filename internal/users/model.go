@@ -14,9 +14,6 @@ var (
 	ErrInvalidInput   = errors.New("invalid input")
 )
 
-// TopicSaveConfig persists a user's UI config.
-const TopicSaveConfig = "user.config.save"
-
 type User struct {
 	ID        uuid.UUID `json:"id"`
 	Name      string    `json:"name"`
@@ -80,10 +77,4 @@ type ElementCustom struct {
 
 type ConfigList struct {
 	List []ElementCustom `json:"config_list"`
-}
-
-// JobSaveConfig is the payload of TopicSaveConfig.
-type JobSaveConfig struct {
-	UserID uuid.UUID       `json:"user_id"`
-	List   []ElementCustom `json:"list"`
 }
