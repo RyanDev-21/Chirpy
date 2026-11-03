@@ -13,12 +13,10 @@ const (
 	TypePublic  = "public"
 )
 
-// queue topics owned by the chat package
-const (
-	TopicPrivateMessage = "chat.message.private"
-	TopicPublicMessage  = "chat.message.public"
-	TopicSeen           = "chat.seen.update"
-)
+// TopicSeen is the only chat write that goes through the queue: receipts
+// are frequent, only the latest matters, and losing one is harmless.
+// Messages are written to postgres before the API responds.
+const TopicSeen = "chat.seen.update"
 
 var (
 	ErrNotAuthorized       = errors.New("not a member of this group")
@@ -26,7 +24,7 @@ var (
 	ErrNotValidToID        = errors.New("to_id must be a valid uuid of another user or group")
 	ErrNotValidUUID        = errors.New("not valid uuid")
 	ErrNotValidTimeFmt     = errors.New("since must be an RFC3339 timestamp")
-	ErrNotValidParentID    = errors.New("parent_id must be a valid uuid")
+	ErrNotValidParentID    = errors.New("parent_id must be the id of a message in the same chat")
 	ErrNotSupportedTypeMsg = errors.New(`type must be "private" or "public"`)
 	ErrEmptyMessage        = errors.New("msg must be 1-500 characters")
 )
@@ -66,11 +64,6 @@ type MessageListRes struct {
 
 type ResponseMessageID struct {
 	MsgID uuid.UUID `json:"msg_id"`
-}
-
-// JobMessage is the payload of the message topics.
-type JobMessage struct {
-	Message MessageMetaDataRes `json:"message"`
 }
 
 // JobSeen is the payload of TopicSeen.

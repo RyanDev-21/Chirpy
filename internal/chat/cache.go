@@ -40,6 +40,8 @@ type Cache interface {
 	// Recent returns up to n newest messages in chronological order.
 	Recent(ctx context.Context, k chatKey, n int) ([]MessageMetaDataRes, error)
 	SetSeen(ctx context.Context, chatID string, user, msgID uuid.UUID) error
+	// Invalidate drops the stream so the next read reseeds it from postgres.
+	Invalidate(ctx context.Context, k chatKey) error
 }
 
 type redisCache struct {
@@ -115,4 +117,8 @@ func (c *redisCache) Recent(ctx context.Context, k chatKey, n int) ([]MessageMet
 
 func (c *redisCache) SetSeen(ctx context.Context, chatID string, user, msgID uuid.UUID) error {
 	return c.rdb.Set(ctx, seenKey(chatID, user), msgID.String(), chatTTL).Err()
+}
+
+func (c *redisCache) Invalidate(ctx context.Context, k chatKey) error {
+	return c.rdb.Del(ctx, k.loaded(), k.msgs()).Err()
 }

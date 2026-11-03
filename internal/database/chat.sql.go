@@ -33,7 +33,6 @@ func (q *Queries) AddLastSeenMessage(ctx context.Context, arg AddLastSeenMessage
 const addMessagePrivate = `-- name: AddMessagePrivate :exec
 INSERT INTO message(id, content, parentId, from_id, to_id, created_at)
 VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (id) DO NOTHING
 `
 
 type AddMessagePrivateParams struct {
@@ -60,7 +59,6 @@ func (q *Queries) AddMessagePrivate(ctx context.Context, arg AddMessagePrivatePa
 const addMessagePublic = `-- name: AddMessagePublic :exec
 INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at)
 VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (id) DO NOTHING
 `
 
 type AddMessagePublicParams struct {
@@ -216,4 +214,41 @@ func (q *Queries) GetRecentPrivateMessages(ctx context.Context, arg GetRecentPri
 		return nil, err
 	}
 	return items, nil
+}
+
+const groupMessageInGroup = `-- name: GroupMessageInGroup :one
+SELECT EXISTS (SELECT 1 FROM GroupMessage WHERE id = $1 AND group_id = $2)
+`
+
+type GroupMessageInGroupParams struct {
+	ID      uuid.UUID
+	GroupID pgtype.UUID
+}
+
+func (q *Queries) GroupMessageInGroup(ctx context.Context, arg GroupMessageInGroupParams) (bool, error) {
+	row := q.db.QueryRow(ctx, groupMessageInGroup, arg.ID, arg.GroupID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const privateMessageInChat = `-- name: PrivateMessageInChat :one
+SELECT EXISTS (
+    SELECT 1 FROM message
+    WHERE id = $1
+      AND ((from_id = $2 AND to_id = $3) OR (from_id = $3 AND to_id = $2))
+)
+`
+
+type PrivateMessageInChatParams struct {
+	ID    uuid.UUID
+	UserA pgtype.UUID
+	UserB pgtype.UUID
+}
+
+func (q *Queries) PrivateMessageInChat(ctx context.Context, arg PrivateMessageInChatParams) (bool, error) {
+	row := q.db.QueryRow(ctx, privateMessageInChat, arg.ID, arg.UserA, arg.UserB)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

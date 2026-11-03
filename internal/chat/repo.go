@@ -18,6 +18,10 @@ type ChatRepo interface {
 	PrivateSince(ctx context.Context, a, b uuid.UUID, since time.Time, n int) ([]MessageMetaDataRes, error)
 	RecentPublic(ctx context.Context, groupID uuid.UUID, n int) ([]MessageMetaDataRes, error)
 	UpdateLastSeen(ctx context.Context, chatID string, userID, msgID uuid.UUID) error
+	// ParentInPrivate / ParentInGroup report whether a reply target belongs
+	// to the same conversation.
+	ParentInPrivate(ctx context.Context, parentID, a, b uuid.UUID) (bool, error)
+	ParentInGroup(ctx context.Context, parentID, groupID uuid.UUID) (bool, error)
 }
 
 type chatRepo struct {
@@ -142,4 +146,12 @@ func (r *chatRepo) RecentPublic(ctx context.Context, groupID uuid.UUID, n int) (
 
 func (r *chatRepo) UpdateLastSeen(ctx context.Context, chatID string, userID, msgID uuid.UUID) error {
 	return r.q.AddLastSeenMessage(ctx, database.AddLastSeenMessageParams{ChatID: chatID, MessageID: msgID, SeenID: pgUUID(userID)})
+}
+
+func (r *chatRepo) ParentInPrivate(ctx context.Context, parentID, a, b uuid.UUID) (bool, error) {
+	return r.q.PrivateMessageInChat(ctx, database.PrivateMessageInChatParams{ID: parentID, UserA: pgUUID(a), UserB: pgUUID(b)})
+}
+
+func (r *chatRepo) ParentInGroup(ctx context.Context, parentID, groupID uuid.UUID) (bool, error) {
+	return r.q.GroupMessageInGroup(ctx, database.GroupMessageInGroupParams{ID: parentID, GroupID: pgUUID(groupID)})
 }

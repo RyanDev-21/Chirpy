@@ -30,8 +30,6 @@ func (a *App) subscriptions() []subscription {
 		{groups.TopicAddMember, 4, queue.Typed(a.groups.HandleAddMember)},
 		{groups.TopicRemoveMember, 4, queue.Typed(a.groups.HandleRemoveMember)},
 
-		{chat.TopicPrivateMessage, 8, queue.Typed(a.chat.HandlePrivateMessage)},
-		{chat.TopicPublicMessage, 8, queue.Typed(a.chat.HandlePublicMessage)},
 		{chat.TopicSeen, 2, queue.Typed(a.chat.HandleSeen)},
 	}
 }

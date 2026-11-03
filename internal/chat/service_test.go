@@ -17,10 +17,27 @@ import (
 type fakeRepo struct {
 	history []MessageMetaDataRes
 	since   int
+	saved   []MessageMetaDataRes
+	parents map[uuid.UUID]bool // parent ids that belong to the chat
+	failAdd error
 }
 
-func (f *fakeRepo) AddPrivate(context.Context, MessageMetaDataRes) error { return nil }
-func (f *fakeRepo) AddPublic(context.Context, MessageMetaDataRes) error  { return nil }
+func (f *fakeRepo) AddPrivate(_ context.Context, m MessageMetaDataRes) error {
+	if f.failAdd != nil {
+		return f.failAdd
+	}
+	f.saved = append(f.saved, m)
+	return nil
+}
+func (f *fakeRepo) AddPublic(ctx context.Context, m MessageMetaDataRes) error {
+	return f.AddPrivate(ctx, m)
+}
+func (f *fakeRepo) ParentInPrivate(_ context.Context, p, _, _ uuid.UUID) (bool, error) {
+	return f.parents[p], nil
+}
+func (f *fakeRepo) ParentInGroup(_ context.Context, p, _ uuid.UUID) (bool, error) {
+	return f.parents[p], nil
+}
 func (f *fakeRepo) RecentPrivate(_ context.Context, _, _ uuid.UUID, n int) ([]MessageMetaDataRes, error) {
 	return f.history[max(0, len(f.history)-n):], nil
 }
@@ -79,7 +96,7 @@ type fixture struct {
 func setup(t *testing.T) fixture {
 	t.Helper()
 	rdb, _ := testutil.Redis(t)
-	f := fixture{repo: &fakeRepo{}, push: &fakePush{}, queue: &countQueue{}, alice: uuid.New(), bob: uuid.New(), carol: uuid.New(), group: uuid.New()}
+	f := fixture{repo: &fakeRepo{parents: map[uuid.UUID]bool{}}, push: &fakePush{}, queue: &countQueue{}, alice: uuid.New(), bob: uuid.New(), carol: uuid.New(), group: uuid.New()}
 	groups := fakeGroups{f.group: {f.alice, f.bob}}
 	friends := fakeFriends{{f.alice, f.bob}: true}
 	f.svc = NewChatService(f.repo, NewCache(rdb), groups, friends, f.push, f.queue, testutil.Logger())
@@ -111,8 +128,8 @@ func TestSendValidation(t *testing.T) {
 			t.Errorf("SendMessage(%+v) err = %v, want %v", c.in, err, c.want)
 		}
 	}
-	if len(f.queue.topics) != 0 {
-		t.Fatalf("rejected messages were queued: %v", f.queue.topics)
+	if len(f.repo.saved) != 0 {
+		t.Fatalf("rejected messages were saved: %v", f.repo.saved)
 	}
 }
 
@@ -141,8 +158,8 @@ func TestPrivateMessagesKeepHistoryOrder(t *testing.T) {
 	if len(f.push.targets) != 2 || f.push.targets[0][0] != f.bob {
 		t.Fatalf("push targets = %v", f.push.targets)
 	}
-	if f.queue.topics[0] != TopicPrivateMessage {
-		t.Fatalf("topic = %v", f.queue.topics)
+	if len(f.repo.saved) != 2 || len(f.queue.topics) != 0 {
+		t.Fatalf("messages must be saved synchronously, not queued: saved=%d queued=%v", len(f.repo.saved), f.queue.topics)
 	}
 }
 
@@ -204,5 +221,35 @@ func TestPrivateChatIDIsSymmetric(t *testing.T) {
 	a, b := uuid.New(), uuid.New()
 	if PrivateChatID(a, b) != PrivateChatID(b, a) {
 		t.Fatal("chat id must not depend on argument order")
+	}
+}
+
+func TestParentMustBelongToChat(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	foreign := uuid.New()
+	in := msg(f.bob, TypePrivate, "reply")
+	in.ParendID = foreign.String()
+	if _, err := f.svc.SendMessage(ctx, f.alice, in); !errors.Is(err, ErrNotValidParentID) {
+		t.Fatalf("foreign parent: %v", err)
+	}
+	f.repo.parents[foreign] = true
+	if _, err := f.svc.SendMessage(ctx, f.alice, in); err != nil {
+		t.Fatalf("valid parent: %v", err)
+	}
+}
+
+func TestDatabaseFailureFailsSendAndSkipsDelivery(t *testing.T) {
+	f := setup(t)
+	f.repo.failAdd = errors.New("postgres down")
+	if _, err := f.svc.SendMessage(context.Background(), f.alice, msg(f.bob, TypePrivate, "hi")); err == nil {
+		t.Fatal("send must fail when postgres rejects the insert")
+	}
+	if len(f.push.targets) != 0 {
+		t.Fatal("an unsaved message must not be delivered")
+	}
+	got, _ := f.svc.PrivateMessages(context.Background(), f.bob, f.alice, "")
+	if len(got) != 0 {
+		t.Fatalf("an unsaved message must not be cached: %+v", got)
 	}
 }

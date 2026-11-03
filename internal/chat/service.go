@@ -37,8 +37,6 @@ type ChatService interface {
 	GroupMessages(ctx context.Context, me, groupID uuid.UUID) ([]MessageMetaDataRes, error)
 	MarkSeen(ctx context.Context, me, other uuid.UUID, msgID string) error
 
-	HandlePrivateMessage(ctx context.Context, j JobMessage) error
-	HandlePublicMessage(ctx context.Context, j JobMessage) error
 	HandleSeen(ctx context.Context, j JobSeen) error
 }
 
@@ -65,8 +63,9 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 	if err != nil || to == from {
 		return uuid.Nil, ErrNotValidToID
 	}
+	var parentID uuid.UUID
 	if in.ParendID != "" {
-		if _, err := uuid.Parse(in.ParendID); err != nil {
+		if parentID, err = uuid.Parse(in.ParendID); err != nil {
 			return uuid.Nil, ErrNotValidParentID
 		}
 	}
@@ -74,7 +73,6 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 	var (
 		key     chatKey
 		targets []uuid.UUID
-		topic   string
 	)
 	switch in.Type {
 	case TypePrivate:
@@ -85,7 +83,7 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 		if !ok {
 			return uuid.Nil, ErrNotFriends
 		}
-		key, targets, topic = privateKey(from, to), []uuid.UUID{to}, TopicPrivateMessage
+		key, targets = privateKey(from, to), []uuid.UUID{to}
 	case TypePublic:
 		members, err := s.groups.Members(ctx, to)
 		if err != nil {
@@ -94,7 +92,7 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 		if !slices.Contains(members, from) {
 			return uuid.Nil, ErrNotAuthorized
 		}
-		key, topic = groupKey(to), TopicPublicMessage
+		key = groupKey(to)
 		targets = slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == from })
 	default:
 		return uuid.Nil, ErrNotSupportedTypeMsg
@@ -111,17 +109,36 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 		MsgInfo:   MessageCache{Msg: in, FromID: from, CreatedAt: now},
 	}
 
-	// seed the stream first so history is not hidden behind the new message
+	if parentID != uuid.Nil {
+		ok, err := s.parentInChat(ctx, in.Type, parentID, from, to)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		if !ok {
+			return uuid.Nil, ErrNotValidParentID
+		}
+	}
+
+	// Seed before inserting: a seed read after the insert would already
+	// contain this message and the append below would duplicate it.
 	if err := s.ensureSeeded(ctx, key, from, to, in.Type); err != nil {
 		return uuid.Nil, err
 	}
-	if err := s.cache.Append(ctx, key, msg); err != nil {
+	// postgres is the source of truth: the message is durable before we answer
+	if in.Type == TypePrivate {
+		err = s.repo.AddPrivate(ctx, msg)
+	} else {
+		err = s.repo.AddPublic(ctx, msg)
+	}
+	if err != nil {
 		return uuid.Nil, err
 	}
-	pubCtx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	if err := s.queue.Publish(pubCtx, topic, JobMessage{Message: msg}); err != nil {
-		return uuid.Nil, err
+	if err := s.cache.Append(ctx, key, msg); err != nil {
+		// the message is saved; drop the stream so the next read reseeds it
+		s.logger.Warn("failed to append message to cache, invalidating", "error", err)
+		if err := s.cache.Invalidate(ctx, key); err != nil {
+			s.logger.Error("failed to invalidate chat cache", "error", err)
+		}
 	}
 	if err := s.push.WriteToUsers(targets, ws.Event{Event: ws.EventMessage, Payload: ws.OutGoingMessage{
 		ID:        msgID.String(),
@@ -134,6 +151,13 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 		s.logger.Warn("failed to push message", "error", err)
 	}
 	return msgID, nil
+}
+
+func (s *chatService) parentInChat(ctx context.Context, kind string, parentID, from, to uuid.UUID) (bool, error) {
+	if kind == TypePrivate {
+		return s.repo.ParentInPrivate(ctx, parentID, from, to)
+	}
+	return s.repo.ParentInGroup(ctx, parentID, to)
 }
 
 // ensureSeeded loads recent history from postgres into the stream once.
@@ -227,22 +251,13 @@ func (s *chatService) MarkSeen(ctx context.Context, me, other uuid.UUID, msgIDSt
 
 // --- workers ---
 
-// classify keeps foreign-key errors retryable (the parent message or the
-// group may still be queued) and drops data errors.
+// classify retries foreign-key errors and drops data errors.
 func classify(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && strings.HasPrefix(pgErr.Code, "22") {
 		return queue.Permanent(err)
 	}
 	return err
-}
-
-func (s *chatService) HandlePrivateMessage(ctx context.Context, j JobMessage) error {
-	return classify(s.repo.AddPrivate(ctx, j.Message))
-}
-
-func (s *chatService) HandlePublicMessage(ctx context.Context, j JobMessage) error {
-	return classify(s.repo.AddPublic(ctx, j.Message))
 }
 
 func (s *chatService) HandleSeen(ctx context.Context, j JobSeen) error {
