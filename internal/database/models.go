@@ -65,6 +65,7 @@ type Message struct {
 }
 
 type RefreshToken struct {
+	// hex SHA-256 of the refresh token; the token itself is never stored
 	Token     string
 	CreatedAt pgtype.Timestamp
 	UpdatedAt time.Time
