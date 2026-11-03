@@ -53,7 +53,7 @@ func (m *Memory) Publish(ctx context.Context, topic string, payload any) error {
 }
 
 // Subscribe starts workers goroutines handling topic until ctx is done.
-func (m *Memory) Subscribe(ctx context.Context, topic string, workers int, h Handler) {
+func (m *Memory) Subscribe(ctx context.Context, topic string, workers int, h Handler) error {
 	ch := m.topic(topic)
 	for range workers {
 		m.wg.Add(1)
@@ -69,6 +69,7 @@ func (m *Memory) Subscribe(ctx context.Context, topic string, workers int, h Han
 			}
 		}()
 	}
+	return nil
 }
 
 func (m *Memory) handle(ctx context.Context, topic string, ch chan memJob, job memJob, h Handler) {

@@ -36,8 +36,11 @@ func (a *App) subscriptions() []subscription {
 	}
 }
 
-func (a *App) startWorkers(ctx context.Context) {
+func (a *App) startWorkers(ctx context.Context) error {
 	for _, s := range a.subscriptions() {
-		a.queue.Subscribe(ctx, s.topic, s.workers, s.handler)
+		if err := a.queue.Subscribe(ctx, s.topic, s.workers, s.handler); err != nil {
+			return err
+		}
 	}
+	return nil
 }

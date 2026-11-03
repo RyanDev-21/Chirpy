@@ -13,6 +13,14 @@ type Publisher interface {
 	Publish(ctx context.Context, topic string, payload any) error
 }
 
+// Broker is a Publisher that can also run consumers.
+type Broker interface {
+	Publisher
+	Subscribe(ctx context.Context, topic string, workers int, h Handler) error
+	// Wait blocks until consumers have stopped after ctx was cancelled.
+	Wait()
+}
+
 // Handler processes one raw job payload. Returning an error retries the
 // job; wrap it with Permanent to drop it instead.
 type Handler func(ctx context.Context, payload json.RawMessage) error

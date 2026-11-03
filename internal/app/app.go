@@ -33,7 +33,7 @@ type App struct {
 	logger *slog.Logger
 	db     *pgxpool.Pool
 	redis  *redis.Client
-	queue  *queue.Memory
+	queue  queue.Broker
 	hub    *ws.Hub
 
 	users   users.UserService
@@ -76,7 +76,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		logger: logger,
 		db:     db,
 		redis:  rdb,
-		queue:  queue.NewMemory(10, logger),
+		queue:  queue.NewRedis(rdb, queue.RedisOptions{}, logger),
 		hub:    ws.NewHub(),
 	}
 	queries := database.New(db)
@@ -112,7 +112,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 // cancelled, then shuts the server down gracefully.
 func (a *App) Run(ctx context.Context) error {
 	go a.hub.Run()
-	a.startWorkers(ctx)
+	if err := a.startWorkers(ctx); err != nil {
+		return err
+	}
 
 	srv := &http.Server{
 		Addr:              a.cfg.Addr,
@@ -147,7 +149,9 @@ func (a *App) Run(ctx context.Context) error {
 	a.logger.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), a.cfg.ShutdownTimeout)
 	defer cancel()
-	return srv.Shutdown(shutdownCtx)
+	err := srv.Shutdown(shutdownCtx)
+	a.queue.Wait() // let in-flight jobs finish and ack
+	return err
 }
 
 // Close releases database and redis connections.

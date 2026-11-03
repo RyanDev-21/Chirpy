@@ -102,7 +102,7 @@ func (a *App) Router() http.Handler {
 }
 
 func (a *App) limiter(p limitPolicy) ratelimit.Limiter {
-	return ratelimit.NewMemory(p.limit, p.period)
+	return ratelimit.NewRedis(a.redis, p.limit, p.period)
 }
 
 func (a *App) health(w http.ResponseWriter, r *http.Request) {
