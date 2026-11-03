@@ -2,149 +2,132 @@ package groups
 
 import (
 	"context"
-//	"log"
-	// "database/sql"
-	// "errors"
-
-	//	"database/sql"
-	"time"
+	"errors"
 
 	"RyanDev-21.com/Chirpy/internal/database"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type GroupRepo interface {
-	createGroup(groupID uuid.UUID,groupInfo createGroupStruct)error
-	createGroupLeader(payload creatorPublishStruct)error
-	getGroupInfoByName(ctx context.Context,name string)error
-getGroupInfoByID(ctx context.Context,id uuid.UUID)(*database.ChatGroup,error)
-	//joinGroup(groupID uuid.UUID,userID uuid.UUID)error
-	getAllGroupInfo(ctx context.Context)(*[]database.GetAllGroupInfoRow,error)
-	getMemsByID(ctx context.Context,groupID uuid.UUID)(*[]uuid.UUID,error)
-	addMemberList(ctx context.Context,payload *[]database.AddMemberListParams)error
-	addMember(ctx context.Context,payload *database.AddMemberParams)error
-	deleteMember(ctx context.Context,payload *database.DeleteMemFromGroupParams)error
-	//getMemFromGroup(ctx context.Context,payload database.GetMemFromGroupParams)error
+// GroupSnapshot is what the cache keeps about one group.
+type GroupSnapshot struct {
+	Name     string      `json:"name"`
+	MaxMem   int16       `json:"max"`
+	LeaderID uuid.UUID   `json:"leader"`
+	Members  []uuid.UUID `json:"members"`
+}
 
+type GroupRepo interface {
+	// Create inserts the group and its leader; ErrDuplicateName if the name
+	// is taken (case-insensitive).
+	Create(ctx context.Context, groupID, creatorID uuid.UUID, req createGroupRequest) error
+	Snapshot(ctx context.Context, groupID uuid.UUID) (GroupSnapshot, error)
+	// Join and Leave lock the group row, so concurrent changes to the same
+	// group are applied one at a time and capacity cannot be exceeded.
+	Join(ctx context.Context, groupID, userID uuid.UUID) error
+	Leave(ctx context.Context, groupID, userID uuid.UUID) error
 }
 
 type groupRepo struct {
-	queries *database.Queries
+	pool *pgxpool.Pool
+	q    *database.Queries
 }
 
-func NewGroupRepo(queries *database.Queries)GroupRepo{
-	return &groupRepo{
-		queries: queries,
-	}
+func NewGroupRepo(pool *pgxpool.Pool) GroupRepo {
+	return &groupRepo{pool: pool, q: database.New(pool)}
 }
 
+func isCode(err error, code string) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == code
+}
 
-// func (r *groupRepo)createChatRecord(ctx context.Context,chatID uuid.UUID,groupInfo *createGroupRequest)error{
-// 	fmt.Println("saved into db")
-// 	return nil
-// }
-func (r *groupRepo)createGroup(groupID uuid.UUID,groupInfo createGroupStruct)error{
-	context,cancel := context.WithTimeout(context.Background(),5*time.Second)
-	defer cancel()
-	_,err := r.queries.CreateGroup(context,database.CreateGroupParams{
-		ID: groupID,
-		Name: groupInfo.GroupName,
-		Description: groupInfo.Description,
-		MaxMember: groupInfo.MaxMems,
-		CurrentMember:groupInfo.CurrentMem,
+func (r *groupRepo) Create(ctx context.Context, groupID, creatorID uuid.UUID, req createGroupRequest) error {
+	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		q := r.q.WithTx(tx)
+		if err := q.CreateGroup(ctx, database.CreateGroupParams{
+			ID: groupID, Name: req.GroupName, Description: req.Description, MaxMember: req.MaxMems,
+		}); err != nil {
+			return err
+		}
+		return q.CreateGroupLeaderRole(ctx, database.CreateGroupLeaderRoleParams{GroupID: groupID, MemberID: creatorID})
 	})
-	if err !=nil{
-		return err
+	if isCode(err, "23505") {
+		return ErrDuplicateName
 	}
-
-	return nil
-}
-
-func (r *groupRepo)createGroupLeader(payload creatorPublishStruct)error{
-	context,cancel := context.WithTimeout(context.Background(),5*time.Second)
-	defer cancel()
-	_,err := r.queries.CreateGroupLeaderRole(context,database.CreateGroupLeaderRoleParams{
-		GroupID: payload.GroupID,
-		MemberID: payload.UserID,
-		Role: payload.Role,
-	})
-	if err !=nil{
-		return err
-	}
-	return nil
-}
-
-
-func (r *groupRepo)getGroupInfoByName(ctx context.Context,name string)error{
-	_,err :=r.queries.SearchInfoByName(ctx,name)
-	
-	if err !=nil{
-		return  err
-	}
-	return nil
-}
-
-func (r *groupRepo)getGroupInfoByID(ctx context.Context,id uuid.UUID)(*database.ChatGroup,error){
-	groupInfo, err := r.queries.GetGroupInfoByID(ctx,id)
-	if err !=nil{
-		return nil,	err
-	}
-	return &groupInfo,nil
-}
-
-
-//this one will return all the member id list too
-func (r *groupRepo)getAllGroupInfo(ctx context.Context)(*[]database.GetAllGroupInfoRow,error){
-	groupInfo, err := r.queries.GetAllGroupInfo(ctx)
-	if err !=nil{
-		return nil,err
-	}
-	return &groupInfo,nil
-
-}
-
-
-//if i do something like add all the member id to the db like line by line that would really slow me down i need to find a way to make this sure it keep storing the db fast
-//func (r *groupRepo)addMember(ctx context.Context,members *)
-func(r *groupRepo) getMemsByID(ctx context.Context,groupID uuid.UUID)(*[]uuid.UUID,error){
-	groupMems , err := 	r.queries.GetMemberListByID(ctx,groupID)
-	if err !=nil{
-		return nil,err
-	}
-	return &groupMems,nil
-}
-
-
-func(r *groupRepo)addMemberList(ctx context.Context,payload *[]database.AddMemberListParams)error{
-	_,err := r.queries.AddMemberList(ctx,*payload)
-	if err !=nil{
-		return err
-	}
-	return nil
-}
-
-
-func (r *groupRepo)addMember(ctx context.Context,payload *database.AddMemberParams)error{
-	err := r.queries.AddMember(ctx,*payload)
-	if err !=nil{
-		return err
-	}
-	return nil
-}
-
-
-func (r *groupRepo)deleteMember(ctx context.Context,payload *database.DeleteMemFromGroupParams)error{
-	err:= r.queries.DeleteMemFromGroup(ctx,*payload)
 	return err
 }
 
-// func (r *groupRepo)getMemFromGroup(ctx context.Context,payload database.GetMemFromGroupParams)error{
-// 	_,err := r.queries.GetMemFromGroup(ctx,payload)
-// 	if err !=nil{
-// 		if err == sql.ErrNoRows{
-// 			return errors.New("not found")
-// 		}
-// 		return err
-// 	}
-// 	return errors.New("already exist")
-// }
+func (r *groupRepo) Snapshot(ctx context.Context, groupID uuid.UUID) (GroupSnapshot, error) {
+	g, err := r.q.GetGroupInfoByID(ctx, groupID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return GroupSnapshot{}, ErrNotFoundGroup
+	}
+	if err != nil {
+		return GroupSnapshot{}, err
+	}
+	members, err := r.q.GetMemberListByID(ctx, groupID)
+	if err != nil {
+		return GroupSnapshot{}, err
+	}
+	leader, err := r.q.GetGroupLeader(ctx, groupID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return GroupSnapshot{}, err
+	}
+	return GroupSnapshot{Name: g.Name, MaxMem: g.MaxMember, LeaderID: leader, Members: members}, nil
+}
+
+// withLockedGroup runs fn in a transaction holding the group's row lock.
+func (r *groupRepo) withLockedGroup(ctx context.Context, groupID uuid.UUID, fn func(q *database.Queries, g database.LockGroupRow) error) error {
+	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		q := r.q.WithTx(tx)
+		g, err := q.LockGroup(ctx, groupID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFoundGroup
+		}
+		if err != nil {
+			return err
+		}
+		return fn(q, g)
+	})
+}
+
+func (r *groupRepo) Join(ctx context.Context, groupID, userID uuid.UUID) error {
+	return r.withLockedGroup(ctx, groupID, func(q *database.Queries, g database.LockGroupRow) error {
+		_, err := q.GetMemberRole(ctx, database.GetMemberRoleParams{GroupID: groupID, MemberID: userID})
+		if err == nil {
+			return ErrAlreadyMember
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if g.CurrentMember >= g.MaxMember {
+			return ErrGroupFull
+		}
+		if err := q.AddMember(ctx, database.AddMemberParams{GroupID: groupID, MemberID: userID}); err != nil {
+			return err
+		}
+		return q.SetGroupMemberCount(ctx, database.SetGroupMemberCountParams{ID: groupID, CurrentMember: g.CurrentMember + 1})
+	})
+}
+
+func (r *groupRepo) Leave(ctx context.Context, groupID, userID uuid.UUID) error {
+	return r.withLockedGroup(ctx, groupID, func(q *database.Queries, g database.LockGroupRow) error {
+		role, err := q.GetMemberRole(ctx, database.GetMemberRoleParams{GroupID: groupID, MemberID: userID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotMember
+		}
+		if err != nil {
+			return err
+		}
+		if role == RoleLeader {
+			return ErrLeaderCannotLeave
+		}
+		if err := q.DeleteMemFromGroup(ctx, database.DeleteMemFromGroupParams{GroupID: groupID, MemberID: userID}); err != nil {
+			return err
+		}
+		return q.SetGroupMemberCount(ctx, database.SetGroupMemberCountParams{ID: groupID, CurrentMember: max(g.CurrentMember-1, 0)})
+	})
+}

@@ -7,141 +7,134 @@ import (
 	"log/slog"
 	"time"
 
+	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
+	"RyanDev-21.com/Chirpy/internal/platform/secure"
 	"RyanDev-21.com/Chirpy/internal/users"
-	"RyanDev-21.com/Chirpy/pkg/auth"
-	"RyanDev-21.com/Chirpy/pkg/middleware"
 	"github.com/google/uuid"
 )
 
+var ErrInvalidCredentials = errors.New("invalid credentials")
 
-var InvalidCredentailErr = errors.New("invalid credentials")
-
-type AuthService interface{
-	Login(ctx context.Context,email,password string)(accessToken,refreshToken string,user *users.User,err error)	
-	Revoke(ctx context.Context,token string) error
-	Refresh(ctx context.Context,token string)(string,string,error)
+type AuthService interface {
+	Login(ctx context.Context, email, password string) (accessToken, refreshToken string, user *users.User, err error)
+	Revoke(ctx context.Context, token string) error
+	Refresh(ctx context.Context, token string) (string, string, error)
 }
 
-
-type authService struct{
+type authService struct {
 	authRepo AuthRepo
 	userRepo users.UserRepo
-	secret string
-	logger *slog.Logger
+	secret   string
+	logger   *slog.Logger
 }
 
-func NewAuthService(userRepo users.UserRepo,authRepo AuthRepo,secret string,logger *slog.Logger)AuthService{
+func NewAuthService(userRepo users.UserRepo, authRepo AuthRepo, secret string, logger *slog.Logger) AuthService {
 	return &authService{
-		authRepo : authRepo,
+		authRepo: authRepo,
 		userRepo: userRepo,
-		secret: secret,
-		logger: logger,
+		secret:   secret,
+		logger:   logger,
 	}
 }
 
-func (s *authService)Login(ctx context.Context,email,password string)(accessToken,refreshToken string,user *users.User,err error){
-	reqID, err:= middleware.GetContextKey(ctx,"request")
-	if err!=nil {
-		s.logger.Warn("failed to get the reqID")
-	}
-	dbUser,hashPassword,err:= s.userRepo.GetUserByEmail(ctx,email)
-	if err !=nil{
-		if err == users.NoUserFoundErr{
-			s.logger.Info("no user found ","reqID",reqID);
-			return "","",nil,users.NoUserFoundErr
-		} 
-		s.logger.Error("failed to hit the db","reqID",reqID);
-		return "","",nil,InvalidCredentailErr
+func (s *authService) Login(ctx context.Context, email, password string) (accessToken, refreshToken string, user *users.User, err error) {
+	reqID := reqctx.RequestID(ctx)
+	dbUser, hashPassword, err := s.userRepo.GetUserByEmail(ctx, email)
+	if err != nil {
+		if errors.Is(err, users.ErrUserNotFound) {
+			// same response and timing as a wrong password
+			secure.BurnPasswordCheck(password)
+			s.logger.Info("login for unknown email", "reqID", reqID)
+			return "", "", nil, ErrInvalidCredentials
+		}
+		s.logger.Error("failed to hit the db", "reqID", reqID, "error", err)
+		return "", "", nil, err
 	}
 
-	valid, err := auth.CheckPassword(password,hashPassword)
-	if err !=nil {
-		s.logger.Error("the password check funtion failed","reqID",reqID);
-		return "","",nil,err
+	valid, err := secure.CheckPassword(password, hashPassword)
+	if err != nil {
+		s.logger.Error("the password check funtion failed", "reqID", reqID)
+		return "", "", nil, err
 	}
-	if !valid{
-		s.logger.Info("the match password check failed","reqID",reqID);
-		return "","",nil,InvalidCredentailErr	
+	if !valid {
+		s.logger.Info("the match password check failed", "reqID", reqID)
+		return "", "", nil, ErrInvalidCredentials
 	}
-	accessToken,refreshToken,err =s.generateTokens(ctx,dbUser.ID)
-	if err !=nil{
-		s.logger.Error("generateTokens function failed","reqID",reqID);
-		return "","",nil,err
+	accessToken, refreshToken, err = s.generateTokens(ctx, dbUser.ID)
+	if err != nil {
+		s.logger.Error("generateTokens function failed", "reqID", reqID)
+		return "", "", nil, err
 	}
-	s.logger.Info("the user logged in success","reqID",reqID);
-	return accessToken,refreshToken,dbUser,nil
+	s.logger.Info("the user logged in success", "reqID", reqID)
+	return accessToken, refreshToken, dbUser, nil
 }
 
-func (s *authService)Revoke(ctx context.Context,token string)error{
-	err := s.authRepo.RevokeToken(ctx,token)
-	if err !=nil{
+func (s *authService) Revoke(ctx context.Context, token string) error {
+	err := s.authRepo.RevokeToken(ctx, token)
+	if err != nil {
 		return err
 	}
 	return nil
-	
+
 }
 
-
-//need to add the logic to check whether the token has already revoked or not 
-func (s *authService)Refresh(ctx context.Context,token string)(string,string,error){
-	reqID, err:= middleware.GetContextKey(ctx,"request")
-	if err!=nil {
-		s.logger.Warn("failed to get the reqID")
+// need to add the logic to check whether the token has already revoked or not
+func (s *authService) Refresh(ctx context.Context, token string) (string, string, error) {
+	reqID := reqctx.RequestID(ctx)
+	s.logger.Info("getting the refresh token started", "reqID", reqID)
+	response, err := s.authRepo.GetRefreshToken(ctx, token)
+	if err != nil {
+		if !errors.Is(err, ErrNotAuthorized) {
+			s.logger.Error("failed to load refresh token", "reqID", reqID, "error", err)
+		}
+		return "", "", err
 	}
-	s.logger.Info("getting the refresh token started","reqID",reqID)
-	response ,err := s.authRepo.GetRefreshToken(ctx,token)
-	if err !=nil{ 
-		s.logger.Error("something went wrong","reqID",reqID,"error",err)
-		return "","",err
+	if time.Now().After(response.ExpiresAt) {
+		s.logger.Info("trying to refresh with an expired token", "reqID", reqID)
+		return "", "", ErrNotAuthorized
 	}
-	if time.Now().After(response.ExpiresAt){
-		s.logger.Info("trying to refresh with the expired one","reqID",reqID)
-		return "","",ErrTokenExpired
-	}
-	err = s.authRepo.RevokeToken(ctx,token)	
-	if err !=nil{
-		s.logger.Error("Failed to revoke the token","reqID",reqID,"error",err)
-		return "","",err
+	err = s.authRepo.RevokeToken(ctx, token)
+	if err != nil {
+		s.logger.Error("Failed to revoke the token", "reqID", reqID, "error", err)
+		return "", "", err
 	}
 
 	//returns both tokens alongside the error(if exists)
-	accessToken,refreshToken,err :=s.generateTokens(ctx,response.UserID)
-	if err !=nil{
-		s.logger.Error("failed to generate both tokens ","reqID",reqID,"error",err)
-		return "","",err
+	accessToken, refreshToken, err := s.generateTokens(ctx, response.UserID)
+	if err != nil {
+		s.logger.Error("failed to generate both tokens ", "reqID", reqID, "error", err)
+		return "", "", err
 	}
-	s.logger.Info("returning the tokens","reqID",reqID)
-	return accessToken,refreshToken,nil
+	s.logger.Info("returning the tokens", "reqID", reqID)
+	return accessToken, refreshToken, nil
 }
 
-//uses auth pkg simply to create the tokens with specific expire date
-func (s *authService)generateTokens(ctx context.Context,userID uuid.UUID)(string,string,error){
-	expireIn := 60*time.Minute
+// uses auth pkg simply to create the tokens with specific expire date
+func (s *authService) generateTokens(ctx context.Context, userID uuid.UUID) (string, string, error) {
+	expireIn := 60 * time.Minute
 
-
-	accessToken ,err:= auth.MakeJWT(userID,s.secret,expireIn)
-	if err !=nil{
-		log.Printf("failed to make accessToken %s",err)
-		return 	"","",err
+	accessToken, err := secure.MakeJWT(userID, s.secret, expireIn)
+	if err != nil {
+		log.Printf("failed to make accessToken %s", err)
+		return "", "", err
 	}
-	refreshToken, err:= auth.MakeRefreshToken()
-	if err !=nil{
-		log.Printf("failed to make a refreshToken %s",err)
-		return "","",err	
+	refreshToken, err := secure.MakeRefreshToken()
+	if err != nil {
+		log.Printf("failed to make a refreshToken %s", err)
+		return "", "", err
 	}
-	refreshTokenExpireDate := 30*(24*time.Hour)
+	refreshTokenExpireDate := 30 * (24 * time.Hour)
 
-	err= s.authRepo.CreateRefreshToken(ctx,PayloadForRefresh{
-		token: refreshToken,
-		userID:userID,
-		expiresAt:time.Now().Add(refreshTokenExpireDate) ,
+	err = s.authRepo.CreateRefreshToken(ctx, PayloadForRefresh{
+		token:     refreshToken,
+		userID:    userID,
+		expiresAt: time.Now().Add(refreshTokenExpireDate),
 	})
-	if err!=nil{
-		log.Printf("failed to insert into db #%s#",err)
-		return "","",err	
+	if err != nil {
+		log.Printf("failed to insert into db #%s#", err)
+		return "", "", err
 	}
 
-	return accessToken,refreshToken,nil
+	return accessToken, refreshToken, nil
 
 }
-

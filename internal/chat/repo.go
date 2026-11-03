@@ -2,97 +2,156 @@ package chat
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"RyanDev-21.com/Chirpy/internal/database"
 	"github.com/google/uuid"
-	// rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type chatRepo struct {
-	queries *database.Queries
-}
-
 type ChatRepo interface {
-	addMessagePrivate(payload *database.AddMessagePrivateParams) (*database.Message, error)
-	addMessagePublic(payload *database.AddMessagePublicParams) (*database.Groupmessage, error)
-	getMessagesForPrivate(ctx context.Context, fromID, toID uuid.UUID) (*[]database.Message, error)
-
-	getMessagesForPrivateWithTime(ctx context.Context, fromID, toID uuid.UUID, since time.Time) (*[]database.Message, error)
-	getMessagesForPublic(ctx context.Context, toID uuid.UUID) (*[]database.Groupmessage, error)
-	getAllPrivateMessages(ctx context.Context) (*[]database.Message, error)
-	getAllPublicMessages(ctx context.Context) (*[]database.Groupmessage, error)
-	updateLastSeen(chatID string, userID uuid.UUID, msgID uuid.UUID) error
+	AddPrivate(ctx context.Context, m MessageMetaDataRes) error
+	AddPublic(ctx context.Context, m MessageMetaDataRes) error
+	// Recent* return the newest n messages in chronological order.
+	RecentPrivate(ctx context.Context, a, b uuid.UUID, n int) ([]MessageMetaDataRes, error)
+	PrivateSince(ctx context.Context, a, b uuid.UUID, since time.Time, n int) ([]MessageMetaDataRes, error)
+	RecentPublic(ctx context.Context, groupID uuid.UUID, n int) ([]MessageMetaDataRes, error)
+	UpdateLastSeen(ctx context.Context, chatID string, userID, msgID uuid.UUID) error
+	// ParentInPrivate / ParentInGroup report whether a reply target belongs
+	// to the same conversation.
+	ParentInPrivate(ctx context.Context, parentID, a, b uuid.UUID) (bool, error)
+	ParentInGroup(ctx context.Context, parentID, groupID uuid.UUID) (bool, error)
 }
 
-func NewChatRepo(queries *database.Queries) ChatRepo {
-	return &chatRepo{
-		queries: queries,
+type chatRepo struct {
+	q *database.Queries
+}
+
+func NewChatRepo(q *database.Queries) ChatRepo { return &chatRepo{q: q} }
+
+func pgUUID(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
+
+func pgOptUUID(s string) pgtype.UUID {
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return pgtype.UUID{}
 	}
+	return pgUUID(id)
 }
 
-func (r *chatRepo) addMessagePrivate(payload *database.AddMessagePrivateParams) (*database.Message, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-	res, err := r.queries.AddMessagePrivate(ctx, *payload)
-	return &res, err
+func pgText(s string) pgtype.Text         { return pgtype.Text{String: s, Valid: true} }
+func pgTime(t time.Time) pgtype.Timestamp { return pgtype.Timestamp{Time: t, Valid: true} }
+
+func optString(id pgtype.UUID) string {
+	if !id.Valid {
+		return ""
+	}
+	return uuid.UUID(id.Bytes).String()
 }
 
-func (r *chatRepo) addMessagePublic(payload *database.AddMessagePublicParams) (*database.Groupmessage, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-	res, err := r.queries.AddMessagePublic(ctx, *payload)
-	return &res, err
-}
-
-func (r *chatRepo) getMessagesForPrivate(ctx context.Context, fromID, toID uuid.UUID) (*[]database.Message, error) {
-	message, err := r.queries.GetMessagesForPrivate(ctx, database.GetMessagesForPrivateParams{
-		FromID: *GetUUIDType(fromID),
-		ToID:   *GetUUIDType(toID),
+func (r *chatRepo) AddPrivate(ctx context.Context, m MessageMetaDataRes) error {
+	return r.q.AddMessagePrivate(ctx, database.AddMessagePrivateParams{
+		ID:        m.ID,
+		Content:   pgText(m.MsgInfo.Msg.Content),
+		Parentid:  pgOptUUID(m.MsgInfo.Msg.ParendID),
+		FromID:    pgUUID(m.MsgInfo.FromID),
+		ToID:      pgOptUUID(m.MsgInfo.Msg.ToID),
+		CreatedAt: pgTime(m.CreatedAt),
 	})
+}
+
+func (r *chatRepo) AddPublic(ctx context.Context, m MessageMetaDataRes) error {
+	return r.q.AddMessagePublic(ctx, database.AddMessagePublicParams{
+		ID:        m.ID,
+		Content:   pgText(m.MsgInfo.Msg.Content),
+		GroupID:   pgOptUUID(m.MsgInfo.Msg.ToID),
+		FromID:    pgUUID(m.MsgInfo.FromID),
+		ParentID:  pgOptUUID(m.MsgInfo.Msg.ParendID),
+		CreatedAt: pgTime(m.CreatedAt),
+	})
+}
+
+func fromPrivate(rows []database.Message) []MessageMetaDataRes {
+	out := make([]MessageMetaDataRes, 0, len(rows))
+	for _, m := range rows {
+		created := m.CreatedAt.Time.UTC()
+		out = append(out, MessageMetaDataRes{
+			ID:        m.ID,
+			CreatedAt: created,
+			MsgInfo: MessageCache{
+				FromID:    uuid.UUID(m.FromID.Bytes),
+				CreatedAt: created,
+				Msg: InCommingMessage{
+					Content:  m.Content.String,
+					ParendID: optString(m.Parentid),
+					ToID:     optString(m.ToID),
+					Type:     TypePrivate,
+				},
+			},
+		})
+	}
+	return out
+}
+
+func fromPublic(rows []database.Groupmessage) []MessageMetaDataRes {
+	out := make([]MessageMetaDataRes, 0, len(rows))
+	for _, m := range rows {
+		created := m.CreatedAt.Time.UTC()
+		out = append(out, MessageMetaDataRes{
+			ID:        m.ID,
+			CreatedAt: created,
+			MsgInfo: MessageCache{
+				FromID:    uuid.UUID(m.FromID.Bytes),
+				CreatedAt: created,
+				Msg: InCommingMessage{
+					Content:  m.Content.String,
+					ParendID: optString(m.ParentID),
+					ToID:     optString(m.GroupID),
+					Type:     TypePublic,
+				},
+			},
+		})
+	}
+	return out
+}
+
+func (r *chatRepo) RecentPrivate(ctx context.Context, a, b uuid.UUID, n int) ([]MessageMetaDataRes, error) {
+	rows, err := r.q.GetRecentPrivateMessages(ctx, database.GetRecentPrivateMessagesParams{UserA: pgUUID(a), UserB: pgUUID(b), Lim: int32(n)})
 	if err != nil {
 		return nil, err
 	}
-	return &message, nil
+	out := fromPrivate(rows)
+	slices.Reverse(out)
+	return out, nil
 }
 
-func (r *chatRepo) getMessagesForPrivateWithTime(ctx context.Context, fromID, toID uuid.UUID, since time.Time) (*[]database.Message, error) {
-	message, err := r.queries.GetMessagesForPrivateWithTime(ctx, database.GetMessagesForPrivateWithTimeParams{
-		FromID:    *GetUUIDType(fromID),
-		ToID:      *GetUUIDType(toID),
-		CreatedAt: GetTimeStampType(since),
-	})
+func (r *chatRepo) PrivateSince(ctx context.Context, a, b uuid.UUID, since time.Time, n int) ([]MessageMetaDataRes, error) {
+	rows, err := r.q.GetPrivateMessagesSince(ctx, database.GetPrivateMessagesSinceParams{UserA: pgUUID(a), UserB: pgUUID(b), Since: pgTime(since.UTC()), Lim: int32(n)})
 	if err != nil {
 		return nil, err
 	}
-	return &message, nil
+	return fromPrivate(rows), nil
 }
 
-func (r *chatRepo) getMessagesForPublic(ctx context.Context, toID uuid.UUID) (*[]database.Groupmessage, error) {
-	message, err := r.queries.GetMessagesForPublic(ctx, *GetUUIDType(toID))
+func (r *chatRepo) RecentPublic(ctx context.Context, groupID uuid.UUID, n int) ([]MessageMetaDataRes, error) {
+	rows, err := r.q.GetRecentGroupMessages(ctx, database.GetRecentGroupMessagesParams{GroupID: pgUUID(groupID), Lim: int32(n)})
 	if err != nil {
 		return nil, err
 	}
-	return &message, nil
+	out := fromPublic(rows)
+	slices.Reverse(out)
+	return out, nil
 }
 
-func (r *chatRepo) getAllPrivateMessages(ctx context.Context) (*[]database.Message, error) {
-	msgs, err := r.queries.GetMessagesForAllPrivateChats(ctx)
-	return &msgs, err
+func (r *chatRepo) UpdateLastSeen(ctx context.Context, chatID string, userID, msgID uuid.UUID) error {
+	return r.q.AddLastSeenMessage(ctx, database.AddLastSeenMessageParams{ChatID: chatID, MessageID: msgID, SeenID: pgUUID(userID)})
 }
 
-func (r *chatRepo) getAllPublicMessages(ctx context.Context) (*[]database.Groupmessage, error) {
-	msgs, err := r.queries.GetMessagesForAllPublicChats(ctx)
-	return &msgs, err
+func (r *chatRepo) ParentInPrivate(ctx context.Context, parentID, a, b uuid.UUID) (bool, error) {
+	return r.q.PrivateMessageInChat(ctx, database.PrivateMessageInChatParams{ID: parentID, UserA: pgUUID(a), UserB: pgUUID(b)})
 }
 
-func (r *chatRepo) updateLastSeen(chatID string, userID uuid.UUID, msgID uuid.UUID) error {
-	context, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-	_, err := r.queries.AddLastSeenMessage(context, database.AddLastSeenMessageParams{
-		MessageID: msgID,
-		SeenID:    *GetUUIDType(userID),
-		ChatID:    chatID,
-	})
-	return err
+func (r *chatRepo) ParentInGroup(ctx context.Context, parentID, groupID uuid.UUID) (bool, error) {
+	return r.q.GroupMessageInGroup(ctx, database.GroupMessageInGroupParams{ID: parentID, GroupID: pgUUID(groupID)})
 }

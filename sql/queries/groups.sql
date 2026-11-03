@@ -1,56 +1,32 @@
--- name: CreateGroup :one
-INSERT INTO chat_groups(id,name,description,max_member,current_member)
-VALUES(
-    $1,
-    $2,
-    $3,
-    $4,
-    $5
-)
-RETURNING *;
+-- name: CreateGroup :exec
+INSERT INTO chat_groups(id, name, description, max_member, current_member)
+VALUES ($1, $2, $3, $4, 1);
 
--- name: JoinGroup :one
-INSERT INTO member_table(group_id,member_id)
-VALUES(
-    $1,
-    $2
-)
-RETURNING *;
+-- name: CreateGroupLeaderRole :exec
+INSERT INTO member_table(group_id, member_id, role)
+VALUES ($1, $2, 'Leader');
 
--- name: CreateGroupLeaderRole :one
-INSERT INTO member_table(group_id,member_id,role)
-VALUES(
-    $1,
-    $2,
-    $3
-)
-RETURNING *;
-
--- name: SearchInfoByName :one
-SELECT * FROM chat_groups WHERE name = $1;
+-- name: LockGroup :one
+-- serialises membership changes for one group inside a transaction
+SELECT max_member, current_member FROM chat_groups WHERE id = $1 FOR UPDATE;
 
 -- name: GetGroupInfoByID :one
-SELECT * FROM chat_groups WHERE  id = $1;
+SELECT * FROM chat_groups WHERE id = $1;
 
--- name: GetAllGroupInfo :many
-SELECT id,current_member,name,max_member FROM chat_groups;
 -- name: GetMemberListByID :many
 SELECT member_id FROM member_table WHERE group_id = $1;
 
--- name: UpdateGroupCurrentMemberByID :one
-UPDATE  chat_groups SET current_member = (SELECT COUNT(*)FROM member_table WHERE group_id = $1)RETURNING *;
+-- name: GetGroupLeader :one
+SELECT member_id FROM member_table WHERE group_id = $1 AND role = 'Leader' LIMIT 1;
 
-
--- name: AddMemberList :copyfrom
-INSERT INTO member_table(group_id,member_id) VALUES($1,$2);
-
+-- name: GetMemberRole :one
+SELECT role FROM member_table WHERE group_id = $1 AND member_id = $2;
 
 -- name: AddMember :exec
-INSERT INTO member_table(group_id,member_id) VALUES($1,$2);
+INSERT INTO member_table(group_id, member_id) VALUES ($1, $2);
 
 -- name: DeleteMemFromGroup :exec
 DELETE FROM member_table WHERE group_id = $1 AND member_id = $2;
 
--- name: GetMemFromGroup :one
-SELECT * FROM member_table WHERE group_id = $1 AND member_id = $2;
-
+-- name: SetGroupMemberCount :exec
+UPDATE chat_groups SET current_member = $2, updated_at = NOW() WHERE id = $1;

@@ -1,13 +1,10 @@
 package auth
 
 import (
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
 )
-
-var NoUserFoundErr = errors.New("no user found")
 
 type responseType struct {
 	ID           uuid.UUID `json:"id"`

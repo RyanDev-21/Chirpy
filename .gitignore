@@ -1,3 +1,13 @@
+# secrets
 .env
-./server.key
-./server.crt
+.env.*
+!.env.example
+*.key
+*.crt
+*.pem
+*.p12
+
+# runtime artifacts
+consistency_log.txt
+/bin/
+coverage.out

@@ -1,152 +1,130 @@
 package chat
 
 import (
-//	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
-	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
-	"RyanDev-21.com/Chirpy/pkg/encoder"
-	"RyanDev-21.com/Chirpy/pkg/middleware"
-	"RyanDev-21.com/Chirpy/pkg/response"
+	"RyanDev-21.com/Chirpy/internal/platform/httpx"
+	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
+	"RyanDev-21.com/Chirpy/internal/ws"
+	"github.com/gorilla/websocket"
 )
 
-type chatHandler struct {
-	chatService ChatService
-	logger      *slog.Logger
+type ChatHandler struct {
+	svc      ChatService
+	hub      *ws.Hub
+	upgrader *websocket.Upgrader
+	logger   *slog.Logger
 }
 
-func NewChatHandler(chatService ChatService, logger *slog.Logger) *chatHandler {
-	return &chatHandler{
-		chatService: chatService,
-		logger:      logger,
+func NewChatHandler(svc ChatService, hub *ws.Hub, upgrader *websocket.Upgrader, logger *slog.Logger) *ChatHandler {
+	return &ChatHandler{svc: svc, hub: hub, upgrader: upgrader, logger: logger}
+}
+
+func (h *ChatHandler) writeErr(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrNotAuthorized), errors.Is(err, ErrNotFriends):
+		httpx.Error(w, http.StatusForbidden, err.Error())
+	case errors.Is(err, ErrNotValidToID), errors.Is(err, ErrNotValidParentID), errors.Is(err, ErrNotSupportedTypeMsg),
+		errors.Is(err, ErrEmptyMessage), errors.Is(err, ErrNotValidTimeFmt), errors.Is(err, ErrNotValidUUID):
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+	default:
+		h.logger.Error("chat request failed", "error", err)
+		httpx.Error(w, http.StatusInternalServerError, "internal server error")
 	}
 }
 
-func (h *chatHandler) ServeWs(w http.ResponseWriter, r *http.Request) {
-	userID, err := middleware.GetContextKey(r.Context(), "user")
+func (h *ChatHandler) ServeWs(w http.ResponseWriter, r *http.Request) {
+	userID, err := reqctx.User(r.Context())
 	if err != nil {
-		h.logger.Error("failed to get user from context")
-		response.Error(w, 401, "unauthorized")
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-
-	conn, err := h.chatService.upgradeWebsocket(w, r)
-	if err != nil {
-		h.logger.Error("websocket upgrade failed", "err", err)
-		response.Error(w, 401, "unauthorized")
-		return
+	if err := h.hub.Serve(h.upgrader, w, r, userID); err != nil {
+		h.logger.Warn("websocket upgrade failed", "error", err)
 	}
-
-	h.chatService.initWs(conn, *userID)
 }
 
-func (h *chatHandler) GetMesagesForPrivateID(w http.ResponseWriter, r *http.Request) {
-	userID, err := middleware.GetContextKey(r.Context(), "user")
+// GetMesagesForPrivateID handles GET /api/chat/{otherUser_id}/messages[?since=RFC3339].
+func (h *ChatHandler) GetMesagesForPrivateID(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
 	if err != nil {
-		h.logger.Error("failed to get user from context")
-		response.Error(w, 401, "unauthorized")
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	toID, err := middleware.GetPathValue("otherUser_id", r)
+	other, err := httpx.PathUUID(r, "otherUser_id")
 	if err != nil {
-		h.logger.Error("failed to get toID from path", "err", err)
-		response.Error(w, 400, "invalid id")
-		return
-	
-	}
-	sinceStr := r.URL.Query().Get("since")
-	
-	msgList, err := h.chatService.fetchMessagePrivate(r.Context(), *userID, *toID,sinceStr)
-	if err != nil {
-		h.logger.Error("failed to fetch private messages", "err", err)
-		response.Error(w, 500, "internal server error")
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	response.JSON(w, 200, msgList)
+	msgs, err := h.svc.PrivateMessages(r.Context(), me, other, r.URL.Query().Get("since"))
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, MessageListRes{ChatID: PrivateChatID(me, other), MsgList: msgs})
 }
 
-func (h *chatHandler) GetMessagesForPublicID(w http.ResponseWriter, r *http.Request) {
-	userID, err := middleware.GetContextKey(r.Context(), "user")
+// GetMessagesForPublicID handles GET /api/chat/groups/{group_id}/messages.
+func (h *ChatHandler) GetMessagesForPublicID(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
 	if err != nil {
-		h.logger.Error("failed to get user from context")
-		response.Error(w, 401, "unauthorized")
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	toID, err := middleware.GetPathValue("group_id", r)
+	groupID, err := httpx.PathUUID(r, "group_id")
 	if err != nil {
-		h.logger.Error("failed to get groupID from path", "err", err)
-		response.Error(w, 400, "invalid id")
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-
-	msgList, err := h.chatService.fetchMessagePublic(r.Context(), *userID, *toID)
+	msgs, err := h.svc.GroupMessages(r.Context(), me, groupID)
 	if err != nil {
-		h.logger.Error("failed to fetch public messages", "err", err)
-		response.Error(w, 500, "internal server error")
+		h.writeErr(w, err)
 		return
 	}
-	response.JSON(w, 200, msgList)
+	httpx.JSON(w, http.StatusOK, MessageListRes{ChatID: groupID.String(), MsgList: msgs})
 }
 
-func (h *chatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
-	userID, err := middleware.GetContextKey(r.Context(), "user")
+// SendMessage handles POST /api/chats/message.
+func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
 	if err != nil {
-		h.logger.Error("failed to get user from context")
-		response.Error(w, 401, "unauthorized")
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	payload := &chatmodel.InCommingMessage{}
-	err = encoder.Decode(r, payload)
-	if err != nil {
-		h.logger.Error("failed to decode message payload", "err", err)
-		response.Error(w, 400, "invalid parameters")
+	var in InCommingMessage
+	if err := httpx.Decode(w, r, &in); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid parameters")
 		return
 	}
-	msgID, err := h.chatService.sendMessage(r.Context(), *userID, payload)
+	msgID, err := h.svc.SendMessage(r.Context(), me, in)
 	if err != nil {
-		if err == chatmodel.ErrNotConnectedToWs {
-			response.Error(w, 404, "connect to ws first to send message")
-			return
-		}
-		h.logger.Error("failed to send message", "err", err)
-		response.Error(w, 500, "internal server error")
+		h.writeErr(w, err)
 		return
 	}
-	response.JSON(w, 200, chatmodel.ResponseMessageID{MsgID: *msgID})
+	httpx.JSON(w, http.StatusOK, ResponseMessageID{MsgID: msgID})
 }
 
-func (h *chatHandler)UpdateSeen(w http.ResponseWriter,r *http.Request){
-	userID,err:= middleware.GetContextKey(r.Context(),"user")
-	if err !=nil{
-		response.Error(w,401,"unauthorized")
-		return
-	}
-	toID ,err:= middleware.GetPathValue("otherUser_id",r)
-	if err !=nil{
-		response.Error(w,400,"invalid request")
-		return
-	}
-	//there might be better one than this
-	//i am too tired to rethink
-	body := &chatmodel.PayloadForSeen{}
-	err = encoder.Decode(r,body)
+// UpdateSeen handles POST /api/chat/{otherUser_id}/messages {"msg_id": "..."}.
+func (h *ChatHandler) UpdateSeen(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
 	if err != nil {
-		h.logger.Error("failed to decode message payload", "err", err)
-		response.Error(w, 400, "invalid parameters")
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	payload := &chatmodel.InCommingEventForSeen{
-		ToID: toID.String(),
-		MsgID: body.MsgID,
+	other, err := httpx.PathUUID(r, "otherUser_id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid id")
+		return
 	}
-	err= h.chatService.updateLastSeen(r.Context(),*userID,payload)
-	 if err !=nil{
-		if err == chatmodel.ErrNotValidUUID{
-			response.Error(w,400,"invalid request")
-			return
-		}
-		response.Error(w,500,"something went wrong")
+	var body PayloadForSeen
+	if err := httpx.Decode(w, r, &body); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid parameters")
+		return
+	}
+	if err := h.svc.MarkSeen(r.Context(), me, other, body.MsgID); err != nil {
+		h.writeErr(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
