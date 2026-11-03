@@ -15,9 +15,10 @@ import (
 	authsvc "RyanDev-21.com/Chirpy/internal/auth"
 	"RyanDev-21.com/Chirpy/internal/chat"
 	"RyanDev-21.com/Chirpy/internal/config"
-	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"RyanDev-21.com/Chirpy/internal/database"
+	"RyanDev-21.com/Chirpy/internal/friends"
 	"RyanDev-21.com/Chirpy/internal/groups"
+	"RyanDev-21.com/Chirpy/internal/platform/queue"
 	"RyanDev-21.com/Chirpy/internal/platform/redisx"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/internal/ws"
@@ -31,25 +32,27 @@ type App struct {
 	cfg    config.Config
 	logger *slog.Logger
 	db     *pgxpool.Pool
-	redis  redis.UniversalClient
-	queue  *mq.MainMQ
+	redis  *redis.Client
+	queue  *queue.Memory
 	hub    *ws.Hub
 
-	users  users.UserService
-	auth   authsvc.AuthService
-	chat   chat.ChatService
-	groups groups.GroupService
+	users   users.UserService
+	friends friends.Service
+	auth    authsvc.AuthService
+	chat    chat.ChatService
+	groups  groups.GroupService
 
 	handlers handlers
 }
 
 type handlers struct {
-	users  *users.UserHandler
-	auth   *authsvc.AuthHandler
-	chat   *chat.ChatHandler
-	groups *groups.GroupHandler
-	ai     *ai.Handler // nil when no Gemini key is configured
-	admin  *adminHandler
+	users   *users.UserHandler
+	friends *friends.Handler
+	auth    *authsvc.AuthHandler
+	chat    *chat.ChatHandler
+	groups  *groups.GroupHandler
+	ai      *ai.Handler // nil when no Gemini key is configured
+	admin   *adminHandler
 }
 
 // New connects to Postgres and Redis and builds all services.
@@ -62,10 +65,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		db.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
-	rdb, err := redisx.NewRedisClient(cfg.RedisAddr, cfg.RedisUser, cfg.RedisPass)
+	rdb, err := redisx.NewClient(ctx, redisx.Options{Addr: cfg.RedisAddr, Username: cfg.RedisUser, Password: cfg.RedisPass, DB: cfg.RedisDB})
 	if err != nil {
 		db.Close()
-		return nil, fmt.Errorf("connect redis: %w", err)
+		return nil, err
 	}
 
 	a := &App{
@@ -73,38 +76,24 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		logger: logger,
 		db:     db,
 		redis:  rdb,
-		queue:  mq.NewMainMQ(10),
+		queue:  queue.NewMemory(10, logger),
 		hub:    ws.NewHub(),
 	}
 	queries := database.New(db)
 
-	userRepo := users.NewUserRepo(queries)
-	authRepo := authsvc.NewAuthRepo(queries)
-	chatRepo := chat.NewChatRepo(queries)
-	groupRepo := groups.NewGroupRepo(queries)
-
-	groupCache := groups.NewGroupCache(groupRepo)
-	userCache := users.NewUserCache(userRepo)
-	configCache := users.NewConfigCache(userRepo)
-	chatCache := chat.NewChatCache(redisx.NewRedisCacheImpl(rdb), logger)
-	go func() {
-		if err := groupCache.Load(); err != nil {
-			logger.Error("failed to warm group cache", "error", err)
-		}
-	}()
-	go userCache.Load()
-
-	a.users = users.NewUserService(userRepo, userCache, a.queue, logger, a.hub, configCache)
-	a.auth = authsvc.NewAuthService(userRepo, authRepo, cfg.JWTSecret, logger)
-	a.chat = chat.NewChatService(chatRepo, a.hub, a.queue, chatCache, groupCache, logger)
-	a.groups = groups.NewGroupService(groupRepo, a.queue, groupCache, logger)
+	a.users = users.NewUserService(users.NewUserRepo(queries), users.NewStore(rdb), a.queue, logger)
+	a.friends = friends.NewService(friends.NewRepo(queries), friends.NewStore(rdb), a.users, a.hub, a.queue, logger)
+	a.groups = groups.NewGroupService(groups.NewGroupRepo(db), groups.NewStore(rdb), a.queue, logger)
+	a.chat = chat.NewChatService(chat.NewChatRepo(queries), chat.NewCache(rdb), a.groups, a.friends, a.hub, a.queue, logger)
+	a.auth = authsvc.NewAuthService(users.NewUserRepo(queries), authsvc.NewAuthRepo(queries), cfg.JWTSecret, logger)
 
 	a.handlers = handlers{
-		users:  users.NewUserHandler(a.users),
-		auth:   authsvc.NewAuthHandler(a.auth),
-		chat:   chat.NewChatHandler(a.chat, logger),
-		groups: groups.NewGroupHandler(a.groups),
-		admin:  &adminHandler{queries: queries},
+		users:   users.NewUserHandler(a.users),
+		friends: friends.NewHandler(a.friends),
+		auth:    authsvc.NewAuthHandler(a.auth),
+		chat:    chat.NewChatHandler(a.chat, a.hub, ws.Upgrader(cfg.CORSOrigins), logger),
+		groups:  groups.NewGroupHandler(a.groups),
+		admin:   &adminHandler{queries: queries},
 	}
 	if cfg.GeminiAPIKey != "" {
 		client, err := genai.NewClient(ctx, &genai.ClientConfig{APIKey: cfg.GeminiAPIKey})
@@ -123,7 +112,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 // cancelled, then shuts the server down gracefully.
 func (a *App) Run(ctx context.Context) error {
 	go a.hub.Run()
-	a.startWorkers()
+	a.startWorkers(ctx)
 
 	srv := &http.Server{
 		Addr:              a.cfg.Addr,

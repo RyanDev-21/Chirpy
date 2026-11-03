@@ -2,6 +2,7 @@ package chat
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,17 +21,19 @@ const (
 )
 
 var (
-	ErrNotAuthorized       = errors.New("not in group")
-	ErrNotValidToID        = errors.New("not valid toID(type uuid)")
+	ErrNotAuthorized       = errors.New("not a member of this group")
+	ErrNotFriends          = errors.New("you can only message friends")
+	ErrNotValidToID        = errors.New("to_id must be a valid uuid of another user or group")
 	ErrNotValidUUID        = errors.New("not valid uuid")
-	ErrNotValidTimeFmt     = errors.New("not valid time")
-	ErrNotValidParentID    = errors.New("not valid parentID(type uuid)")
-	ErrNotSupportedTypeMsg = errors.New("not supported type of message")
-	ErrEmptyMessage        = errors.New("message content is empty or too long")
+	ErrNotValidTimeFmt     = errors.New("since must be an RFC3339 timestamp")
+	ErrNotValidParentID    = errors.New("parent_id must be a valid uuid")
+	ErrNotSupportedTypeMsg = errors.New(`type must be "private" or "public"`)
+	ErrEmptyMessage        = errors.New("msg must be 1-500 characters")
 )
 
 const maxMessageLen = 500 // matches message.content VARCHAR(500)
 
+// InCommingMessage is the body of POST /api/chats/message.
 type InCommingMessage struct {
 	Content  string `json:"msg"`
 	ParendID string `json:"parent_id,omitempty"`
@@ -42,15 +45,12 @@ type PayloadForSeen struct {
 	MsgID string `json:"msg_id"`
 }
 
+// MessageCache is the stored message body. Field names are part of the
+// public API (message_info) and stay as they were.
 type MessageCache struct {
 	Msg       InCommingMessage
 	FromID    uuid.UUID
 	CreatedAt time.Time
-}
-
-type MessageMetaData struct {
-	ID      uuid.UUID
-	MsgInfo *MessageCache
 }
 
 type MessageMetaDataRes struct {
@@ -68,8 +68,22 @@ type ResponseMessageID struct {
 	MsgID uuid.UUID `json:"msg_id"`
 }
 
-type JobForSeen struct {
-	ChatID string
-	MsgID  uuid.UUID
-	SeenID uuid.UUID
+// JobMessage is the payload of the message topics.
+type JobMessage struct {
+	Message MessageMetaDataRes `json:"message"`
+}
+
+// JobSeen is the payload of TopicSeen.
+type JobSeen struct {
+	ChatID string    `json:"chat_id"`
+	MsgID  uuid.UUID `json:"msg_id"`
+	SeenID uuid.UUID `json:"seen_id"`
+}
+
+// PrivateChatID is the stable id for the conversation between two users.
+func PrivateChatID(a, b uuid.UUID) string {
+	if a.String() > b.String() {
+		a, b = b, a
+	}
+	return fmt.Sprintf("%v_%v", a, b)
 }

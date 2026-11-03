@@ -7,18 +7,20 @@ import (
 )
 
 var (
-	ErrNotFoundGroup   = errors.New("group not found")
-	ErrGroupFull       = errors.New("group full")
-	ErrAlreadyMember   = errors.New("already a member")
-	ErrNotMember       = errors.New("not a member")
-	ErrDuplicateName   = errors.New("duplicate name")
-	ErrInvalidGroupReq = errors.New("invalid group request")
+	ErrNotFoundGroup     = errors.New("group not found")
+	ErrGroupFull         = errors.New("group full")
+	ErrAlreadyMember     = errors.New("already a member")
+	ErrNotMember         = errors.New("not a member")
+	ErrDuplicateName     = errors.New("duplicate name")
+	ErrInvalidGroupReq   = errors.New("group_name must be 1-30 characters, description at most 1000, max_mems 2-1000")
+	ErrLeaderCannotLeave = errors.New("group leader cannot leave the group")
 )
+
+const RoleLeader = "Leader"
 
 // queue topics owned by the groups package
 const (
 	TopicCreateGroup  = "group.create"
-	TopicAddMembers   = "group.members.add_list"
 	TopicAddMember    = "group.member.add"
 	TopicRemoveMember = "group.member.remove"
 )
@@ -35,32 +37,21 @@ type createGroupRequest struct {
 	MaxMems     int16  `json:"max_mems"`
 }
 
-type createGroupStruct struct {
-	GroupID     uuid.UUID
-	GroupName   string
-	Description string
-	MaxMems     int16
-	CurrentMem  int16
-}
-
 type GroupInfo struct {
 	ChatID uuid.UUID `json:"chat_id"`
 }
 
-type GroupPublish struct {
-	GroupID   GroupInfo
-	CreatorID uuid.UUID
-	GroupInfo createGroupStruct
-	Role      string
+// JobCreate is the payload of TopicCreateGroup.
+type JobCreate struct {
+	GroupID     uuid.UUID `json:"group_id"`
+	CreatorID   uuid.UUID `json:"creator_id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	MaxMembers  int16     `json:"max_members"`
 }
 
-type creatorPublishStruct struct {
-	Role    string
-	GroupID uuid.UUID
-	UserID  uuid.UUID
-}
-
-type ManageGroupPublishStruct struct {
-	GroupId uuid.UUID
-	UserID  uuid.UUID
+// JobMember is the payload of TopicAddMember and TopicRemoveMember.
+type JobMember struct {
+	GroupID uuid.UUID `json:"group_id"`
+	UserID  uuid.UUID `json:"user_id"`
 }

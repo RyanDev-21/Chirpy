@@ -1,45 +1,36 @@
--- name: AddMessagePrivate :one
-INSERT INTO message(id,content,parentId,from_id,to_id,created_at)VALUES(
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6
-)
-RETURNING *;
+-- name: AddMessagePrivate :exec
+INSERT INTO message(id, content, parentId, from_id, to_id, created_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (id) DO NOTHING;
 
--- name: AddMessagePublic :one
-INSERT INTO GroupMessage(id,content,group_id,from_id,parent_id,created_at)
-VALUES(
-    $1,
-    $2,
-    $3,
-    $4,
-    $5, 
-    $6
-)
-RETURNING *;
+-- name: AddMessagePublic :exec
+INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (id) DO NOTHING;
 
--- name: GetMessagesForPrivate :many
+-- name: GetRecentPrivateMessages :many
 SELECT * FROM message
-WHERE (from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1)
-ORDER BY created_at ASC;
+WHERE ((from_id = @user_a AND to_id = @user_b) OR (from_id = @user_b AND to_id = @user_a))
+  AND deleted_at IS NULL
+ORDER BY created_at DESC
+LIMIT @lim;
 
--- name: GetMessagesForPrivateWithTime :many
+-- name: GetPrivateMessagesSince :many
 SELECT * FROM message
-WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
-  AND created_at > $3
-ORDER BY created_at ASC;
+WHERE ((from_id = @user_a AND to_id = @user_b) OR (from_id = @user_b AND to_id = @user_a))
+  AND created_at > @since
+  AND deleted_at IS NULL
+ORDER BY created_at ASC
+LIMIT @lim;
 
--- name: GetMessagesForPublic :many
-SELECT * FROM GroupMessage WHERE group_id = $1 ORDER BY created_at ASC;
+-- name: GetRecentGroupMessages :many
+SELECT * FROM GroupMessage
+WHERE group_id = @group_id AND deleted_at IS NULL
+ORDER BY created_at DESC
+LIMIT @lim;
 
-
--- name: AddLastSeenMessage :one
-INSERT INTO seen_messages(chat_id,message_id,seen_id)
-VALUES ($1,$2,$3)
+-- name: AddLastSeenMessage :exec
+INSERT INTO seen_messages(chat_id, message_id, seen_id)
+VALUES ($1, $2, $3)
 ON CONFLICT (chat_id, seen_id)
-DO UPDATE SET message_id = EXCLUDED.message_id, updated_time = NOW()
-RETURNING *;
-
+DO UPDATE SET message_id = EXCLUDED.message_id, updated_time = NOW();

@@ -2,262 +2,249 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"log/slog"
-	"net/http"
 	"slices"
+	"strings"
 	"time"
+	"unicode/utf8"
 
-	mq "RyanDev-21.com/Chirpy/internal/customMq"
-	"RyanDev-21.com/Chirpy/internal/database"
-	"RyanDev-21.com/Chirpy/internal/groups"
-	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
+	"RyanDev-21.com/Chirpy/internal/platform/queue"
 	"RyanDev-21.com/Chirpy/internal/ws"
-
-	// rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
+// GroupMembership is implemented by groups.GroupService.
+type GroupMembership interface {
+	IsMember(ctx context.Context, groupID, userID uuid.UUID) (bool, error)
+	Members(ctx context.Context, groupID uuid.UUID) ([]uuid.UUID, error)
+}
+
+// FriendChecker is implemented by friends.Service.
+type FriendChecker interface {
+	AreFriends(ctx context.Context, a, b uuid.UUID) (bool, error)
+}
+
+// Pusher delivers realtime events (implemented by *ws.Hub).
+type Pusher interface {
+	WriteToUsers(targets []uuid.UUID, ev ws.Event) error
 }
 
 type ChatService interface {
-	upgradeWebsocket(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error)
-	initWs(conn *websocket.Conn, userID uuid.UUID)
-	//	createGroup(userID uuid.UUID)
-	sendMessage(ctx context.Context, userID uuid.UUID, paylod *InCommingMessage) (*uuid.UUID, error)
-	fetchMessagePrivate(ctx context.Context, userID, toID uuid.UUID, since string) (*MessageListRes, error) // the chatID will be otherUserID if private
-	fetchMessagePublic(ctx context.Context, userID, toID uuid.UUID) (*MessageListRes, error)                // the chatID will be otherUserID if private
-	updateLastSeen(ctx context.Context, userID uuid.UUID, payload *ws.InCommingEventForSeen) error
-	StartWorkerForAddPrivateMessage(channel chan *mq.Channel)
-	StartWorkerForAddPublicMessage(channel chan *mq.Channel)
-	StartWorkerForUpdateSeen(channel chan *mq.Channel)
+	SendMessage(ctx context.Context, from uuid.UUID, in InCommingMessage) (uuid.UUID, error)
+	PrivateMessages(ctx context.Context, me, other uuid.UUID, since string) ([]MessageMetaDataRes, error)
+	GroupMessages(ctx context.Context, me, groupID uuid.UUID) ([]MessageMetaDataRes, error)
+	MarkSeen(ctx context.Context, me, other uuid.UUID, msgID string) error
+
+	HandlePrivateMessage(ctx context.Context, j JobMessage) error
+	HandlePublicMessage(ctx context.Context, j JobMessage) error
+	HandleSeen(ctx context.Context, j JobSeen) error
 }
+
 type chatService struct {
-	chatRepo   ChatRepo
-	hub        *ws.Hub
-	mq         *mq.MainMQ
-	rediscache ChatRepoCache
-	groupCache *groups.Cache
-	logger     *slog.Logger
+	repo    ChatRepo
+	cache   Cache
+	groups  GroupMembership
+	friends FriendChecker
+	push    Pusher
+	queue   queue.Publisher
+	logger  *slog.Logger
 }
 
-func NewChatService(chatRepo ChatRepo, hub *ws.Hub, mq *mq.MainMQ, cache ChatRepoCache, groupCache *groups.Cache, logger *slog.Logger) ChatService {
-	return &chatService{
-		chatRepo:   chatRepo,
-		hub:        hub,
-		mq:         mq,
-		rediscache: cache,
-		groupCache: groupCache,
-		logger:     logger,
+func NewChatService(repo ChatRepo, cache Cache, groups GroupMembership, friends FriendChecker, push Pusher, q queue.Publisher, logger *slog.Logger) ChatService {
+	return &chatService{repo: repo, cache: cache, groups: groups, friends: friends, push: push, queue: q, logger: logger}
+}
+
+func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InCommingMessage) (uuid.UUID, error) {
+	in.Content = strings.TrimSpace(in.Content)
+	if n := utf8.RuneCountInString(in.Content); n == 0 || n > maxMessageLen {
+		return uuid.Nil, ErrEmptyMessage
 	}
-}
-
-func (s *chatService) initWs(conn *websocket.Conn, userID uuid.UUID) {
-	client := ws.NewClient(s.hub, conn, make(chan []byte, 256), userID)
-	client.Hub.Register <- client
-
-	go client.WritePump()
-	go client.ReadPump()
-}
-
-func (s *chatService) upgradeWebsocket(w http.ResponseWriter, r *http.Request) (*websocket.Conn, error) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return nil, err
+	to, err := uuid.Parse(in.ToID)
+	if err != nil || to == from {
+		return uuid.Nil, ErrNotValidToID
 	}
-	return conn, nil
-}
-
-// sendMessage validates the payload, delivers it over the hub, caches it and
-// queues the database write.
-func (s *chatService) sendMessage(ctx context.Context, userID uuid.UUID, payload *InCommingMessage) (*uuid.UUID, error) {
-	reqIDVal := reqctx.RequestID(ctx)
-	s.logger.Info("send message request started", "reqID", reqIDVal, "fromID", userID)
-
-	toID, err := uuid.Parse(payload.ToID)
-	if err != nil {
-		return nil, ErrNotValidToID
-	}
-	if payload.ParendID != "" {
-		if _, err = uuid.Parse(payload.ParendID); err != nil {
-			return nil, ErrNotValidParentID
+	if in.ParendID != "" {
+		if _, err := uuid.Parse(in.ParendID); err != nil {
+			return uuid.Nil, ErrNotValidParentID
 		}
 	}
-	switch payload.Type {
-	case "private":
-		if toID == userID {
-			return nil, ErrNotValidToID
+
+	var (
+		key     chatKey
+		targets []uuid.UUID
+		topic   string
+	)
+	switch in.Type {
+	case TypePrivate:
+		ok, err := s.friends.AreFriends(ctx, from, to)
+		if err != nil {
+			return uuid.Nil, err
 		}
-	case "public":
-		if !s.groupCache.CheckNameFromGroup(toID, userID) {
-			return nil, ErrNotAuthorized
+		if !ok {
+			return uuid.Nil, ErrNotFriends
 		}
+		key, targets, topic = privateKey(from, to), []uuid.UUID{to}, TopicPrivateMessage
+	case TypePublic:
+		members, err := s.groups.Members(ctx, to)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		if !slices.Contains(members, from) {
+			return uuid.Nil, ErrNotAuthorized
+		}
+		key, topic = groupKey(to), TopicPublicMessage
+		targets = slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == from })
 	default:
-		return nil, ErrNotSupportedTypeMsg
-	}
-
-	if !s.hub.CheckWsConnection(userID) {
-		return nil, ws.ErrNotConnectedToWs
+		return uuid.Nil, ErrNotSupportedTypeMsg
 	}
 
 	msgID, err := uuid.NewV7()
 	if err != nil {
-		return nil, err
+		return uuid.Nil, err
 	}
-	msgMeta := getPayload(userID, msgID, payload)
-
-	targets := []uuid.UUID{toID}
-	if payload.Type == "public" {
-		members, err := s.groupCache.GetFromMember(toID)
-		if err != nil {
-			return nil, err
-		}
-		targets = slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == userID })
-	}
-	if err := s.hub.WriteToUsers(targets, ws.Event{
-		Event: "msg",
-		Payload: ws.OutGoingMessage{
-			ID:        msgID.String(),
-			Content:   payload.Content,
-			FromID:    userID.String(),
-			ParentID:  payload.ParendID,
-			Type:      payload.Type,
-			CreatedAt: msgMeta.MsgInfo.CreatedAt,
-		},
-	}); err != nil {
-		s.logger.Error("failed to write into connection", "reqID", reqIDVal, "fromID", userID, "err", err)
-		return nil, err
+	now := time.Now().UTC()
+	msg := MessageMetaDataRes{
+		ID:        msgID,
+		CreatedAt: now,
+		MsgInfo:   MessageCache{Msg: in, FromID: from, CreatedAt: now},
 	}
 
-	if payload.Type == "private" {
-		if err := s.handlePrivateMsg(ctx, userID, toID, msgMeta); err != nil {
-			return nil, err
-		}
-		s.publishJobHelper(TopicPrivateMessage, *msgMeta)
-	} else {
-		if err := s.handlePublicMsg(ctx, userID, msgMeta); err != nil {
-			return nil, err
-		}
-		s.publishJobHelper(TopicPublicMessage, *msgMeta)
+	// seed the stream first so history is not hidden behind the new message
+	if err := s.ensureSeeded(ctx, key, from, to, in.Type); err != nil {
+		return uuid.Nil, err
 	}
-	return &msgID, nil
+	if err := s.cache.Append(ctx, key, msg); err != nil {
+		return uuid.Nil, err
+	}
+	pubCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err := s.queue.Publish(pubCtx, topic, JobMessage{Message: msg}); err != nil {
+		return uuid.Nil, err
+	}
+	if err := s.push.WriteToUsers(targets, ws.Event{Event: ws.EventMessage, Payload: ws.OutGoingMessage{
+		ID:        msgID.String(),
+		Content:   in.Content,
+		ParentID:  in.ParendID,
+		FromID:    from.String(),
+		Type:      in.Type,
+		CreatedAt: now,
+	}}); err != nil {
+		s.logger.Warn("failed to push message", "error", err)
+	}
+	return msgID, nil
 }
 
-func (s *chatService) fetchMessagePrivate(ctx context.Context, userID, toID uuid.UUID, since string) (*MessageListRes, error) {
-	var sinceTime time.Time
-	if since != "" {
-		t, err := convertTimeFromString(since)
-		if err != nil {
-			return nil, err
-		}
-		sinceTime = t
+// ensureSeeded loads recent history from postgres into the stream once.
+func (s *chatService) ensureSeeded(ctx context.Context, key chatKey, a, b uuid.UUID, kind string) error {
+	ok, err := s.cache.Loaded(ctx, key)
+	if err != nil || ok {
+		return err
 	}
-	redisKey := s.rediscache.generateRedisKey(getChatKey(userID, toID), "private")
-
-	msgList, err := s.rediscache.getMessages(ctx, redisKey, sinceTime)
-	if err == nil && len(msgList) > 0 {
-		return &MessageListRes{MsgList: msgList}, nil
-	}
-	if err != nil {
-		s.logger.Warn("chat cache read failed, falling back to db", "err", err)
-	}
-
-	var messages *[]database.Message
-	if sinceTime.IsZero() {
-		messages, err = s.chatRepo.getMessagesForPrivate(ctx, userID, toID)
+	var msgs []MessageMetaDataRes
+	if kind == TypePrivate {
+		msgs, err = s.repo.RecentPrivate(ctx, a, b, streamCap)
 	} else {
-		messages, err = s.chatRepo.getMessagesForPrivateWithTime(ctx, userID, toID, sinceTime)
+		msgs, err = s.repo.RecentPublic(ctx, b, streamCap)
 	}
 	if err != nil {
-		return nil, err
+		return err
 	}
-	// only warm the cache with a full history read, otherwise the stream
-	// would be seeded with a partial window
-	if sinceTime.IsZero() {
-		for _, v := range *messages {
-			if err := s.rediscache.addMessage(ctx, redisKey, convertFromMessageToMeta(v)); err != nil {
-				s.logger.Warn("failed to cache message", "err", err)
-				break
-			}
-		}
-	}
-	return convertToMsgMetaList(messages)
+	return s.cache.Seed(ctx, key, msgs)
 }
 
-func convertTimeFromString(timeStr string) (time.Time, error) {
-	if t, err := time.Parse(time.RFC3339Nano, timeStr); err == nil {
-		return t, nil
+func parseSince(since string) (time.Time, error) {
+	if since == "" {
+		return time.Time{}, nil
 	}
-	t, err := time.Parse(time.RFC3339, timeStr)
+	t, err := time.Parse(time.RFC3339Nano, since)
 	if err != nil {
 		return time.Time{}, ErrNotValidTimeFmt
 	}
 	return t, nil
 }
 
-func (s *chatService) fetchMessagePublic(ctx context.Context, userID, toID uuid.UUID) (*MessageListRes, error) {
-	if !s.groupCache.CheckNameFromGroup(toID, userID) {
-		return nil, ErrNotAuthorized
-	}
-	redisKey := s.rediscache.generateRedisKey(toID.String(), "public")
-	msgList, err := s.rediscache.getMessages(ctx, redisKey, time.Time{})
-	if err == nil && len(msgList) > 0 {
-		return &MessageListRes{MsgList: msgList}, nil
-	}
-	if err != nil {
-		s.logger.Warn("group cache read failed, falling back to db", "err", err)
-	}
-	messages, err := s.chatRepo.getMessagesForPublic(ctx, toID)
+func (s *chatService) PrivateMessages(ctx context.Context, me, other uuid.UUID, since string) ([]MessageMetaDataRes, error) {
+	sinceT, err := parseSince(since)
 	if err != nil {
 		return nil, err
 	}
-	for _, v := range *messages {
-		if err := s.rediscache.addMessage(ctx, redisKey, convertFromGroupMessageToMeta(v)); err != nil {
-			s.logger.Warn("failed to cache group message", "err", err)
-			break
-		}
+	key := privateKey(me, other)
+	if err := s.ensureSeeded(ctx, key, me, other, TypePrivate); err != nil {
+		return nil, err
 	}
-	return convertToMsgMetaList(messages)
+	if sinceT.IsZero() {
+		return s.cache.Recent(ctx, key, pageSize)
+	}
+	cached, err := s.cache.Recent(ctx, key, streamCap)
+	if err != nil {
+		return nil, err
+	}
+	// the cache only answers if it reaches back past `since`
+	if len(cached) < streamCap || (len(cached) > 0 && !cached[0].CreatedAt.After(sinceT)) {
+		return slices.DeleteFunc(cached, func(m MessageMetaDataRes) bool { return !m.CreatedAt.After(sinceT) }), nil
+	}
+	return s.repo.PrivateSince(ctx, me, other, sinceT, streamCap)
 }
 
-func (s *chatService) updateLastSeen(ctx context.Context, userID uuid.UUID, payload *ws.InCommingEventForSeen) error {
-	reqIDVal := reqctx.RequestID(ctx)
-	s.logger.Info("send Message request started", "reqID", reqIDVal, "fromID", userID)
-	parseID, err := uuid.Parse(payload.ToID)
+func (s *chatService) GroupMessages(ctx context.Context, me, groupID uuid.UUID) ([]MessageMetaDataRes, error) {
+	ok, err := s.groups.IsMember(ctx, groupID, me)
 	if err != nil {
-		s.logger.Warn("failed to parse toID", "reqID", reqIDVal, "fromID", userID)
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrNotAuthorized
+	}
+	key := groupKey(groupID)
+	if err := s.ensureSeeded(ctx, key, me, groupID, TypePublic); err != nil {
+		return nil, err
+	}
+	return s.cache.Recent(ctx, key, pageSize)
+}
 
+func (s *chatService) MarkSeen(ctx context.Context, me, other uuid.UUID, msgIDStr string) error {
+	msgID, err := uuid.Parse(msgIDStr)
+	if err != nil {
 		return ErrNotValidUUID
 	}
-	parseMsgID, err := uuid.Parse(payload.MsgID)
-	if err != nil {
-		s.logger.Error("failed to parse msgID", "reqID", reqIDVal, "fromID", userID)
-
-		return ErrNotValidUUID
-	}
-	chatID := getChatKey(userID, parseID)
-	key := s.rediscache.generateRedisKeyForSeen(chatID, userID)
-	err = s.rediscache.UpdateLastSeen(ctx, key, parseMsgID)
-	if err != nil {
-		s.logger.Error("failed to update the seen cache", "reqID", reqIDVal, "fromID", userID, "error", err)
+	chatID := PrivateChatID(me, other)
+	if err := s.cache.SetSeen(ctx, chatID, me, msgID); err != nil {
 		return err
 	}
-	s.logger.Info("background job posting started", "reqID", reqIDVal, "fromID", userID)
-	payloadForJob := JobForSeen{
-		MsgID:  parseMsgID,
-		SeenID: userID,
-		ChatID: chatID,
-	}
-	err = s.mq.PublishWithContext(ctx, TopicSeen, payloadForJob)
-	if err != nil {
-		s.logger.Error("failed to publish to main queue", "reqID", reqIDVal, "userID", userID, "error", err)
+	pubCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err := s.queue.Publish(pubCtx, TopicSeen, JobSeen{ChatID: chatID, MsgID: msgID, SeenID: me}); err != nil {
 		return err
+	}
+	if err := s.push.WriteToUsers([]uuid.UUID{other}, ws.Event{Event: ws.EventSeen, Payload: ws.OutGoingEventForSeen{
+		MsgID: msgID.String(), FromID: me.String(),
+	}}); err != nil {
+		s.logger.Warn("failed to push seen event", "error", err)
 	}
 	return nil
+}
+
+// --- workers ---
+
+// classify keeps foreign-key errors retryable (the parent message or the
+// group may still be queued) and drops data errors.
+func classify(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && strings.HasPrefix(pgErr.Code, "22") {
+		return queue.Permanent(err)
+	}
+	return err
+}
+
+func (s *chatService) HandlePrivateMessage(ctx context.Context, j JobMessage) error {
+	return classify(s.repo.AddPrivate(ctx, j.Message))
+}
+
+func (s *chatService) HandlePublicMessage(ctx context.Context, j JobMessage) error {
+	return classify(s.repo.AddPublic(ctx, j.Message))
+}
+
+func (s *chatService) HandleSeen(ctx context.Context, j JobSeen) error {
+	return classify(s.repo.UpdateLastSeen(ctx, j.ChatID, j.SeenID, j.MsgID))
 }

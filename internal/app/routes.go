@@ -68,11 +68,11 @@ func (a *App) Router() http.Handler {
 			r.Post("/users/configs", a.handlers.users.SaveConfig)
 
 			r.Route("/friends", func(r chi.Router) {
-				r.Get("/", a.handlers.users.GetFriendList)
-				r.Get("/requests", a.handlers.users.GetPendingList)
-				r.With(limit(limitFriendRq)).Post("/requests", a.handlers.users.AddFriend)
-				r.With(limit(limitFriendUp)).Put("/requests/{request_id}", a.handlers.users.UpdateReq)
-				r.With(limit(limitFriendUp)).Delete("/requests/{request_id}", a.handlers.users.DeleteFriReq)
+				r.Get("/", a.handlers.friends.List)
+				r.Get("/requests", a.handlers.friends.Requests)
+				r.With(limit(limitFriendRq)).Post("/requests", a.handlers.friends.Send)
+				r.With(limit(limitFriendUp)).Put("/requests/{request_id}", a.handlers.friends.Update)
+				r.With(limit(limitFriendUp)).Delete("/requests/{request_id}", a.handlers.friends.Cancel)
 			})
 
 			r.Route("/chats/groups", func(r chi.Router) {

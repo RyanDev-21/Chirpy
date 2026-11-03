@@ -12,12 +12,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const addLastSeenMessage = `-- name: AddLastSeenMessage :one
-INSERT INTO seen_messages(chat_id,message_id,seen_id)
-VALUES ($1,$2,$3)
+const addLastSeenMessage = `-- name: AddLastSeenMessage :exec
+INSERT INTO seen_messages(chat_id, message_id, seen_id)
+VALUES ($1, $2, $3)
 ON CONFLICT (chat_id, seen_id)
 DO UPDATE SET message_id = EXCLUDED.message_id, updated_time = NOW()
-RETURNING id, chat_id, message_id, seen_id, updated_time
 `
 
 type AddLastSeenMessageParams struct {
@@ -26,29 +25,15 @@ type AddLastSeenMessageParams struct {
 	SeenID    pgtype.UUID
 }
 
-func (q *Queries) AddLastSeenMessage(ctx context.Context, arg AddLastSeenMessageParams) (SeenMessage, error) {
-	row := q.db.QueryRow(ctx, addLastSeenMessage, arg.ChatID, arg.MessageID, arg.SeenID)
-	var i SeenMessage
-	err := row.Scan(
-		&i.ID,
-		&i.ChatID,
-		&i.MessageID,
-		&i.SeenID,
-		&i.UpdatedTime,
-	)
-	return i, err
+func (q *Queries) AddLastSeenMessage(ctx context.Context, arg AddLastSeenMessageParams) error {
+	_, err := q.db.Exec(ctx, addLastSeenMessage, arg.ChatID, arg.MessageID, arg.SeenID)
+	return err
 }
 
-const addMessagePrivate = `-- name: AddMessagePrivate :one
-INSERT INTO message(id,content,parentId,from_id,to_id,created_at)VALUES(
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6
-)
-RETURNING id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at
+const addMessagePrivate = `-- name: AddMessagePrivate :exec
+INSERT INTO message(id, content, parentId, from_id, to_id, created_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (id) DO NOTHING
 `
 
 type AddMessagePrivateParams struct {
@@ -60,8 +45,8 @@ type AddMessagePrivateParams struct {
 	CreatedAt pgtype.Timestamp
 }
 
-func (q *Queries) AddMessagePrivate(ctx context.Context, arg AddMessagePrivateParams) (Message, error) {
-	row := q.db.QueryRow(ctx, addMessagePrivate,
+func (q *Queries) AddMessagePrivate(ctx context.Context, arg AddMessagePrivateParams) error {
+	_, err := q.db.Exec(ctx, addMessagePrivate,
 		arg.ID,
 		arg.Content,
 		arg.Parentid,
@@ -69,31 +54,13 @@ func (q *Queries) AddMessagePrivate(ctx context.Context, arg AddMessagePrivatePa
 		arg.ToID,
 		arg.CreatedAt,
 	)
-	var i Message
-	err := row.Scan(
-		&i.ID,
-		&i.Content,
-		&i.Parentid,
-		&i.FromID,
-		&i.ToID,
-		&i.DeletedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
+	return err
 }
 
-const addMessagePublic = `-- name: AddMessagePublic :one
-INSERT INTO GroupMessage(id,content,group_id,from_id,parent_id,created_at)
-VALUES(
-    $1,
-    $2,
-    $3,
-    $4,
-    $5, 
-    $6
-)
-RETURNING id, content, group_id, from_id, parent_id, created_at, updated_at, deleted_at
+const addMessagePublic = `-- name: AddMessagePublic :exec
+INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (id) DO NOTHING
 `
 
 type AddMessagePublicParams struct {
@@ -105,8 +72,8 @@ type AddMessagePublicParams struct {
 	CreatedAt pgtype.Timestamp
 }
 
-func (q *Queries) AddMessagePublic(ctx context.Context, arg AddMessagePublicParams) (Groupmessage, error) {
-	row := q.db.QueryRow(ctx, addMessagePublic,
+func (q *Queries) AddMessagePublic(ctx context.Context, arg AddMessagePublicParams) error {
+	_, err := q.db.Exec(ctx, addMessagePublic,
 		arg.ID,
 		arg.Content,
 		arg.GroupID,
@@ -114,75 +81,32 @@ func (q *Queries) AddMessagePublic(ctx context.Context, arg AddMessagePublicPara
 		arg.ParentID,
 		arg.CreatedAt,
 	)
-	var i Groupmessage
-	err := row.Scan(
-		&i.ID,
-		&i.Content,
-		&i.GroupID,
-		&i.FromID,
-		&i.ParentID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-	)
-	return i, err
+	return err
 }
 
-const getMessagesForPrivate = `-- name: GetMessagesForPrivate :many
-SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at FROM message
-WHERE (from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1)
-ORDER BY created_at ASC
-`
-
-type GetMessagesForPrivateParams struct {
-	FromID pgtype.UUID
-	ToID   pgtype.UUID
-}
-
-func (q *Queries) GetMessagesForPrivate(ctx context.Context, arg GetMessagesForPrivateParams) ([]Message, error) {
-	rows, err := q.db.Query(ctx, getMessagesForPrivate, arg.FromID, arg.ToID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Message
-	for rows.Next() {
-		var i Message
-		if err := rows.Scan(
-			&i.ID,
-			&i.Content,
-			&i.Parentid,
-			&i.FromID,
-			&i.ToID,
-			&i.DeletedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getMessagesForPrivateWithTime = `-- name: GetMessagesForPrivateWithTime :many
+const getPrivateMessagesSince = `-- name: GetPrivateMessagesSince :many
 SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at FROM message
 WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
   AND created_at > $3
+  AND deleted_at IS NULL
 ORDER BY created_at ASC
+LIMIT $4
 `
 
-type GetMessagesForPrivateWithTimeParams struct {
-	FromID    pgtype.UUID
-	ToID      pgtype.UUID
-	CreatedAt pgtype.Timestamp
+type GetPrivateMessagesSinceParams struct {
+	UserA pgtype.UUID
+	UserB pgtype.UUID
+	Since pgtype.Timestamp
+	Lim   int32
 }
 
-func (q *Queries) GetMessagesForPrivateWithTime(ctx context.Context, arg GetMessagesForPrivateWithTimeParams) ([]Message, error) {
-	rows, err := q.db.Query(ctx, getMessagesForPrivateWithTime, arg.FromID, arg.ToID, arg.CreatedAt)
+func (q *Queries) GetPrivateMessagesSince(ctx context.Context, arg GetPrivateMessagesSinceParams) ([]Message, error) {
+	rows, err := q.db.Query(ctx, getPrivateMessagesSince,
+		arg.UserA,
+		arg.UserB,
+		arg.Since,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -210,12 +134,20 @@ func (q *Queries) GetMessagesForPrivateWithTime(ctx context.Context, arg GetMess
 	return items, nil
 }
 
-const getMessagesForPublic = `-- name: GetMessagesForPublic :many
-SELECT id, content, group_id, from_id, parent_id, created_at, updated_at, deleted_at FROM GroupMessage WHERE group_id = $1 ORDER BY created_at ASC
+const getRecentGroupMessages = `-- name: GetRecentGroupMessages :many
+SELECT id, content, group_id, from_id, parent_id, created_at, updated_at, deleted_at FROM GroupMessage
+WHERE group_id = $1 AND deleted_at IS NULL
+ORDER BY created_at DESC
+LIMIT $2
 `
 
-func (q *Queries) GetMessagesForPublic(ctx context.Context, groupID pgtype.UUID) ([]Groupmessage, error) {
-	rows, err := q.db.Query(ctx, getMessagesForPublic, groupID)
+type GetRecentGroupMessagesParams struct {
+	GroupID pgtype.UUID
+	Lim     int32
+}
+
+func (q *Queries) GetRecentGroupMessages(ctx context.Context, arg GetRecentGroupMessagesParams) ([]Groupmessage, error) {
+	rows, err := q.db.Query(ctx, getRecentGroupMessages, arg.GroupID, arg.Lim)
 	if err != nil {
 		return nil, err
 	}
@@ -232,6 +164,49 @@ func (q *Queries) GetMessagesForPublic(ctx context.Context, groupID pgtype.UUID)
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getRecentPrivateMessages = `-- name: GetRecentPrivateMessages :many
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at FROM message
+WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
+  AND deleted_at IS NULL
+ORDER BY created_at DESC
+LIMIT $3
+`
+
+type GetRecentPrivateMessagesParams struct {
+	UserA pgtype.UUID
+	UserB pgtype.UUID
+	Lim   int32
+}
+
+func (q *Queries) GetRecentPrivateMessages(ctx context.Context, arg GetRecentPrivateMessagesParams) ([]Message, error) {
+	rows, err := q.db.Query(ctx, getRecentPrivateMessages, arg.UserA, arg.UserB, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.Parentid,
+			&i.FromID,
+			&i.ToID,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

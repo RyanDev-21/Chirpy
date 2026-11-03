@@ -1,26 +1,43 @@
 package app
 
 import (
+	"context"
+
 	"RyanDev-21.com/Chirpy/internal/chat"
+	"RyanDev-21.com/Chirpy/internal/friends"
 	"RyanDev-21.com/Chirpy/internal/groups"
+	"RyanDev-21.com/Chirpy/internal/platform/queue"
 	"RyanDev-21.com/Chirpy/internal/users"
 )
 
-// startWorkers registers one consumer pool per queue topic.
-func (a *App) startWorkers() {
-	q := a.queue
-	q.ListeningForTheChannels(users.SendRequest, 10, a.users.StartWorkerForAddFri)
-	q.ListeningForTheChannels(users.ConfirmFriendReq, 10, a.users.StartWorkerForConfirmFri)
-	q.ListeningForTheChannels(users.DeleteFriReq, 10, a.users.StartWorkerForDeleteReq)
-	q.ListeningForTheChannels(users.CancelReq, 10, a.users.StartWorkerForCancelReq)
-	q.ListeningForTheChannels(users.TopicUpdateUserCache, 5, a.users.StartWorkerForUpdateUserCache)
-	q.ListeningForTheChannels(users.TopicSaveConfig, 5, a.users.StartWorkerForSaveConfig)
+type subscription struct {
+	topic   string
+	workers int
+	handler queue.Handler
+}
 
-	q.ListeningForTheChannels(groups.TopicCreateGroup, 10, a.groups.StartWorkerForCreateGroup)
-	q.ListeningForTheChannels(groups.TopicAddMember, 10, a.groups.StartWorkerForAddMember)
-	q.ListeningForTheChannels(groups.TopicRemoveMember, 10, a.groups.StartWorkerForLeaveMember)
+// subscriptions lists every queue topic and the handler that persists it.
+func (a *App) subscriptions() []subscription {
+	return []subscription{
+		{users.TopicSaveConfig, 2, queue.Typed(a.users.HandleSaveConfig)},
 
-	q.ListeningForTheChannels(chat.TopicPrivateMessage, 50, a.chat.StartWorkerForAddPrivateMessage)
-	q.ListeningForTheChannels(chat.TopicPublicMessage, 50, a.chat.StartWorkerForAddPublicMessage)
-	q.ListeningForTheChannels(chat.TopicSeen, 10, a.chat.StartWorkerForUpdateSeen)
+		{friends.TopicCreate, 4, queue.Typed(a.friends.HandleCreate)},
+		{friends.TopicAccept, 4, queue.Typed(a.friends.HandleAccept)},
+		{friends.TopicDeny, 2, queue.Typed(a.friends.HandleDeny)},
+		{friends.TopicCancel, 2, queue.Typed(a.friends.HandleCancel)},
+
+		{groups.TopicCreateGroup, 2, queue.Typed(a.groups.HandleCreate)},
+		{groups.TopicAddMember, 4, queue.Typed(a.groups.HandleAddMember)},
+		{groups.TopicRemoveMember, 4, queue.Typed(a.groups.HandleRemoveMember)},
+
+		{chat.TopicPrivateMessage, 8, queue.Typed(a.chat.HandlePrivateMessage)},
+		{chat.TopicPublicMessage, 8, queue.Typed(a.chat.HandlePublicMessage)},
+		{chat.TopicSeen, 2, queue.Typed(a.chat.HandleSeen)},
+	}
+}
+
+func (a *App) startWorkers(ctx context.Context) {
+	for _, s := range a.subscriptions() {
+		a.queue.Subscribe(ctx, s.topic, s.workers, s.handler)
+	}
 }

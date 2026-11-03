@@ -2,58 +2,40 @@ package groups
 
 import (
 	"context"
-	"time"
+	"errors"
 
-	mq "RyanDev-21.com/Chirpy/internal/customMq"
-	"RyanDev-21.com/Chirpy/internal/database"
+	"RyanDev-21.com/Chirpy/internal/platform/queue"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func (s *groupService) StartWorkerForCreateGroup(channel chan *mq.Channel) {
-	for chen := range channel {
-		msg := chen.Msg.(GroupPublish)
-		if err := s.groupRepo.createGroup(msg.GroupID.ChatID, msg.GroupInfo); err != nil {
-			s.logger.Error("failed to create the group", "err", err)
-			chen.RetriesCount++
-			s.mq.Republish(chen, chen.RetriesCount)
-			continue
-		}
-		if err := s.groupRepo.createGroupLeader(creatorPublishStruct{
-			GroupID: msg.GroupID.ChatID,
-			UserID:  msg.CreatorID,
-			Role:    msg.Role,
-		}); err != nil {
-			s.logger.Error("failed to create the group leader", "err", err)
-			chen.RetriesCount++
-			s.mq.Republish(chen, chen.RetriesCount)
-			continue
-		}
+// workers persist group changes to postgres. Membership jobs can arrive
+// before the create job has committed; the foreign-key error is retried.
+
+func (s *groupService) HandleCreate(ctx context.Context, j JobCreate) error {
+	err := s.repo.CreateWithLeader(ctx, j)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		// another group won the name in postgres
+		return queue.Permanent(err)
 	}
+	return err
 }
 
-func (s *groupService) StartWorkerForAddMember(channel chan *mq.Channel) {
-	for chen := range channel {
-		msg := chen.Msg.(ManageGroupPublishStruct)
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		err := s.groupRepo.addMember(ctx, &database.AddMemberParams{GroupID: msg.GroupId, MemberID: msg.UserID})
-		cancel()
-		if err != nil {
-			s.logger.Error("failed to add member", "err", err)
-			chen.RetriesCount++
-			s.mq.Republish(chen, chen.RetriesCount)
-		}
-	}
+func (s *groupService) HandleAddMember(ctx context.Context, j JobMember) error {
+	return s.repo.AddMember(ctx, j.GroupID, j.UserID)
 }
 
-func (s *groupService) StartWorkerForLeaveMember(channel chan *mq.Channel) {
-	for chen := range channel {
-		msg := chen.Msg.(ManageGroupPublishStruct)
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		err := s.groupRepo.deleteMember(ctx, &database.DeleteMemFromGroupParams{GroupID: msg.GroupId, MemberID: msg.UserID})
-		cancel()
-		if err != nil {
-			s.logger.Error("failed to remove the member from the group", "err", err)
-			chen.RetriesCount++
-			s.mq.Republish(chen, chen.RetriesCount)
-		}
+var errMemberNotPersisted = errors.New("membership not in postgres yet")
+
+// a remove that deletes nothing usually means the add job has not run yet,
+// so it is retried; this keeps join-then-leave ordered.
+func (s *groupService) HandleRemoveMember(ctx context.Context, j JobMember) error {
+	deleted, err := s.repo.RemoveMember(ctx, j.GroupID, j.UserID)
+	if err != nil {
+		return err
 	}
+	if !deleted {
+		return errMemberNotPersisted
+	}
+	return nil
 }

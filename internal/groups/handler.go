@@ -22,7 +22,7 @@ func writeGroupError(w http.ResponseWriter, err error) {
 		httpx.Error(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrDuplicateName), errors.Is(err, ErrAlreadyMember), errors.Is(err, ErrGroupFull):
 		httpx.Error(w, http.StatusConflict, err.Error())
-	case errors.Is(err, ErrNotMember), errors.Is(err, ErrInvalidGroupReq):
+	case errors.Is(err, ErrNotMember), errors.Is(err, ErrInvalidGroupReq), errors.Is(err, httpx.ErrBadPathParam):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrLeaderCannotLeave):
 		httpx.Error(w, http.StatusForbidden, err.Error())
@@ -42,11 +42,7 @@ func (h *GroupHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	res, err := h.groupService.createGroup(r.Context(), creatorID, &createGroupStruct{
-		GroupName:   params.GroupName,
-		Description: params.Description,
-		MaxMems:     params.MaxMems,
-	})
+	res, err := h.groupService.CreateGroup(r.Context(), creatorID, params)
 	if err != nil {
 		writeGroupError(w, err)
 		return
@@ -65,7 +61,7 @@ func (h *GroupHandler) JoinGroup(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	if err := h.groupService.joinGroup(r.Context(), groupID, userID); err != nil {
+	if err := h.groupService.JoinGroup(r.Context(), groupID, userID); err != nil {
 		writeGroupError(w, err)
 		return
 	}
@@ -83,7 +79,7 @@ func (h *GroupHandler) LeaveGroup(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	if err := h.groupService.leaveGroup(r.Context(), groupID, userID); err != nil {
+	if err := h.groupService.LeaveGroup(r.Context(), groupID, userID); err != nil {
 		writeGroupError(w, err)
 		return
 	}

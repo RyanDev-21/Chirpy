@@ -10,74 +10,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const addSendReq = `-- name: AddSendReq :exec
-INSERT INTO user_relationships (id,user_id,otherUser_id)
-VALUES(
-    $1,
-    $2,
-    $3
-)
-`
-
-type AddSendReqParams struct {
-	ID          uuid.UUID
-	UserID      uuid.UUID
-	OtheruserID uuid.UUID
-}
-
-// SELECT ur.*,u.name FROM user_relationships ur LEFT JOIN users  u ON ur.otherUser_id = u.id  WHERE status != 'pending';
-func (q *Queries) AddSendReq(ctx context.Context, arg AddSendReqParams) error {
-	_, err := q.db.Exec(ctx, addSendReq, arg.ID, arg.UserID, arg.OtheruserID)
-	return err
-}
-
-const cancelFriReqStatus = `-- name: CancelFriReqStatus :exec
-
-UPDATE user_relationships SET status = 'cancel',updated_at = $2 WHERE id = $1 AND otherUser_id = $3
-`
-
-type CancelFriReqStatusParams struct {
-	ID          uuid.UUID
-	UpdatedAt   time.Time
-	OtheruserID uuid.UUID
-}
-
-// -- name: GetUserFriListByID :many
-// SELECT
-//
-//	ur.id,
-//	ur.otherUser_id,
-//	u.name AS otherUserName
-//
-// FROM user_relationships ur LEFT JOIN
-// users u ON u.id = (
-//
-//	CASE
-//	WHEN ur.user_id = $1 THEN ur.otherUser_id
-//	WHEN ur.otherUser_id = $1 THEN ur.user_id
-//	END
-//
-// )
-// WHERE ur.status = 'confirm' AND ($1 IN (ur.user_id,ur.otherUser_id));
-func (q *Queries) CancelFriReqStatus(ctx context.Context, arg CancelFriReqStatusParams) error {
-	_, err := q.db.Exec(ctx, cancelFriReqStatus, arg.ID, arg.UpdatedAt, arg.OtheruserID)
-	return err
-}
-
 const createUser = `-- name: CreateUser :one
-INSERT INTO  users(id,name,created_at,updated_at, email,password)
-VALUES(
-    gen_random_uuid(),
-    $1,
-    NOW(),
-    NOW(),
-    $2,
-    $3
-)
+INSERT INTO users(id, name, created_at, updated_at, email, password)
+VALUES (gen_random_uuid(), $1, NOW(), NOW(), $2, $3)
 RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name
 `
 
@@ -102,20 +40,6 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
-const deleteFriReq = `-- name: DeleteFriReq :exec
-DELETE FROM user_relationships WHERE id=$1 AND user_id =$2
-`
-
-type DeleteFriReqParams struct {
-	ID     uuid.UUID
-	UserID uuid.UUID
-}
-
-func (q *Queries) DeleteFriReq(ctx context.Context, arg DeleteFriReqParams) error {
-	_, err := q.db.Exec(ctx, deleteFriReq, arg.ID, arg.UserID)
-	return err
-}
-
 const deleteUser = `-- name: DeleteUser :exec
 DELETE FROM users
 `
@@ -125,212 +49,8 @@ func (q *Queries) DeleteUser(ctx context.Context) error {
 	return err
 }
 
-const getAllUser = `-- name: GetAllUser :many
-SELECT id, created_at, updated_at, email, password, is_chirpy_red, name FROM users
-`
-
-func (q *Queries) GetAllUser(ctx context.Context) ([]User, error) {
-	rows, err := q.db.Query(ctx, getAllUser)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []User
-	for rows.Next() {
-		var i User
-		if err := rows.Scan(
-			&i.ID,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.Email,
-			&i.Password,
-			&i.IsChirpyRed,
-			&i.Name,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getAllUserRs = `-- name: GetAllUserRs :many
-SELECT 
-    ur.user_id,
-    u1.name AS user_name,
-    ur.otherUser_id,
-    u2.name AS other_user_name,
-    ur.status
-FROM user_relationships ur
-JOIN users u1 ON ur.user_id = u1.id
-JOIN users u2 ON ur.otherUser_id = u2.id
-WHERE ur.status = 'confirm'
-`
-
-type GetAllUserRsRow struct {
-	UserID        uuid.UUID
-	UserName      string
-	OtheruserID   uuid.UUID
-	OtherUserName string
-	Status        string
-}
-
-// Join for the first user
-// Join for the second user
-func (q *Queries) GetAllUserRs(ctx context.Context) ([]GetAllUserRsRow, error) {
-	rows, err := q.db.Query(ctx, getAllUserRs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetAllUserRsRow
-	for rows.Next() {
-		var i GetAllUserRsRow
-		if err := rows.Scan(
-			&i.UserID,
-			&i.UserName,
-			&i.OtheruserID,
-			&i.OtherUserName,
-			&i.Status,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getFriReqList = `-- name: GetFriReqList :many
-SELECT ur.id,ur.user_id,u.name  FROM user_relationships ur  LEFT JOIN users u ON u.id = ur.user_id WHERE ur.otherUser_id = $1 AND ur.status != 'confirm'
-`
-
-type GetFriReqListRow struct {
-	ID     uuid.UUID
-	UserID uuid.UUID
-	Name   pgtype.Text
-}
-
-func (q *Queries) GetFriReqList(ctx context.Context, otheruserID uuid.UUID) ([]GetFriReqListRow, error) {
-	rows, err := q.db.Query(ctx, getFriReqList, otheruserID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetFriReqListRow
-	for rows.Next() {
-		var i GetFriReqListRow
-		if err := rows.Scan(&i.ID, &i.UserID, &i.Name); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getOtherUserInfoByReqID = `-- name: GetOtherUserInfoByReqID :one
-SELECT 
-	u.id,
-	u.email,
-	u.name,
-	u.created_at,
-	u.updated_at
-FROM user_relationships ur LEFT JOIN
-users u ON u.id  = (
-	CASE 
-		WHEN ur.user_id = $1 THEN ur.otherUser_id
-		WHEN ur.otherUser_id = $1 THEN ur.user_id
-	END
-)
-WHERE ur.id = $2 AND status != 'confirm'
-`
-
-type GetOtherUserInfoByReqIDParams struct {
-	UserID uuid.UUID
-	ID     uuid.UUID
-}
-
-type GetOtherUserInfoByReqIDRow struct {
-	ID        pgtype.UUID
-	Email     pgtype.Text
-	Name      pgtype.Text
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
-func (q *Queries) GetOtherUserInfoByReqID(ctx context.Context, arg GetOtherUserInfoByReqIDParams) (GetOtherUserInfoByReqIDRow, error) {
-	row := q.db.QueryRow(ctx, getOtherUserInfoByReqID, arg.UserID, arg.ID)
-	var i GetOtherUserInfoByReqIDRow
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.Name,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const getUserFriListByID = `-- name: GetUserFriListByID :many
-SELECT 
-    (SELECT name FROM users u1 WHERE u1.id = $1) AS user_name,
-    u.name AS friend_name,
-    u.id AS friend_id
-FROM users u
-WHERE u.id IN (
-    SELECT otherUser_id FROM user_relationships WHERE user_id = $1 AND status = 'confirm'
-    UNION
-    SELECT user_id FROM user_relationships WHERE otherUser_id = $1 AND status = 'confirm'
-)
-`
-
-type GetUserFriListByIDRow struct {
-	UserName   string
-	FriendName string
-	FriendID   uuid.UUID
-}
-
-// -- name: GetUserFriListByID :many
-// SELECT name(SELECT name FROM users WHERE id = $1) AS userName,
-//
-//		u.name AS otherUserName
-//	    CASE
-//	    WHEN user_id = $1 THEN otherUser_id
-//	    WHEN otherUser_id = $1 THEN user_id
-//	    END AS friend_id
-//
-// FROM user_relationships LEFT JOIN users u ON u.id == friend_id
-// WHERE status = 'confirm';
-func (q *Queries) GetUserFriListByID(ctx context.Context, id uuid.UUID) ([]GetUserFriListByIDRow, error) {
-	rows, err := q.db.Query(ctx, getUserFriListByID, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetUserFriListByIDRow
-	for rows.Next() {
-		var i GetUserFriListByIDRow
-		if err := rows.Scan(&i.UserName, &i.FriendName, &i.FriendID); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getUserInfoByEmail = `-- name: GetUserInfoByEmail :one
-SELECT id, created_at, updated_at, email, password, is_chirpy_red, name  FROM users WHERE email = $1
+SELECT id, created_at, updated_at, email, password, is_chirpy_red, name FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, error) {
@@ -367,41 +87,12 @@ func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, erro
 	return i, err
 }
 
-const getYourSendReqList = `-- name: GetYourSendReqList :many
-SELECT ur.id,ur.otherUser_id,u.name FROM user_relationships ur LEFT JOIN users u ON u.id = ur.otherUser_id WHERE ur.user_id = $1 AND ur.status!= 'confirm'
-`
-
-type GetYourSendReqListRow struct {
-	ID          uuid.UUID
-	OtheruserID uuid.UUID
-	Name        pgtype.Text
-}
-
-func (q *Queries) GetYourSendReqList(ctx context.Context, userID uuid.UUID) ([]GetYourSendReqListRow, error) {
-	rows, err := q.db.Query(ctx, getYourSendReqList, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetYourSendReqListRow
-	for rows.Next() {
-		var i GetYourSendReqListRow
-		if err := rows.Scan(&i.ID, &i.OtheruserID, &i.Name); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const searchNameSiml = `-- name: SearchNameSiml :many
-SELECT u.email,u.name,u.created_at,u.updated_at,u.id,u.is_chirpy_red,similarity(name,$1) AS similarity
+SELECT u.email, u.name, u.created_at, u.updated_at, u.id, u.is_chirpy_red, similarity(name, $1) AS similarity
 FROM users u
 WHERE name % $1
-ORDER BY similarity DESC,name
+ORDER BY similarity DESC, name
+LIMIT 20
 `
 
 type SearchNameSimlRow struct {
@@ -442,16 +133,8 @@ func (q *Queries) SearchNameSiml(ctx context.Context, similarity string) ([]Sear
 	return items, nil
 }
 
-const updateIsRedById = `-- name: UpdateIsRedById :execresult
-UPDATE users SET  is_chirpy_red = true ,updated_at = NOW() WHERE id = $1
-`
-
-func (q *Queries) UpdateIsRedById(ctx context.Context, id uuid.UUID) (pgconn.CommandTag, error) {
-	return q.db.Exec(ctx, updateIsRedById, id)
-}
-
 const updatePassword = `-- name: UpdatePassword :exec
-UPDATE  users SET password = $1,updated_at = NOW() WHERE id = $2
+UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2
 `
 
 type UpdatePasswordParams struct {
@@ -461,20 +144,5 @@ type UpdatePasswordParams struct {
 
 func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error {
 	_, err := q.db.Exec(ctx, updatePassword, arg.Password, arg.ID)
-	return err
-}
-
-const updateSendReq = `-- name: UpdateSendReq :exec
-UPDATE user_relationships SET status = 'confirm',updated_at = $2 WHERE id = $1 AND otherUser_id= $3
-`
-
-type UpdateSendReqParams struct {
-	ID          uuid.UUID
-	UpdatedAt   time.Time
-	OtheruserID uuid.UUID
-}
-
-func (q *Queries) UpdateSendReq(ctx context.Context, arg UpdateSendReqParams) error {
-	_, err := q.db.Exec(ctx, updateSendReq, arg.ID, arg.UpdatedAt, arg.OtheruserID)
 	return err
 }

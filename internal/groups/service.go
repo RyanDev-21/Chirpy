@@ -2,128 +2,143 @@ package groups
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"strings"
 	"time"
+	"unicode/utf8"
 
-	mq "RyanDev-21.com/Chirpy/internal/customMq"
+	"RyanDev-21.com/Chirpy/internal/platform/queue"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
-const RoleLeader = "Leader"
-
-var ErrLeaderCannotLeave = errors.New("group leader cannot leave the group")
-
 type GroupService interface {
-	createGroup(ctx context.Context, createrID uuid.UUID, groupInfo *createGroupStruct) (*GroupInfo, error)
-	joinGroup(ctx context.Context, groupID uuid.UUID, userID uuid.UUID) error
-	leaveGroup(ctx context.Context, groupID uuid.UUID, userID uuid.UUID) error
+	CreateGroup(ctx context.Context, creatorID uuid.UUID, req createGroupRequest) (*GroupInfo, error)
+	JoinGroup(ctx context.Context, groupID, userID uuid.UUID) error
+	LeaveGroup(ctx context.Context, groupID, userID uuid.UUID) error
+	// IsMember and Members are used by chat for authorization and fan-out.
+	IsMember(ctx context.Context, groupID, userID uuid.UUID) (bool, error)
+	Members(ctx context.Context, groupID uuid.UUID) ([]uuid.UUID, error)
 
-	StartWorkerForCreateGroup(channel chan *mq.Channel)
-	StartWorkerForAddMember(channel chan *mq.Channel)
-	StartWorkerForLeaveMember(channel chan *mq.Channel)
+	HandleCreate(ctx context.Context, j JobCreate) error
+	HandleAddMember(ctx context.Context, j JobMember) error
+	HandleRemoveMember(ctx context.Context, j JobMember) error
 }
 
 type groupService struct {
-	groupCache *Cache
-	groupRepo  GroupRepo
-	mq         *mq.MainMQ
-	logger     *slog.Logger
+	repo   GroupRepo
+	store  Store
+	queue  queue.Publisher
+	logger *slog.Logger
 }
 
-func NewGroupService(groupRepo GroupRepo, mq *mq.MainMQ, groupCache *Cache, logger *slog.Logger) GroupService {
-	return &groupService{
-		groupRepo:  groupRepo,
-		mq:         mq,
-		groupCache: groupCache,
-		logger:     logger,
-	}
+func NewGroupService(repo GroupRepo, store Store, q queue.Publisher, logger *slog.Logger) GroupService {
+	return &groupService{repo: repo, store: store, queue: q, logger: logger}
 }
 
-func validateCreateGroup(g *createGroupStruct) error {
-	g.GroupName = strings.TrimSpace(g.GroupName)
-	if g.GroupName == "" || len(g.GroupName) > maxGroupNameLen {
+func validateCreate(req *createGroupRequest) error {
+	req.GroupName = strings.TrimSpace(req.GroupName)
+	n := utf8.RuneCountInString(req.GroupName)
+	if n == 0 || n > maxGroupNameLen || utf8.RuneCountInString(req.Description) > maxDescLen {
 		return ErrInvalidGroupReq
 	}
-	if len(g.Description) > maxDescLen {
-		return ErrInvalidGroupReq
-	}
-	if g.MaxMems < 2 || g.MaxMems > maxGroupSize {
+	if req.MaxMems < 2 || req.MaxMems > maxGroupSize {
 		return ErrInvalidGroupReq
 	}
 	return nil
 }
 
-// createGroup registers the group in the cache, makes the creator its leader
-// and queues the db writes.
-func (s *groupService) createGroup(ctx context.Context, createrID uuid.UUID, groupInfo *createGroupStruct) (*GroupInfo, error) {
-	if err := validateCreateGroup(groupInfo); err != nil {
+// ensureLoaded copies a group from postgres into redis on first use.
+func (s *groupService) ensureLoaded(ctx context.Context, groupID uuid.UUID) error {
+	ok, err := s.store.Loaded(ctx, groupID)
+	if err != nil || ok {
+		return err
+	}
+	snap, err := s.repo.Snapshot(ctx, groupID)
+	if err != nil {
+		return err
+	}
+	return s.store.Load(ctx, groupID, snap)
+}
+
+func (s *groupService) CreateGroup(ctx context.Context, creatorID uuid.UUID, req createGroupRequest) (*GroupInfo, error) {
+	if err := validateCreate(&req); err != nil {
 		return nil, err
 	}
-	exists, err := s.groupCache.CheckGroupNameFromCache(groupInfo.GroupName)
+	taken, err := s.repo.NameTaken(ctx, req.GroupName)
 	if err != nil {
 		return nil, err
 	}
-	if exists {
+	if taken {
 		return nil, ErrDuplicateName
 	}
-	chatID, err := uuid.NewV7()
+	groupID, err := uuid.NewV7()
 	if err != nil {
 		return nil, err
 	}
-	groupInfo.CurrentMem = 1
-	s.groupCache.AddGroup(chatID, CacheGroupInfo{
-		Name:     groupInfo.GroupName,
-		TotalMem: groupInfo.CurrentMem,
-		MaxMem:   groupInfo.MaxMems,
-	}, []uuid.UUID{createrID})
-
-	if err := s.publish(ctx, TopicCreateGroup, GroupPublish{
-		GroupID:   GroupInfo{chatID},
-		CreatorID: createrID,
-		GroupInfo: *groupInfo,
-		Role:      RoleLeader,
+	reserved, err := s.store.ReserveName(ctx, req.GroupName, groupID)
+	if err != nil {
+		return nil, err
+	}
+	if !reserved {
+		return nil, ErrDuplicateName
+	}
+	if err := s.store.Load(ctx, groupID, GroupSnapshot{
+		Name:     req.GroupName,
+		MaxMem:   req.MaxMems,
+		LeaderID: creatorID,
+		Members:  []uuid.UUID{creatorID},
+	}); err != nil {
+		_ = s.store.ReleaseName(ctx, req.GroupName)
+		return nil, err
+	}
+	if err := s.publish(ctx, TopicCreateGroup, JobCreate{
+		GroupID:     groupID,
+		CreatorID:   creatorID,
+		Name:        req.GroupName,
+		Description: req.Description,
+		MaxMembers:  req.MaxMems,
 	}); err != nil {
 		return nil, err
 	}
-	return &GroupInfo{ChatID: chatID}, nil
+	return &GroupInfo{ChatID: groupID}, nil
 }
 
-func (s *groupService) joinGroup(ctx context.Context, groupID uuid.UUID, userID uuid.UUID) error {
-	if err := s.groupCache.AddMember(groupID, userID); err != nil {
+func (s *groupService) JoinGroup(ctx context.Context, groupID, userID uuid.UUID) error {
+	if err := s.ensureLoaded(ctx, groupID); err != nil {
 		return err
 	}
-	if err := s.publish(ctx, TopicAddMember, ManageGroupPublishStruct{GroupId: groupID, UserID: userID}); err != nil {
+	if err := s.store.Join(ctx, groupID, userID); err != nil {
 		return err
 	}
-	return nil
+	return s.publish(ctx, TopicAddMember, JobMember{GroupID: groupID, UserID: userID})
 }
 
-func (s *groupService) leaveGroup(ctx context.Context, groupID uuid.UUID, userID uuid.UUID) error {
-	role, err := s.groupRepo.getMemberRole(ctx, groupID, userID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+func (s *groupService) LeaveGroup(ctx context.Context, groupID, userID uuid.UUID) error {
+	if err := s.ensureLoaded(ctx, groupID); err != nil {
 		return err
 	}
-	if role == RoleLeader {
-		return ErrLeaderCannotLeave
-	}
-	if err := s.groupCache.RemoveMember(groupID, userID); err != nil {
+	if err := s.store.Leave(ctx, groupID, userID); err != nil {
 		return err
 	}
-	if err := s.publish(ctx, TopicRemoveMember, ManageGroupPublishStruct{GroupId: groupID, UserID: userID}); err != nil {
-		return err
+	return s.publish(ctx, TopicRemoveMember, JobMember{GroupID: groupID, UserID: userID})
+}
+
+func (s *groupService) IsMember(ctx context.Context, groupID, userID uuid.UUID) (bool, error) {
+	if err := s.ensureLoaded(ctx, groupID); err != nil {
+		return false, err
 	}
-	return nil
+	return s.store.IsMember(ctx, groupID, userID)
+}
+
+func (s *groupService) Members(ctx context.Context, groupID uuid.UUID) ([]uuid.UUID, error) {
+	if err := s.ensureLoaded(ctx, groupID); err != nil {
+		return nil, err
+	}
+	return s.store.Members(ctx, groupID)
 }
 
 func (s *groupService) publish(ctx context.Context, topic string, payload any) error {
 	pubCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	if err := s.mq.PublishWithContext(pubCtx, topic, payload); err != nil {
-		s.logger.Error("failed to publish group job", "topic", topic, "err", err)
-		return err
-	}
-	return nil
+	return s.queue.Publish(pubCtx, topic, payload)
 }

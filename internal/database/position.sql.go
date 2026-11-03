@@ -22,30 +22,6 @@ func (q *Queries) GetAllConfigForUser(ctx context.Context, userID uuid.UUID) ([]
 	return pref, err
 }
 
-const getAllUsersConfig = `-- name: GetAllUsersConfig :many
-SELECT user_id, pref FROM EleConfig
-`
-
-func (q *Queries) GetAllUsersConfig(ctx context.Context) ([]Eleconfig, error) {
-	rows, err := q.db.Query(ctx, getAllUsersConfig)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Eleconfig
-	for rows.Next() {
-		var i Eleconfig
-		if err := rows.Scan(&i.UserID, &i.Pref); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const savePosition = `-- name: SavePosition :exec
 INSERT INTO EleConfig(user_id,pref)
 VALUES($1,$2::jsonb)

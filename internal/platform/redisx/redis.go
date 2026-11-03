@@ -1,142 +1,75 @@
+// Package redisx creates the shared Redis client and small helpers used by
+// the per-domain Redis stores.
 package redisx
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
-	//	"time"
-
-	redisotel "github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
 )
 
-// need to implement get set and hget and hset and stuff
-// for only chat messages
-type RedisCache struct {
-	redis redis.UniversalClient
+type Options struct {
+	Addr     string
+	Username string
+	Password string
+	DB       int
 }
 
-type RedisCacheImpl interface {
-	Get(ctx context.Context, key string, dst interface{}) (bool, error)
-	Set(ctx context.Context, key string, val interface{}) error
-	Delete(ctx context.Context, key string) error
-	HGet(ctx context.Context, key, field string, dst interface{}) (bool, error)
-	HMGet(ctx context.Context, key string, fields []string) ([]interface{}, error)
-	HGetAll(ctx context.Context, key string) (map[string]string, error)
-	HSet(ctx context.Context, key string, values ...interface{}) error
-	HDel(ctx context.Context, key, field string) error
-	RPush(ctx context.Context, key string, val interface{}) error
-	LRange(ctx context.Context, key string, start, stop int64) ([]string, error)
-	XAdd(ctx context.Context, stream string, values ...interface{}) error
-	XRevRangeN(ctx context.Context, key string) ([]redis.XMessage, error)
-}
-
-func NewRedisClient(addr, userName, password string) (redis.UniversalClient, error) {
+// NewClient connects and pings Redis.
+func NewClient(ctx context.Context, o Options) (*redis.Client, error) {
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Username: userName,
-		Password: password,
-		DB:       0,
+		Addr:     o.Addr,
+		Username: o.Username,
+		Password: o.Password,
+		DB:       o.DB,
 	})
-
-	context := context.Background()
-	_, err := rdb.Ping(context).Result()
-	if err != nil {
-		return nil, err
-	}
-	if err = redisotel.InstrumentTracing(rdb); err != nil {
-		return nil, err
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := rdb.Ping(pingCtx).Err(); err != nil {
+		_ = rdb.Close()
+		return nil, fmt.Errorf("redis ping %s: %w", o.Addr, err)
 	}
 	return rdb, nil
 }
 
-func NewRedisCacheImpl(rdb redis.UniversalClient) RedisCacheImpl {
-	return &RedisCache{
-		redis: rdb,
+// GetJSON loads a JSON value. found is false on a cache miss.
+func GetJSON[T any](ctx context.Context, rdb redis.Cmdable, key string) (v T, found bool, err error) {
+	raw, err := rdb.Get(ctx, key).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return v, false, nil
 	}
-}
-
-// XRevRangeN returns the newest 50 entries of a stream, newest first.
-func (rc *RedisCache) XRevRangeN(ctx context.Context, key string) ([]redis.XMessage, error) {
-	return rc.redis.XRevRangeN(ctx, key, "+", "-", 50).Result()
-}
-
-func (rc *RedisCache) XAdd(ctx context.Context, key string, values ...interface{}) error {
-	_, err := rc.redis.XAdd(ctx, &redis.XAddArgs{
-		Stream: key,
-		MaxLen: 100,
-		Values: map[string]interface{}{
-			"message_id": values[0],
-			"payload":    values[1],
-		},
-	}).Result()
-	return err
-}
-
-func (rc *RedisCache) Get(ctx context.Context, key string, dst interface{}) (bool, error) {
-	val, err := rc.redis.Get(ctx, key).Result()
 	if err != nil {
-		if err == redis.Nil {
-			return false, nil
-		}
-		return false, err
+		return v, false, err
 	}
-	if err = json.Unmarshal([]byte(val), dst); err != nil {
-		return false, err
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return v, false, err
 	}
-	return true, nil
+	return v, true, nil
 }
 
-func (rc *RedisCache) Set(ctx context.Context, key string, val interface{}) error {
-	if err := rc.redis.Set(ctx, key, val, 10*time.Hour).Err(); err != nil {
+// SetJSON stores v as JSON with a TTL.
+func SetJSON(ctx context.Context, rdb redis.Cmdable, key string, v any, ttl time.Duration) error {
+	raw, err := json.Marshal(v)
+	if err != nil {
 		return err
 	}
-	return nil
+	return rdb.Set(ctx, key, raw, ttl).Err()
 }
 
-// Delete deletes a key
-func (rc *RedisCache) Delete(ctx context.Context, key string) error {
-	if err := rc.redis.Del(ctx, key).Err(); err != nil {
-		return err
+// ScriptErrCode returns the code from a Lua redis.error_reply('CODE'),
+// which Redis delivers as "ERR CODE". Other errors return "".
+func ScriptErrCode(err error) string {
+	var rerr redis.Error
+	if err == nil || !errors.As(err, &rerr) {
+		return ""
 	}
-	return nil
-}
-
-func (rc *RedisCache) HGet(ctx context.Context, key, field string, dst interface{}) (bool, error) {
-	val, err := rc.redis.HGet(ctx, key, field).Result()
-	if err == redis.Nil {
-		return false, nil
-	} else if err != nil {
-		return false, err
-	} else {
-		if err = json.Unmarshal([]byte(val), dst); err != nil {
-			return false, err
-		}
+	msg := rerr.Error()
+	if len(msg) > 4 && msg[:4] == "ERR " {
+		return msg[4:]
 	}
-	return true, nil
-}
-
-func (rc *RedisCache) HMGet(ctx context.Context, key string, fields []string) ([]interface{}, error) {
-	return rc.redis.HMGet(ctx, key, fields...).Result()
-}
-
-func (rc *RedisCache) HGetAll(ctx context.Context, key string) (map[string]string, error) {
-	return rc.redis.HGetAll(ctx, key).Result()
-}
-
-func (rc *RedisCache) HSet(ctx context.Context, key string, values ...interface{}) error {
-	return rc.redis.HSet(ctx, key, values...).Err()
-}
-
-func (rc *RedisCache) HDel(ctx context.Context, key, field string) error {
-	return rc.redis.HDel(ctx, key, field).Err()
-}
-
-func (rc *RedisCache) RPush(ctx context.Context, key string, val interface{}) error {
-	return rc.redis.RPush(ctx, key, val).Err()
-}
-
-func (rc *RedisCache) LRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
-	return rc.redis.LRange(ctx, key, start, stop).Result()
+	return msg
 }
