@@ -14,17 +14,22 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"RyanDev-21.com/Chirpy/internal/app"
+	authsvc "RyanDev-21.com/Chirpy/internal/auth"
 	"RyanDev-21.com/Chirpy/internal/config"
+	"RyanDev-21.com/Chirpy/internal/platform/mail"
 	"RyanDev-21.com/Chirpy/internal/platform/migrate"
 	"RyanDev-21.com/Chirpy/internal/platform/secure"
 	"github.com/google/uuid"
@@ -65,6 +70,49 @@ type env struct {
 	db     *sql.DB
 	redis  *redis.Client
 	cancel context.CancelFunc
+	mail   *mail.Memory
+	google *fakeGoogle
+}
+
+// fakeGoogle accepts ID tokens registered in tokens (token -> claims).
+type fakeGoogle struct {
+	mu     sync.Mutex
+	tokens map[string]authsvc.GoogleClaims
+}
+
+func (f *fakeGoogle) Verify(_ context.Context, tok string) (authsvc.GoogleClaims, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.tokens[tok]
+	if !ok {
+		return authsvc.GoogleClaims{}, errors.New("bad token")
+	}
+	return c, nil
+}
+
+// googleToken registers a Google identity and returns an ID token for it.
+func (e *env) googleToken(subject, email string, verified bool) string {
+	tok := "gtok-" + uuid.NewString()
+	e.google.mu.Lock()
+	e.google.tokens[tok] = authsvc.GoogleClaims{Subject: subject, Email: email, EmailVerified: verified}
+	e.google.mu.Unlock()
+	return tok
+}
+
+var sixDigits = regexp.MustCompile(`\b\d{6}\b`)
+
+// lastCode returns the 6-digit code in the latest email sent to `to`.
+func (e *env) lastCode(to string) string {
+	e.t.Helper()
+	m, ok := e.mail.Last(to)
+	if !ok {
+		e.t.Fatalf("no email sent to %s", to)
+	}
+	c := sixDigits.FindString(m.Text)
+	if c == "" {
+		e.t.Fatalf("no code in email %q", m.Subject)
+	}
+	return c
 }
 
 // newEnv resets Postgres and Redis and starts a fresh server with workers.
@@ -101,7 +149,8 @@ func newEnv(t *testing.T, opts ...func(*config.Config)) *env {
 		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	a, err := app.New(ctx, cfg, logger)
+	mem, gg := &mail.Memory{}, &fakeGoogle{tokens: map[string]authsvc.GoogleClaims{}}
+	a, err := app.New(ctx, cfg, logger, app.WithMailer(mem), app.WithGoogleVerifier(gg))
 	if err != nil {
 		cancel()
 		t.Fatal(err)
@@ -111,7 +160,7 @@ func newEnv(t *testing.T, opts ...func(*config.Config)) *env {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(a.Router())
-	e := &env{t: t, srv: srv, db: db, redis: rdb, cancel: cancel}
+	e := &env{t: t, srv: srv, db: db, redis: rdb, cancel: cancel, mail: mem, google: gg}
 	t.Cleanup(func() {
 		srv.Close()
 		cancel()
@@ -175,9 +224,9 @@ type user struct {
 func (e *env) signup(name string) user {
 	e.t.Helper()
 	email := name + "@example.io"
-	e.expect(e.do("POST", "/api/users", "", map[string]string{"name": name, "email": email, "password": password}), 201)
+	e.expect(e.do("POST", "/api/users", "", map[string]string{"name": name, "email": email, "password": password}), 202)
 	var u user
-	e.expect(e.do("POST", "/api/login", "", map[string]string{"email": email, "password": password}), 200).json(e.t, &u)
+	e.expect(e.do("POST", "/api/auth/verify-email", "", map[string]string{"email": email, "code": e.lastCode(email)}), 200).json(e.t, &u)
 	u.email = email
 	return u
 }
@@ -222,6 +271,27 @@ func (e *env) invite(token, groupID string) string {
 func (e *env) join(token, code string) resp {
 	e.t.Helper()
 	return e.do("POST", "/api/chats/groups/join", token, map[string]string{"code": code})
+}
+
+// assertLimited checks a rate limit of `limit` per minute: the first
+// `limit` calls must pass (Redis starts empty, so no earlier window counts),
+// and a 429 must follow within a few more. The limiter is a sliding window:
+// right after a minute boundary the previous minute is weighted down, which
+// can let one or two extra requests through. send(i) returns the status.
+func (e *env) assertLimited(limit int, send func(i int) int) {
+	e.t.Helper()
+	const slack = 3
+	for i := range limit {
+		if c := send(i); c == http.StatusTooManyRequests {
+			e.t.Fatalf("request %d of %d was limited", i+1, limit)
+		}
+	}
+	for i := limit; i < limit+slack; i++ {
+		if send(i) == http.StatusTooManyRequests {
+			return
+		}
+	}
+	e.t.Fatalf("no 429 within %d requests over a limit of %d", limit+slack, limit)
 }
 
 // eventually polls a SQL query until it returns want (as text).

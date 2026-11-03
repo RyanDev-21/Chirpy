@@ -94,15 +94,8 @@ func TestRateLimitUsesRealClientBehindProxy(t *testing.T) {
 		res.Body.Close()
 		return res.StatusCode
 	}
-	for i := range 10 {
-		// a different spoofed prefix each time; the proxy-added hop stays the same
-		if c := login(fmt.Sprintf("10.9.9.%d, 203.0.113.7", i)); c != 401 {
-			t.Fatalf("attempt %d: %d", i+1, c)
-		}
-	}
-	if c := login("10.9.9.99, 203.0.113.7"); c != http.StatusTooManyRequests {
-		t.Fatalf("spoofed prefix reset the budget: got %d, want 429", c)
-	}
+	// a different spoofed prefix each time; the proxy-added hop stays the same
+	e.assertLimited(10, func(i int) int { return login(fmt.Sprintf("10.9.9.%d, 203.0.113.7", i)) })
 	if c := login("198.51.100.20"); c != 401 {
 		t.Fatalf("another client was blocked by the first one's budget: %d", c)
 	}

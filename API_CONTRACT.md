@@ -64,20 +64,29 @@ Rules: name is 3–25 characters with no whitespace; email must be valid and is
 normalized to lowercase; password is 8–128 characters and must contain at
 least one of `@$!%*?&`.
 
-Success: `201`, a user object:
+Success: `202 {"status":"check_your_email"}`. A 6-digit code is emailed;
+send it to **Verify email** to finish and sign in. The answer is the same if
+the email already has an account (the owner gets a notice email instead), so
+sign-up can't be used to find out who is registered.
 
-```json
-{
-  "id":"uuid", "name":"alice", "created_at":"2026-01-01T00:00:00Z",
-  "updated_at":"2026-01-01T00:00:00Z", "email":"alice@example.com",
-  "is_chirpy_red":false
-}
-```
+`400` invalid input; `409` username taken (`the user name already exists`);
+`503` the email could not be sent (retry; registering again resends the code).
 
-`400` invalid input; `409` duplicate email (`the user already exists`) or
-duplicate name (`the user name already exists`). Note: the duplicate-email
-response reveals that an email is registered; this changes when email
-verification is added.
+### Verify email
+
+`POST /api/auth/verify-email` with `{"email":"alice@example.com","code":"482913"}`
+→ `200`, the same session response as **Login**.
+
+Codes expire after 15 minutes and die after 5 wrong tries. Any failure is
+`400 {"error":"invalid or expired code"}`.
+
+### Resend verification code
+
+`POST /api/auth/resend-verification` with `{"email":"…"}` → always
+`202 {"status":"check_your_email"}`. At most one code per minute is sent;
+nothing is sent for unknown or already verified emails.
+
+The `/api/auth/*` routes share a budget of 10 requests/minute.
 
 ### Login
 
@@ -97,7 +106,44 @@ Success: `200`:
 
 Invalid email or password returns the same `401 {"error":"invalid credentials"}`
 response. This is intentional and must not be used to distinguish an unknown
-account.
+account. Accounts created with Google have no password and also get this `401`
+here; they sign in with Google (or set a password with **Reset password**).
+
+A correct password on an account whose email isn't verified yet returns
+`403 {"error":"email not verified"}`: show the code screen and offer
+**Resend verification code**.
+
+All user objects include `"email_verified": true|false`.
+
+### Reset password
+
+1. `POST /api/auth/password-reset` with `{"email":"…"}` → always `202`; a code is
+   emailed if the account exists.
+2. `POST /api/auth/password-reset/confirm` with
+   `{"email":"…","code":"123456","new_password":"…"}` → `204`.
+
+The new password follows the register rules (`400` otherwise); wrong or
+expired codes are `400`. A reset signs out every session and also counts as
+email verification. It works for Google-only accounts, adding a password.
+
+### Google sign-in
+
+Use Android's Credential Manager "Sign in with Google" with the server's
+**Web client ID** as `serverClientId`, then send the ID token:
+
+`POST /api/auth/google` with `{"id_token":"…"}` → `200`, one of:
+
+- the **Login** session response, for a returning user or when the Google
+  email matches an existing account (it is linked; an unverified account with
+  that email loses its password, since Google proved who owns the address);
+- `{"status":"username_required","signup_token":"…"}` for a new user. Ask for a
+  username, then:
+
+`POST /api/auth/google/complete` with `{"signup_token":"…","name":"alice"}` →
+`200` session. The signup token lasts 15 minutes and works once. `400` bad
+username, `409` username taken, `401` expired/used token (start again).
+
+Invalid tokens and Google accounts with an unverified email return `401`.
 
 ### Refresh
 
@@ -139,6 +185,19 @@ Request:
 Success: `200`, the updated user object (without tokens). The old password
 must match; changing the password revokes all refresh tokens. `400` invalid
 new password, `401` wrong old password, `404` user not found.
+
+### Delete account
+
+`DELETE /api/users/me` — authenticated. Body `{"password":"…"}`, or for an
+account without a password `{"google_id_token":"<fresh token for the same Google account>"}`.
+→ `204`. Wrong or missing confirmation is `401`.
+
+Deletion is immediate and permanent: friendships, requests, memberships and
+sessions go; messages the user sent stay in their chats without an author
+(`FromID` becomes the zero UUID). For each group they led, the member who
+joined earliest becomes leader; groups with no one else left are deleted.
+Their live WebSocket is closed. Google Play requires apps with accounts to
+offer this.
 
 ### Search users
 

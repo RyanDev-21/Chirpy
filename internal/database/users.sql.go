@@ -16,13 +16,13 @@ import (
 const createUser = `-- name: CreateUser :one
 INSERT INTO users(id, name, created_at, updated_at, email, password)
 VALUES (gen_random_uuid(), $1, NOW(), NOW(), $2, $3)
-RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name
+RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at
 `
 
 type CreateUserParams struct {
 	Name     string
 	Email    string
-	Password string
+	Password pgtype.Text
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
@@ -36,6 +36,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Password,
 		&i.IsChirpyRed,
 		&i.Name,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
 }
@@ -50,7 +51,7 @@ func (q *Queries) DeleteUser(ctx context.Context) error {
 }
 
 const getUserInfoByEmail = `-- name: GetUserInfoByEmail :one
-SELECT id, created_at, updated_at, email, password, is_chirpy_red, name FROM users WHERE email = $1
+SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, error) {
@@ -64,12 +65,13 @@ func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, e
 		&i.Password,
 		&i.IsChirpyRed,
 		&i.Name,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
 }
 
 const getUserInfoByID = `-- name: GetUserInfoByID :one
-SELECT id, created_at, updated_at, email, password, is_chirpy_red, name FROM users WHERE id = $1
+SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, error) {
@@ -83,6 +85,7 @@ func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, erro
 		&i.Password,
 		&i.IsChirpyRed,
 		&i.Name,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
 }
@@ -138,7 +141,7 @@ UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2
 `
 
 type UpdatePasswordParams struct {
-	Password string
+	Password pgtype.Text
 	ID       uuid.UUID
 }
 

@@ -21,6 +21,8 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
 	IsRED     bool      `json:"is_chirpy_red"`
+	// Verified is true once the email address has been confirmed.
+	Verified bool `json:"email_verified"`
 }
 
 // PublicUser is what other users may see (no email).

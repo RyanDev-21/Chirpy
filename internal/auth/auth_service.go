@@ -50,6 +50,12 @@ func (s *authService) Login(ctx context.Context, email, password string) (access
 	if err != nil {
 		return "", "", nil, fmt.Errorf("load user: %w", err)
 	}
+	if hashPassword == "" {
+		// Google-only account: no password sign-in until one is set via reset
+		secure.BurnPasswordCheck(password)
+		s.logger.WarnContext(ctx, "login failed", "reason", "no_password", "user_id", dbUser.ID)
+		return "", "", nil, ErrInvalidCredentials
+	}
 	valid, err := secure.CheckPassword(password, hashPassword)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("check password: %w", err)
@@ -58,7 +64,12 @@ func (s *authService) Login(ctx context.Context, email, password string) (access
 		s.logger.WarnContext(ctx, "login failed", "reason", "wrong_password", "user_id", dbUser.ID)
 		return "", "", nil, ErrInvalidCredentials
 	}
-	accessToken, refreshToken, err = s.generateTokens(ctx, dbUser.ID)
+	// only revealed to someone who knows the password
+	if !dbUser.Verified {
+		s.logger.InfoContext(ctx, "login refused", "reason", "email_not_verified", "user_id", dbUser.ID)
+		return "", "", nil, ErrEmailNotVerified
+	}
+	accessToken, refreshToken, err = s.issue(ctx, dbUser.ID)
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -88,7 +99,7 @@ func (s *authService) Refresh(ctx context.Context, token string) (string, string
 	if err := s.authRepo.RevokeToken(ctx, token); err != nil {
 		return "", "", fmt.Errorf("revoke old refresh token: %w", err)
 	}
-	return s.generateTokens(ctx, rt.UserID)
+	return s.issue(ctx, rt.UserID)
 }
 
 const (
@@ -96,7 +107,7 @@ const (
 	refreshTokenTTL = 30 * 24 * time.Hour
 )
 
-func (s *authService) generateTokens(ctx context.Context, userID uuid.UUID) (string, string, error) {
+func (s *authService) issue(ctx context.Context, userID uuid.UUID) (string, string, error) {
 	accessToken, err := secure.MakeJWT(userID, s.secret, accessTokenTTL)
 	if err != nil {
 		return "", "", fmt.Errorf("make access token: %w", err)

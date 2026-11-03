@@ -96,6 +96,16 @@ func (h *Hub) Run() {
 	}
 }
 
+// Disconnect closes userID's live connection, if any (e.g. account deleted).
+func (h *Hub) Disconnect(userID uuid.UUID) {
+	h.mu.RLock()
+	c, ok := h.clients[userID]
+	h.mu.RUnlock()
+	if ok {
+		h.remove(c)
+	}
+}
+
 // remove drops client if it is still the registered connection for its user.
 func (h *Hub) remove(client *Client) {
 	h.mu.Lock()

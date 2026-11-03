@@ -52,10 +52,19 @@ func ValidatePassword(p string) error {
 	return nil
 }
 
-func validateRegister(name, email, password string) error {
+// ValidateName enforces the username rules (3-25 characters, no spaces).
+func ValidateName(name string) error {
+	name = strings.TrimSpace(name)
 	n := utf8.RuneCountInString(name)
 	if n < minNameLen || n > maxNameLen || strings.ContainsAny(name, " \t\n") {
 		return ErrInvalidInput
+	}
+	return nil
+}
+
+func validateRegister(name, email, password string) error {
+	if err := ValidateName(name); err != nil {
+		return err
 	}
 	if len(email) > maxEmailLen {
 		return ErrInvalidInput

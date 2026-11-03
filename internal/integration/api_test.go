@@ -89,7 +89,13 @@ func TestAuthLifecycle(t *testing.T) {
 	newPassword := password + "2"
 	alice := e.signup("alice")
 
-	e.expect(e.do("POST", "/api/users", "", map[string]string{"name": "alice2", "email": alice.email, "password": password}), 409)
+	// a taken email gets the same answer as a new one (no account discovery);
+	// the owner is emailed instead
+	before := e.mail.Count(alice.email)
+	e.expect(e.do("POST", "/api/users", "", map[string]string{"name": "alice2", "email": alice.email, "password": password}), 202)
+	if e.mail.Count(alice.email) != before+1 {
+		t.Fatal("the existing owner should get a notice email")
+	}
 	e.expect(e.do("POST", "/api/users", "", map[string]string{"name": "alice", "email": "other@example.io", "password": password}), 409)
 
 	// unknown email and wrong password look the same
@@ -281,10 +287,7 @@ func TestUserConfigPersists(t *testing.T) {
 func TestLoginRateLimit(t *testing.T) {
 	e := newEnv(t)
 	body := map[string]string{"email": "x@example.io", "password": "wrong-" + password}
-	for range 10 {
-		e.expect(e.do("POST", "/api/login", "", body), 401)
-	}
-	e.expect(e.do("POST", "/api/login", "", body), 429)
+	e.assertLimited(10, func(int) int { return e.do("POST", "/api/login", "", body).code })
 }
 
 func TestConcurrentJoinsRespectCapacity(t *testing.T) {
@@ -383,7 +386,8 @@ func TestReplyMustBeInSameChat(t *testing.T) {
 
 func TestSpoofedForwardedForDoesNotBypassRateLimit(t *testing.T) {
 	e := newEnv(t)
-	for i := range 11 {
+	// a different spoofed header on every request must not reset the budget
+	e.assertLimited(10, func(i int) int {
 		req, _ := http.NewRequest("POST", e.srv.URL+"/api/login", strings.NewReader(`{"email":"x@example.io","password":"nope"}`))
 		req.Header.Set("X-Forwarded-For", fmt.Sprintf("10.0.0.%d", i))
 		res, err := http.DefaultClient.Do(req)
@@ -391,10 +395,8 @@ func TestSpoofedForwardedForDoesNotBypassRateLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 		res.Body.Close()
-		if i == 10 && res.StatusCode != http.StatusTooManyRequests {
-			t.Fatalf("request %d with a spoofed IP got %d, want 429", i+1, res.StatusCode)
-		}
-	}
+		return res.StatusCode
+	})
 }
 
 func TestMeEndpoint(t *testing.T) {

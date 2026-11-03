@@ -17,27 +17,6 @@ func NewUserHandler(svc UserService) *UserHandler {
 	return &UserHandler{svc: svc}
 }
 
-func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
-	var p DefaultUsersParameters
-	if err := httpx.Decode(w, r, &p); err != nil {
-		httpx.Error(w, http.StatusBadRequest, "invalid params")
-		return
-	}
-	user, err := h.svc.Register(r.Context(), p.Name, p.Email, p.Password)
-	switch {
-	case err == nil:
-		httpx.JSON(w, http.StatusCreated, user)
-	case errors.Is(err, ErrInvalidInput):
-		httpx.Error(w, http.StatusBadRequest, "name must be 3-25 characters without spaces, email must be valid, and password 8-128 characters with one of @$!%*?&")
-	case errors.Is(err, ErrDuplicateEmail):
-		httpx.Error(w, http.StatusConflict, "the user already exists")
-	case errors.Is(err, ErrDuplicateName):
-		httpx.Error(w, http.StatusConflict, "the user name already exists")
-	default:
-		httpx.ServerError(w, r, err)
-	}
-}
-
 func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	userID, err := reqctx.User(r.Context())
 	if err != nil {

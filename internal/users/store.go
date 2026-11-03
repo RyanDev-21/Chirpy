@@ -28,6 +28,7 @@ type Store interface {
 	SetNames(ctx context.Context, users ...PublicUser) error
 	Config(ctx context.Context, id uuid.UUID) ([]ElementCustom, bool, error)
 	SetConfig(ctx context.Context, id uuid.UUID, list []ElementCustom) error
+	Forget(ctx context.Context, id uuid.UUID) error
 }
 
 type redisStore struct {
@@ -68,4 +69,9 @@ func (s *redisStore) Config(ctx context.Context, id uuid.UUID) ([]ElementCustom,
 
 func (s *redisStore) SetConfig(ctx context.Context, id uuid.UUID, list []ElementCustom) error {
 	return redisx.SetJSON(ctx, s.rdb, configKey(id), list, configTTL)
+}
+
+// Forget drops everything cached about a user (after account deletion).
+func (s *redisStore) Forget(ctx context.Context, id uuid.UUID) error {
+	return s.rdb.Del(ctx, nameKey(id), configKey(id)).Err()
 }

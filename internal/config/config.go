@@ -47,6 +47,15 @@ type Config struct {
 
 	GeminiAPIKey string
 
+	// ResendAPIKey enables email (verification and reset codes). Without it
+	// emails are printed to the log on PLATFORM=dev and refused elsewhere.
+	ResendAPIKey string
+	MailFrom     string
+	// GoogleClientIDs are the OAuth client IDs Google ID tokens may be
+	// issued to. For Android sign-in this is the *Web* client ID the app
+	// passes as serverClientId. Empty disables Google sign-in.
+	GoogleClientIDs []string
+
 	TLSCertFile string // empty: serve plain HTTP (e.g. behind a TLS proxy)
 	TLSKeyFile  string
 
@@ -74,6 +83,9 @@ func (c Config) Warnings() []string {
 	if u, err := url.Parse(c.DatabaseURL); err == nil && u.Query().Get("sslmode") != "verify-full" {
 		w = append(w, "DB_URL does not use sslmode=verify-full: the database certificate is not verified")
 	}
+	if c.ResendAPIKey == "" {
+		w = append(w, "RESEND_API_KEY is not set: sign-up and password reset cannot send codes")
+	}
 	if c.RedisURL != "" && !strings.HasPrefix(c.RedisURL, "rediss://") {
 		w = append(w, "REDIS_URL is not rediss://: Redis traffic is not encrypted")
 	}
@@ -96,6 +108,9 @@ func Load() (Config, error) {
 		RedisPass:       os.Getenv("REDIS_PASS"),
 		JWTSecret:       os.Getenv("SECRET"),
 		GeminiAPIKey:    firstNonEmpty(os.Getenv("GEMINI_API_KEY"), os.Getenv("GENMINI_API_KEY")),
+		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
+		MailFrom:        getenv("MAIL_FROM", "Chirpy <no-reply@mail.ponypigeon.com>"),
+		GoogleClientIDs: splitList(os.Getenv("GOOGLE_CLIENT_IDS")),
 		TLSCertFile:     os.Getenv("TLS_CERT_FILE"),
 		TLSKeyFile:      os.Getenv("TLS_KEY_FILE"),
 		CORSOrigins:     splitList(getenv("CORS_ALLOWED_ORIGINS", "")),

@@ -18,6 +18,7 @@ import (
 	"RyanDev-21.com/Chirpy/internal/database"
 	"RyanDev-21.com/Chirpy/internal/friends"
 	"RyanDev-21.com/Chirpy/internal/groups"
+	"RyanDev-21.com/Chirpy/internal/platform/mail"
 	"RyanDev-21.com/Chirpy/internal/platform/migrate"
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
 	"RyanDev-21.com/Chirpy/internal/platform/redisx"
@@ -53,6 +54,7 @@ type handlers struct {
 	users   *users.UserHandler
 	friends *friends.Handler
 	auth    *authsvc.AuthHandler
+	account *authsvc.AccountHandler
 	chat    *chat.ChatHandler
 	groups  *groups.GroupHandler
 	ai      *ai.Handler // nil when no Gemini key is configured
@@ -60,7 +62,27 @@ type handlers struct {
 }
 
 // New connects to Postgres and Redis and builds all services.
-func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
+// Option overrides a dependency; used by tests.
+type Option func(*options)
+
+type options struct {
+	mailer mail.Sender
+	google authsvc.GoogleVerifier
+}
+
+// WithMailer replaces the email sender.
+func WithMailer(m mail.Sender) Option { return func(o *options) { o.mailer = m } }
+
+// WithGoogleVerifier replaces Google ID token verification.
+func WithGoogleVerifier(v authsvc.GoogleVerifier) Option {
+	return func(o *options) { o.google = v }
+}
+
+func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Option) (*App, error) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
 	if cfg.MigrateOnStart {
 		if err := migrate.Up(ctx, cfg.DatabaseURL, logger); err != nil {
 			return nil, err
@@ -127,11 +149,30 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	a.chat = chat.NewChatService(chat.NewChatRepo(queries), chat.NewCache(rdb), a.groups, a.friends, a.hub, a.queue, logger)
 	a.hub.SetPolicy(a.chat)
 	a.auth = authsvc.NewAuthService(users.NewUserRepo(queries), authsvc.NewAuthRepo(queries), cfg.JWTSecret, logger)
+	sender := o.mailer
+	switch {
+	case sender != nil:
+	case cfg.ResendAPIKey != "":
+		sender = mail.NewResend(cfg.ResendAPIKey, cfg.MailFrom)
+	case cfg.IsDev():
+		sender = mail.Log{Logger: logger}
+	default:
+		sender = mail.Disabled{}
+	}
+	google := o.google
+	if google == nil {
+		google = authsvc.NewGoogleVerifier(cfg.GoogleClientIDs)
+	}
+	friendStore, groupStore, userStore := friends.NewStore(rdb), groups.NewStore(rdb), users.NewStore(rdb)
+	accounts := authsvc.NewAccountService(a.users, users.NewUserRepo(queries), authsvc.NewAccountRepo(db), sender,
+		a.auth, google, &cacheCleaner{friends: friendStore, groups: groupStore, users: userStore, hub: a.hub, logger: logger},
+		cfg.JWTSecret, logger)
 
 	a.handlers = handlers{
 		users:   users.NewUserHandler(a.users),
 		friends: friends.NewHandler(a.friends),
 		auth:    authsvc.NewAuthHandler(a.auth),
+		account: authsvc.NewAccountHandler(accounts),
 		chat:    chat.NewChatHandler(a.chat, a.hub, ws.Upgrader(cfg.CORSOrigins), logger),
 		groups:  groups.NewGroupHandler(a.groups),
 		admin:   &adminHandler{queries: queries},
