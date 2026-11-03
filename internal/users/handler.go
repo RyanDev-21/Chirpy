@@ -29,9 +29,9 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		httpx.JSON(w, http.StatusCreated, user)
 	case errors.Is(err, ErrInvalidInput):
 		httpx.Error(w, http.StatusBadRequest, "name must be 3-25 characters without spaces, email must be valid, and password 8-128 characters with one of @$!%*?&")
-	case errors.Is(err, DuplicateKeyErr):
+	case errors.Is(err, ErrDuplicateEmail):
 		httpx.Error(w, http.StatusConflict, "the user already exists")
-	case errors.Is(err, DuplicateNameKeyErr):
+	case errors.Is(err, ErrDuplicateName):
 		httpx.Error(w, http.StatusConflict, "the user name already exists")
 	default:
 		httpx.Error(w, http.StatusInternalServerError, "something went wrong")
@@ -57,7 +57,7 @@ func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "password must be 8-128 characters with at least one of @$!%*?&")
 	case errors.Is(err, secure.ErrPassNotMatch):
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
-	case errors.Is(err, NoUserFoundErr):
+	case errors.Is(err, ErrUserNotFound):
 		httpx.Error(w, http.StatusNotFound, "no user found")
 	default:
 		httpx.Error(w, http.StatusInternalServerError, "internal server error")

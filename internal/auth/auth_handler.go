@@ -34,8 +34,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	accessToken, refreshToken, user, err := h.authService.Login(r.Context(), params.Email, params.Password)
 	if err != nil {
-		if err == InvalidCredentailErr {
-			httpx.Error(w, 401, InvalidCredentailErr.Error())
+		if err == ErrInvalidCredentials {
+			httpx.Error(w, 401, ErrInvalidCredentials.Error())
 			return
 		}
 		log.Printf("failed to get the tokens :%s", err)

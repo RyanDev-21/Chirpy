@@ -8,10 +8,10 @@ import (
 )
 
 var (
-	NoUserFoundErr      = errors.New("no user found")
-	DuplicateKeyErr     = errors.New("duplicate error")
-	DuplicateNameKeyErr = errors.New("duplicate name error")
-	ErrInvalidInput     = errors.New("invalid input")
+	ErrUserNotFound   = errors.New("no user found")
+	ErrDuplicateEmail = errors.New("duplicate error")
+	ErrDuplicateName  = errors.New("duplicate name error")
+	ErrInvalidInput   = errors.New("invalid input")
 )
 
 // TopicSaveConfig persists a user's UI config.

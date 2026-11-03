@@ -102,7 +102,7 @@ func (n fakeNames) GetName(_ context.Context, id uuid.UUID) (string, error) {
 	if name, ok := n[id]; ok {
 		return name, nil
 	}
-	return "", users.NoUserFoundErr
+	return "", users.ErrUserNotFound
 }
 
 type pushed struct {

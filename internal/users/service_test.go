@@ -29,7 +29,7 @@ func newFakeRepo() *fakeRepo {
 func (f *fakeRepo) Create(_ context.Context, in CreateUserInput) (*User, error) {
 	for _, u := range f.users {
 		if u.Email == in.Email {
-			return nil, DuplicateKeyErr
+			return nil, ErrDuplicateEmail
 		}
 	}
 	u := &User{ID: uuid.New(), Name: in.Name, Email: in.Email}
@@ -37,13 +37,13 @@ func (f *fakeRepo) Create(_ context.Context, in CreateUserInput) (*User, error) 
 	return u, nil
 }
 func (f *fakeRepo) GetUserByEmail(context.Context, string) (*User, string, error) {
-	return nil, "", NoUserFoundErr
+	return nil, "", ErrUserNotFound
 }
 func (f *fakeRepo) GetUserByID(_ context.Context, id uuid.UUID) (*User, string, error) {
 	f.lookups++
 	u, ok := f.users[id]
 	if !ok {
-		return nil, "", NoUserFoundErr
+		return nil, "", ErrUserNotFound
 	}
 	return u, f.hashes[id], nil
 }
@@ -110,7 +110,7 @@ func TestGetNameIsCached(t *testing.T) {
 	if repo.lookups != 1 {
 		t.Fatalf("postgres hit %d times, want 1", repo.lookups)
 	}
-	if _, err := svc.GetName(ctx, uuid.New()); !errors.Is(err, NoUserFoundErr) {
+	if _, err := svc.GetName(ctx, uuid.New()); !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("unknown user: %v", err)
 	}
 }

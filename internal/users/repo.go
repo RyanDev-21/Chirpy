@@ -51,9 +51,9 @@ func (r *userRepo) Create(ctx context.Context, input CreateUserInput) (*User, er
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			if pgErr.ConstraintName == "users_name_key" {
-				return nil, DuplicateNameKeyErr
+				return nil, ErrDuplicateName
 			}
-			return nil, DuplicateKeyErr
+			return nil, ErrDuplicateEmail
 		}
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (r *userRepo) GetUserByEmail(ctx context.Context, email string) (*User, str
 	u, err := r.queries.GetUserInfoByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, "", NoUserFoundErr
+			return nil, "", ErrUserNotFound
 		}
 		return nil, "", err
 	}
@@ -77,7 +77,7 @@ func (r *userRepo) GetUserByID(ctx context.Context, id uuid.UUID) (*User, string
 	u, err := r.queries.GetUserInfoByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, "", NoUserFoundErr
+			return nil, "", ErrUserNotFound
 		}
 		return nil, "", err
 	}

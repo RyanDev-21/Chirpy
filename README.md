@@ -30,14 +30,19 @@ sql/queries           sqlc queries
 
 ## How data flows
 
-Writes update Redis synchronously and publish a job; a worker persists it to
-Postgres. Reads are served from Redis, which is filled from Postgres on first
-use, so Redis can be flushed at any time.
+Postgres is the source of truth. Messages, friend requests and group
+membership are written to Postgres before the API responds (group joins
+lock the group row so capacity cannot be exceeded). Redis then caches
+reads: a write invalidates the affected entries, and the next read reloads
+them from Postgres. A version counter stops a slow read from caching data
+that a concurrent write already replaced. Redis can be flushed at any time.
 
-**Queue** – one Redis stream per topic (`jobs:{topic}`) with a consumer group.
-Failed jobs are retried with backoff through `jobs:delayed`; permanent
-failures and exhausted retries land in `jobs:dead` with the error. Jobs left
-by a crashed instance are reclaimed.
+**Queue**: used only for writes where a short delay is harmless (seen
+receipts, UI config) and for future side effects. One Redis stream per topic
+(`jobs:{topic}`), one reader per topic feeding a worker pool, on its own
+connection pool. Failed jobs retry with backoff through `jobs:delayed`;
+permanent failures and exhausted retries land in `jobs:dead`. Jobs left by a
+crashed instance are reclaimed.
 
 **Rate limits** – sliding window in Redis per route policy and caller (user id,
 or IP when anonymous). See `internal/app/routes.go`.

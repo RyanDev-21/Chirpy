@@ -50,7 +50,7 @@ func (s *service) Send(ctx context.Context, fromID, toID uuid.UUID) (uuid.UUID, 
 		return uuid.Nil, ErrSelfRequest
 	}
 	if _, err := s.names.GetName(ctx, toID); err != nil {
-		if errors.Is(err, users.NoUserFoundErr) {
+		if errors.Is(err, users.ErrUserNotFound) {
 			return uuid.Nil, ErrUnknownUser
 		}
 		return uuid.Nil, err

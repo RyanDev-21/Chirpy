@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 )
 
-var InvalidCredentailErr = errors.New("invalid credentials")
+var ErrInvalidCredentials = errors.New("invalid credentials")
 
 type AuthService interface {
 	Login(ctx context.Context, email, password string) (accessToken, refreshToken string, user *users.User, err error)
@@ -41,11 +41,11 @@ func (s *authService) Login(ctx context.Context, email, password string) (access
 	reqID := reqctx.RequestID(ctx)
 	dbUser, hashPassword, err := s.userRepo.GetUserByEmail(ctx, email)
 	if err != nil {
-		if errors.Is(err, users.NoUserFoundErr) {
+		if errors.Is(err, users.ErrUserNotFound) {
 			// same response and timing as a wrong password
 			secure.BurnPasswordCheck(password)
 			s.logger.Info("login for unknown email", "reqID", reqID)
-			return "", "", nil, InvalidCredentailErr
+			return "", "", nil, ErrInvalidCredentials
 		}
 		s.logger.Error("failed to hit the db", "reqID", reqID, "error", err)
 		return "", "", nil, err
@@ -58,7 +58,7 @@ func (s *authService) Login(ctx context.Context, email, password string) (access
 	}
 	if !valid {
 		s.logger.Info("the match password check failed", "reqID", reqID)
-		return "", "", nil, InvalidCredentailErr
+		return "", "", nil, ErrInvalidCredentials
 	}
 	accessToken, refreshToken, err = s.generateTokens(ctx, dbUser.ID)
 	if err != nil {

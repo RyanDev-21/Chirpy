@@ -36,10 +36,7 @@ func NewClient(hub *Hub, conn *websocket.Conn, send chan []byte, userID uuid.UUI
 	}
 }
 
-var (
-	newline = []byte{'\n'}
-	space   = []byte{' '}
-)
+var newline = []byte{'\n'}
 
 // read message from the connection
 // and Send the msg to the Broadcast channel
