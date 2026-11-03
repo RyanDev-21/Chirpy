@@ -22,21 +22,24 @@ VALUES(
 RETURNING *;
 
 -- name: GetMessagesForPrivate :many
-SELECT * FROM message WHERE from_id = $1 AND  to_id = $2 OR from_id = $2 AND to_id= $1;
+SELECT * FROM message
+WHERE (from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1)
+ORDER BY created_at ASC;
 
 -- name: GetMessagesForPrivateWithTime :many
-SELECT * FROM message WHERE (from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id= $1) AND created_at >$3; 
+SELECT * FROM message
+WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
+  AND created_at > $3
+ORDER BY created_at ASC;
 
 -- name: GetMessagesForPublic :many
-SELECT * FROM GroupMessage WHERE group_id = $1;
+SELECT * FROM GroupMessage WHERE group_id = $1 ORDER BY created_at ASC;
 
--- name: GetMessagesForAllPrivateChats :many
-SELECT * FROM message;
-
--- name: GetMessagesForAllPublicChats :many
-SELECT * FROM GroupMessage;
 
 -- name: AddLastSeenMessage :one
 INSERT INTO seen_messages(chat_id,message_id,seen_id)
-VALUES ($1,$2,$3) ON CONFLICT(seen_id) DO UPDATE SET message_id = $1 RETURNING *;
+VALUES ($1,$2,$3)
+ON CONFLICT (chat_id, seen_id)
+DO UPDATE SET message_id = EXCLUDED.message_id, updated_time = NOW()
+RETURNING *;
 

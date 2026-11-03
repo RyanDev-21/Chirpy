@@ -38,10 +38,6 @@ func (h *authHandler) Login(w http.ResponseWriter, r *http.Request) {
 			response.Error(w, 401, InvalidCredentailErr.Error())
 			return
 		}
-		if err == NoUserFoundErr {
-			response.Error(w, 404, "no user found")
-			return
-		}
 		log.Printf("failed to get the tokens :%s", err)
 		response.Error(w, 500, "somthing went wrong")
 		return
@@ -80,7 +76,7 @@ func (h *authHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 func (h *authHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-	
+
 		response.Error(w, 401, "unauthorized")
 		return
 	}

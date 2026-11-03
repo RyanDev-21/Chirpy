@@ -29,7 +29,7 @@ type RedisCacheImpl interface {
 	RPush(ctx context.Context, key string, val interface{}) error
 	LRange(ctx context.Context, key string, start, stop int64) ([]string, error)
 	XAdd(ctx context.Context, stream string, values ...interface{}) error
-	XRangeN(ctx context.Context, key string) ([]redis.XMessage, error)
+	XRevRangeN(ctx context.Context, key string) ([]redis.XMessage, error)
 }
 
 func NewRedisClient(addr, userName, password string) (redis.UniversalClient, error) {
@@ -42,7 +42,7 @@ func NewRedisClient(addr, userName, password string) (redis.UniversalClient, err
 
 	context := context.Background()
 	_, err := rdb.Ping(context).Result()
-	if err == redis.Nil || err != nil {
+	if err != nil {
 		return nil, err
 	}
 	if err = redisotel.InstrumentTracing(rdb); err != nil {
@@ -57,9 +57,9 @@ func NewRedisCacheImpl(rdb redis.UniversalClient) RedisCacheImpl {
 	}
 }
 
-func (rc *RedisCache) XRangeN(ctx context.Context, key string) ([]redis.XMessage, error) {
-	cmd := rc.redis.XRangeN(ctx, key, "-", "+", 50)
-	return cmd.Result()
+// XRevRangeN returns the newest 50 entries of a stream, newest first.
+func (rc *RedisCache) XRevRangeN(ctx context.Context, key string) ([]redis.XMessage, error) {
+	return rc.redis.XRevRangeN(ctx, key, "+", "-", 50).Result()
 }
 
 func (rc *RedisCache) XAdd(ctx context.Context, key string, values ...interface{}) error {
@@ -126,7 +126,7 @@ func (rc *RedisCache) HGetAll(ctx context.Context, key string) (map[string]strin
 }
 
 func (rc *RedisCache) HSet(ctx context.Context, key string, values ...interface{}) error {
-	return rc.redis.HSet(ctx, key, values).Err()
+	return rc.redis.HSet(ctx, key, values...).Err()
 }
 
 func (rc *RedisCache) HDel(ctx context.Context, key, field string) error {

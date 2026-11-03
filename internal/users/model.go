@@ -19,11 +19,14 @@ type PasswordUpdateStruct struct {
 	NewPass string `json:"new_password"`
 }
 
+// queue topics owned by the users package
 const (
-	DeleteFriReq     = "deleteFriReq"
-	CancelReq        = "cancelReq"
-	ConfirmFriendReq = "confirmFriReq"
-	SendRequest      = "sendRequest"
+	DeleteFriReq         = "friend.request.delete"
+	CancelReq            = "friend.request.cancel"
+	ConfirmFriendReq     = "friend.request.confirm"
+	SendRequest          = "friend.request.send"
+	TopicUpdateUserCache = "user.cache.update"
+	TopicSaveConfig      = "user.config.save"
 )
 
 type User struct {

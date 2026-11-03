@@ -38,7 +38,10 @@ SELECT id,current_member,name,max_member FROM chat_groups;
 SELECT member_id FROM member_table WHERE group_id = $1;
 
 -- name: UpdateGroupCurrentMemberByID :one
-UPDATE  chat_groups SET current_member = (SELECT COUNT(*)FROM member_table WHERE group_id = $1)RETURNING *;
+UPDATE chat_groups
+SET current_member = (SELECT COUNT(*) FROM member_table WHERE group_id = $1), updated_at = NOW()
+WHERE id = $1
+RETURNING *;
 
 
 -- name: AddMemberList :copyfrom

@@ -23,9 +23,9 @@ func GetUUIDType(val any) *pgtype.UUID {
 	}
 }
 
-func GetTimeStampType(val time.Time)pgtype.Timestamp{
+func GetTimeStampType(val time.Time) pgtype.Timestamp {
 	return pgtype.Timestamp{
-		Time: val,
+		Time:  val,
 		Valid: true,
 	}
 }

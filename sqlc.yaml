@@ -22,10 +22,6 @@ sql:
             go_type: "time.Time"
           - column: "users.updated_at"
             go_type: "time.Time"
-          - column: "chirp.created_at"
-            go_type: "time.Time"
-          - column: "chirp.updated_at"
-            go_type: "time.Time"
           - column: "user_relationships.updated_at"
             go_type: "time.Time"
           

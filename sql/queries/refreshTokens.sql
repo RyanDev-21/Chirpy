@@ -11,8 +11,11 @@ VALUES(
 RETURNING *;
 
 -- name: GetRefreshToken :one
-SELECT * FROM refresh_tokens WHERE token = $1;
+SELECT * FROM refresh_tokens WHERE token = $1 AND revoked_at IS NULL;
 
 -- name: RevokeRefreshToken :exec
-UPDATE refresh_tokens SET revoked_at = NOW(),updated_at = NOW() WHERE token = $1;
+UPDATE refresh_tokens SET revoked_at = NOW(),updated_at = NOW() WHERE token = $1 AND revoked_at IS NULL;
+
+-- name: RevokeAllUserRefreshTokens :exec
+UPDATE refresh_tokens SET revoked_at = NOW(), updated_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL;
 

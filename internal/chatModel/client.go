@@ -1,7 +1,6 @@
 package chatmodel
 
 import (
-	//	"bytes"
 	"encoding/json"
 	"log"
 	"time"
@@ -18,7 +17,7 @@ const (
 
 	pingPeriod = (pongWait * 9) / 10
 
-	maxMessageSize = 512
+	maxMessageSize = 4096
 )
 
 type Client struct {
@@ -71,7 +70,6 @@ func (c *Client) ReadPump() {
 		if err := json.Unmarshal(rawMsg, &eventMap); err != nil {
 			continue
 		}
-		log.Printf("eventMap value :%v", eventMap)
 
 		switch eventMap.Event {
 		case "Typing":
@@ -89,100 +87,22 @@ func (c *Client) ReadPump() {
 			}
 		case "Seen":
 			var p InCommingEventForSeen
-			if err:= json.Unmarshal(eventMap.Payload,&p);err!=nil{
+			if err := json.Unmarshal(eventMap.Payload, &p); err != nil {
 				log.Printf("not valid json")
 				continue
 			}
-			c.Hub.Broadcast<-Event{
+			c.Hub.Broadcast <- Event{
 				Event: "Seen",
-				Payload:SeenEvent{
+				Payload: SeenEvent{
 					FromID: c.UserID.String(),
-					ToID: p.ToID,
-					MsgID: p.MsgID,	
+					ToID:   p.ToID,
+					MsgID:  p.MsgID,
 				},
 			}
-			
+
 		}
 	}
 }
-
-// 	switch eventMap.Event {
-// 	case "msg":
-// 		var p InCommingMessage
-// 		if err := json.Unmarshal(eventMap.Payload, &p); err != nil {
-// 			log.Print("not valid json")
-// 			continue
-// 		}
-// 		c.Hub.Broadcast <- Event{
-// 			Event:   "msg",
-// 			Payload: *convertIntoMessageStruct(p, c.UserID),
-// 		}
-// 		log.Printf("value for payload :%v", p)
-//
-// 	case "AcceptFri":
-// 		var p InFriEvent
-// 		if err := json.Unmarshal(eventMap.Payload, &p); err != nil {
-// 			log.Print("not valid json")
-// 			continue
-// 		}
-// 		c.Hub.Broadcast <- convertIntoFirEventStruct(c.UserID, p)
-// 		log.Printf("value for payload :%v", p)
-// 	case "DenyFri":
-// 		var p InFriEvent
-// 		if err := json.Unmarshal(eventMap.Payload, &p); err != nil {
-// 			log.Print("not valid json")
-// 			continue
-// 		}
-// 		c.Hub.Broadcast <- convertIntoFirEventStruct(c.UserID, p)
-// 		log.Printf("value for payload :%v", p)
-// 	default:
-// 		log.Printf("unsupported type of event")
-// 		continue
-// 	}
-// }
-//
-//have to rewrite this all
-// var msgMap map[string]interface{}
-// if err := json.Unmarshal(rawMsg, &msgMap); err != nil {
-// 	continue
-// }
-//
-// // Check if it's an InCommingEvent (has event, no type)
-// if _, hasEvent := msgMap["event"]; hasEvent {
-// 	if _, hasType := msgMap["type"]; !hasType {
-// 		var inEvent InCommingEvent
-// 		json.Unmarshal(rawMsg, &inEvent)
-// 		c.Hub.Broadcast <- Event{
-// 			FromID: c.UserID.String(),
-// 			ToID:   inEvent.ToID,
-// 			Event:  inEvent.Event,
-// 		}
-// 		continue
-// 	}
-// }
-//
-// // Otherwise treat as Message
-// var message InCommingMessage
-// json.Unmarshal(rawMsg, &message)
-// c.Hub.Broadcast <- *convertIntoInCommingStruct(message, c.UserID)
-
-// func convertIntoMessageStruct(msg InCommingMessage, userID uuid.UUID) *message {
-// 	return &message{
-// 		Content:  msg.Content,
-// 		ToID:     msg.ToID,
-// 		ParentID: msg.ParendID,
-// 		FromID:   userID.String(),
-// 		Type:     msg.Type,
-// 	}
-// }
-//
-// func convertIntoFirEventStruct(userID uuid.UUID, payload InFriEvent) *friEvent {
-// 	return &friEvent{
-// 		reqID:  payload.ReqID,
-// 		toID:   payload.ToID,
-// 		fromID: userID.String(),
-// 	}
-// }
 
 // read from the Send chanel and write it to the connection
 func (c *Client) WritePump() {

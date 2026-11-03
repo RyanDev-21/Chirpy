@@ -5,27 +5,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"sync/atomic"
 
 	"RyanDev-21.com/Chirpy/internal/database"
 	"RyanDev-21.com/Chirpy/pkg/response"
 )
-
-func (cfg *APIConfig) MiddlewareMetricsInc(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cfg.fileServerHits.Add(1)
-		fmt.Printf("server hits: %v\n", cfg.fileServerHits.Load())
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (cfg *APIConfig) ResetHandle(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusOK)
-	old := cfg.fileServerHits.Swap(0)
-	hits := cfg.fileServerHits.Load()
-	fmt.Fprintf(w, "Old Hits: %v , New Hits :%v", old, hits)
-}
 
 // need to refactor this guy move it to admin or smth
 func (cfg *APIConfig) UserResetHandle(w http.ResponseWriter, r *http.Request) {
@@ -50,11 +33,10 @@ func (cfg *APIConfig) UserResetHandle(w http.ResponseWriter, r *http.Request) {
 
 // maybe i could encapsulate it but
 type APIConfig struct {
-	fileServerHits atomic.Int32
-	Queries        *database.Queries
-	Platform       string
-	Secret         string
-	Logger         slog.Logger
+	Queries  *database.Queries
+	Platform string
+	Secret   string
+	Logger   slog.Logger
 }
 
 func InitApiConfig(Queries *database.Queries, Platform string, secret string) *APIConfig {

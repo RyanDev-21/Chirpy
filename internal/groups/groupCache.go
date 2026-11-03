@@ -2,7 +2,7 @@ package groups
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"log"
 	"slices"
 	"sync"
@@ -11,7 +11,6 @@ import (
 	"RyanDev-21.com/Chirpy/internal/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/lib/pq"
 )
 
 type CacheGroupInfo struct {
@@ -19,12 +18,13 @@ type CacheGroupInfo struct {
 	TotalMem int16
 	MaxMem   int16
 }
+
+// Cache is an in-process cache of group metadata and memberships.
+// All access goes through methods so the locks are always held.
 type Cache struct {
-	// in case this need concurrent read and write
+	mu          sync.RWMutex
 	GroupCache  map[uuid.UUID]*CacheGroupInfo
-	groupMuLock sync.Mutex
-	MemberCache map[uuid.UUID]*[]uuid.UUID
-	memMuLock   sync.Mutex
+	MemberCache map[uuid.UUID][]uuid.UUID
 	groupRepo   GroupRepo
 }
 
@@ -39,140 +39,159 @@ func FormatDbModel(dbModel *database.ChatGroup) *CacheGroupInfo {
 func NewGroupCache(groupRepo GroupRepo) *Cache {
 	return &Cache{
 		GroupCache:  make(map[uuid.UUID]*CacheGroupInfo, 1000),
-		MemberCache: make(map[uuid.UUID]*[]uuid.UUID, 1000),
+		MemberCache: make(map[uuid.UUID][]uuid.UUID, 1000),
 		groupRepo:   groupRepo,
 	}
 }
 
+// CheckNameFromGroup reports whether memID is a member of groupID.
 func (cache *Cache) CheckNameFromGroup(groupID uuid.UUID, memID uuid.UUID) bool {
-	cache.memMuLock.Lock()
-	defer cache.memMuLock.Unlock()
-	var list []uuid.UUID
-	if v, ok := cache.MemberCache[groupID]; ok {
-		list = *v
+	members, err := cache.GetFromMember(groupID)
+	if err != nil {
+		return false
 	}
-	return slices.Contains(list, memID)
+	return slices.Contains(members, memID)
 }
 
-// this will get all rows from the group and store it in the map NOTE:: need to fix the currentMember(total) value
-// NOTE:: pls remember to set up the load cache
 func (cache *Cache) Load() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	groupInfo, err := cache.groupRepo.getAllGroupInfo(ctx)
-	log.Printf("group info #%v#", groupInfo)
 	if err != nil {
 		return err
 	}
-
 	for _, v := range *groupInfo {
-		go func(id uuid.UUID) {
-			groupContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			groupMems, err := cache.groupRepo.getMemsByID(groupContext, id)
-			if err != nil {
-				log.Printf("failed to get the group member ids #%s#", err)
-				return
-			}
-			cache.memMuLock.Lock()
-			cache.MemberCache[v.ID] = groupMems
-			cache.memMuLock.Unlock()
-		}(v.ID)
-	}
-	for _, v := range *groupInfo {
-		cache.GroupCache[v.ID] = FormatDbModel(&database.ChatGroup{
-			CurrentMember: v.CurrentMember,
-			MaxMember:     v.MaxMember,
-			Name:          v.Name,
-		})
+		groupMems, err := cache.groupRepo.getMemsByID(ctx, v.ID)
+		if err != nil {
+			log.Printf("failed to get the group member ids: %s", err)
+			continue
+		}
+		cache.mu.Lock()
+		cache.GroupCache[v.ID] = &CacheGroupInfo{Name: v.Name, TotalMem: v.CurrentMember, MaxMem: v.MaxMember}
+		cache.MemberCache[v.ID] = *groupMems
+		cache.mu.Unlock()
 	}
 	return nil
 }
 
-// this will give the group chat metadata needed for the cache
+// GetFromGroup returns a copy of the group metadata, loading it from the db on a miss.
 func (cache *Cache) GetFromGroup(groupID uuid.UUID) (*CacheGroupInfo, error) {
-	var info *CacheGroupInfo
-	if v, ok := cache.GroupCache[groupID]; !ok {
-		context, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-		defer cancel()
-		groupInfo, err := cache.groupRepo.getGroupInfoByID(context, groupID)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				return nil, ErrNotFoundGroup
-			}
-			return nil, err
-		}
-		formattedInfo := FormatDbModel(groupInfo)
-		cache.GroupCache[groupInfo.ID] = formattedInfo
-		return formattedInfo, nil
-	} else {
-		info = v
+	cache.mu.RLock()
+	v, ok := cache.GroupCache[groupID]
+	cache.mu.RUnlock()
+	if ok {
+		cp := *v
+		return &cp, nil
 	}
-	return info, nil
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	groupInfo, err := cache.groupRepo.getGroupInfoByID(ctx, groupID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFoundGroup
+		}
+		return nil, err
+	}
+	info := FormatDbModel(groupInfo)
+	cache.mu.Lock()
+	cache.GroupCache[groupID] = info
+	cache.mu.Unlock()
+	cp := *info
+	return &cp, nil
 }
 
-// func (cache *Cache)GetMemListFromGroup(groupID uuid.UUID)*[]uuid.UUID{
-// 	if v,ok:=cache.MemberCache[groupID]
-// }
-
-// this will give the memberids list in the group
-func (cache *Cache) GetFromMember(groupID uuid.UUID) (*[]uuid.UUID, error) {
-	var info *[]uuid.UUID
-	cache.memMuLock.Lock()
-	defer cache.memMuLock.Unlock()
-	if v, ok := cache.MemberCache[groupID]; !ok { // cache miss
-		context, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-		defer cancel()
-		groupMems, err := cache.groupRepo.getMemsByID(context, groupID)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				return nil, ErrNotFoundGroup
-			}
-			return nil, err
-		}
-		// udpate the cache with the list from db
-		*cache.MemberCache[groupID] = *groupMems
-		return groupMems, nil
-	} else {
-		info = v // cache hit
+// GetFromMember returns a copy of the member list, loading it from the db on a miss.
+func (cache *Cache) GetFromMember(groupID uuid.UUID) ([]uuid.UUID, error) {
+	cache.mu.RLock()
+	v, ok := cache.MemberCache[groupID]
+	cache.mu.RUnlock()
+	if ok {
+		return slices.Clone(v), nil
 	}
-	return info, nil
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	groupMems, err := cache.groupRepo.getMemsByID(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	cache.mu.Lock()
+	cache.MemberCache[groupID] = *groupMems
+	cache.mu.Unlock()
+	return slices.Clone(*groupMems), nil
 }
 
-//decided not to do this and let the db handle it (eg.on conflict do nothing)
-// func (cache *Cache)CheckMemberFromGroup(groupID,memID uuid.UUID)(bool,error){
-// 	cache.memMuLock.Lock()
-// 	defer cache.memMuLock.Unlock()
-//
-// }
+// AddGroup stores a freshly created group.
+func (cache *Cache) AddGroup(groupID uuid.UUID, info CacheGroupInfo, members []uuid.UUID) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	cache.GroupCache[groupID] = &info
+	cache.MemberCache[groupID] = slices.Clone(members)
+}
 
+// AddMember adds userID to the group, enforcing capacity and uniqueness atomically.
+func (cache *Cache) AddMember(groupID, userID uuid.UUID) error {
+	if _, err := cache.GetFromGroup(groupID); err != nil {
+		return err
+	}
+	if _, err := cache.GetFromMember(groupID); err != nil {
+		return err
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	info := cache.GroupCache[groupID]
+	members := cache.MemberCache[groupID]
+	if slices.Contains(members, userID) {
+		return ErrAlreadyMember
+	}
+	if info.TotalMem >= info.MaxMem {
+		return ErrGroupFull
+	}
+	cache.MemberCache[groupID] = append(members, userID)
+	info.TotalMem++
+	return nil
+}
+
+// RemoveMember removes userID from the group.
+func (cache *Cache) RemoveMember(groupID, userID uuid.UUID) error {
+	if _, err := cache.GetFromGroup(groupID); err != nil {
+		return err
+	}
+	if _, err := cache.GetFromMember(groupID); err != nil {
+		return err
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	members := cache.MemberCache[groupID]
+	idx := slices.Index(members, userID)
+	if idx == -1 {
+		return ErrNotMember
+	}
+	cache.MemberCache[groupID] = slices.Delete(members, idx, idx+1)
+	if info := cache.GroupCache[groupID]; info.TotalMem > 0 {
+		info.TotalMem--
+	}
+	return nil
+}
+
+// CheckGroupNameFromCache reports whether a group with this name already exists.
 func (cache *Cache) CheckGroupNameFromCache(name string) (bool, error) {
+	cache.mu.RLock()
 	for _, v := range cache.GroupCache {
-		// if we have the same name then we return true
 		if v.Name == name {
+			cache.mu.RUnlock()
 			return true, nil
 		}
 	}
+	cache.mu.RUnlock()
 
-	context, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	// check for db when can't find in the cache
-	err := cache.groupRepo.getGroupInfoByName(context, name)
-	if err != nil {
-
-		log.Printf("error #%s#", err)
-		// check for duplicate error
-		if pgErr, ok := err.(*pq.Error); ok {
-			if pgErr.Code == "23505" {
-				return true, nil
-			}
-		}
-		// check for no result found
-		if err == pgx.ErrNoRows {
-			return false, nil
-		}
-		return false, err
+	err := cache.groupRepo.getGroupInfoByName(ctx, name)
+	if err == nil {
+		return true, nil
 	}
-
-	return false, nil
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return false, err
 }

@@ -24,6 +24,7 @@ import (
 
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
+	"RyanDev-21.com/Chirpy/pkg/ratelimit"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -78,7 +79,7 @@ func main() {
 	apicfg := setup.InitApiConfig(queries, platform, Secret)
 	mux := http.NewServeMux()
 	// init customMq queue
-	mq := mq.NewMainMQ(&map[string]chan *mq.Channel{}, 10)
+	mq := mq.NewMainMQ(10)
 	// init hub
 	hub := chatmodel.NewHub()
 	go hub.Run()
@@ -102,15 +103,14 @@ func main() {
 	go userCache.Load()
 
 	rediscache := rediscache.NewRedisCacheImpl(cacheClient)
-	chatCache := chat.NewChatCache(rediscache, chatRepo, &apicfg.Logger)
-	go chatCache.LoadMessagesForStartUp()
+	chatCache := chat.NewChatCache(rediscache, &apicfg.Logger)
 	configCache := users.NewConfigCache(userRepo)
 
 	// Create Services
 	userService := users.NewUserService(userRepo, userCache, mq, &apicfg.Logger, hub, configCache)
 	authService := authClient.NewAuthService(userRepo, authRepo, apicfg.Secret, &apicfg.Logger)
 	chatService := chat.NewChatService(chatRepo, hub, mq, chatCache, groupCache, &apicfg.Logger)
-	groupService := groups.NewGroupService(groupRepo, hub, mq, groupCache, &apicfg.Logger)
+	groupService := groups.NewGroupService(groupRepo, mq, groupCache, &apicfg.Logger)
 	genAIService := aimodels.NewAiService(client, hub)
 
 	// Create Hanlders
@@ -119,93 +119,62 @@ func main() {
 	chatHandler := chat.NewChatHandler(chatService, &apicfg.Logger)
 	groupHandler := groups.NewGroupHandler(groupService)
 	genAIHandler := aimodels.NewGenAIHandler(genAIService)
-	// right now the topic name for job are hand coded should change that later
-	go mq.Run()
-	// set up jobs consumer for userService
 	setup.RunJobsForUsers(mq, userService)
-	// this has to move somewhere
-	// need to fix the magic numbers and hardcoded job
-	go mq.ListeningForTheChannels("createGroup", 100, groupService.StartWorkerForCreateGroup)
-	//	go mq.ListeningForTheChannels("addCreator", 100, groupService.StartWorkerForCreateGroupLeader)
-	go mq.ListeningForTheChannels("addMemberList", 100, groupService.StartWorkerForAddMember)
-	go mq.ListeningForTheChannels("addMember", 100, groupService.StartWorkerForAddMemberList)
-	go mq.ListeningForTheChannels("removeGroupMember", 100, groupService.StartWorkerForLeaveMember)
-	// jobs for users moved
-	go mq.ListeningForTheChannels(chatmodel.PrivateMessageConstant, 1000, chatService.StartWorkerForAddPrivateMessage)
-	go mq.ListeningForTheChannels(chatmodel.PublicMessageConstant, 1000, chatService.StartWorkerForAddPublicMessage)
-	go mq.ListeningForTheChannels("JobForSeen", 100, chatService.StartWorkerForUpdateSeen)
+	mq.ListeningForTheChannels(groups.TopicCreateGroup, 10, groupService.StartWorkerForCreateGroup)
+	mq.ListeningForTheChannels(groups.TopicAddMember, 10, groupService.StartWorkerForAddMember)
+	mq.ListeningForTheChannels(groups.TopicRemoveMember, 10, groupService.StartWorkerForLeaveMember)
+	mq.ListeningForTheChannels(chatmodel.PrivateMessageConstant, 50, chatService.StartWorkerForAddPrivateMessage)
+	mq.ListeningForTheChannels(chatmodel.PublicMessageConstant, 50, chatService.StartWorkerForAddPublicMessage)
+	mq.ListeningForTheChannels(chatmodel.SeenMessageConstant, 10, chatService.StartWorkerForUpdateSeen)
 
 	setup.SetUpUserRoutes(mux, apicfg, *userHandler)
 	// Users routes moved
 
-	// GeminiAi route  testing
-	mux.HandleFunc("GET /genai/messages", genAIHandler.GenAIDummyHandler)
+	authed := func(h http.HandlerFunc) http.Handler {
+		return middleware.MiddleWareLog(middleware.AuthMiddleWare(h, apicfg.Secret, &apicfg.Logger))
+	}
+	limited := func(l *ratelimit.RateLimiter, h http.HandlerFunc) http.Handler {
+		return middleware.MiddleWareLog(ratelimit.RateLimitMiddleware(l, h, &apicfg.Logger))
+	}
+	authedLimited := func(l *ratelimit.RateLimiter, h http.HandlerFunc) http.Handler {
+		return middleware.MiddleWareLog(middleware.AuthMiddleWare(ratelimit.RateLimitMiddleware(l, h, &apicfg.Logger), apicfg.Secret, &apicfg.Logger))
+	}
+	loginLimiter := ratelimit.NewRateLimiter(10, time.Minute)
+	sendLimiter := ratelimit.NewRateLimiter(120, time.Minute)
+	aiLimiter := ratelimit.NewRateLimiter(5, time.Minute)
 
-	// POST route
-	mux.HandleFunc("POST /admin/metrics/reset", apicfg.ResetHandle)
-	mux.HandleFunc("POST /admin/reset", apicfg.UserResetHandle)
-	mux.Handle("POST /api/login", middleware.MiddleWareLog(authHandler.Login))
-	mux.Handle("POST /api/refresh", middleware.MiddleWareLog(authHandler.RefreshToken))
-	mux.HandleFunc("POST /api/revoke", authHandler.Revoke)
+	// AI suggestions (authenticated, tightly limited: every call costs quota)
+	mux.Handle("GET /api/ai/suggestions", authedLimited(aiLimiter, genAIHandler.GenAIDummyHandler))
 
-	// //NOTE FOR webhooks
-	// /*"Client must request with json of '{
-	// 					  "event": "user.upgraded",
-	// 					  "data": {
-	// 						"user_id": "3311741c-680c-4546-99f3-fc9efac2036c"
-	// 					  }
-	// }'"*/
-	// mux.HandleFunc("POST /api/polka/webhooks", apicfg.WebHookHandle)
+	// admin: only exists on dev and still needs a logged-in user
+	if platform == "dev" {
+		mux.Handle("POST /admin/reset", authed(apicfg.UserResetHandle))
+	}
 
-	// Maybe endpoint for chat
-	mux.Handle("GET /api/chats/ws", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.ServeWs, apicfg.Secret, &apicfg.Logger)))
+	mux.Handle("POST /api/login", limited(loginLimiter, authHandler.Login))
+	mux.Handle("POST /api/refresh", limited(loginLimiter, authHandler.RefreshToken))
+	mux.Handle("POST /api/revoke", limited(loginLimiter, authHandler.Revoke))
 
-	// create a group
-	mux.Handle("POST /api/chats/groups", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.CreateGroup, apicfg.Secret, &apicfg.Logger)))
-
-	// join group
-	mux.Handle("POST /api/chats/groups/{group_id}/members", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.JoinGroup, apicfg.Secret, &apicfg.Logger)))
-
-	// leave group
-	mux.Handle("DELETE /api/chats/groups/{group_id}/members", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.LeaveGroup, apicfg.Secret, &apicfg.Logger)))
-
-	// TODO::still have to write this one
-	// kick or add the user from or to the group
-	// mux.Handle("PATCH /api/chats/groups/{group_id}/members", middleware.MiddleWareLog(middleware.AuthMiddleWare(groupHandler.CreateGroup, apicfg.Secret, Logger)))
-	//
-	// TODO:and this one
-	// change group setting or anything
-	// mux.HandleFunc("PATCH /api/chats/groups/{group_id}", groupHandler.CreateGroup)
-
-	// NOTE:: i should really consider making the server as my own config and graceful shutdown
-	//
-	// endpoint for send message
-	// maybe need to consider about making the chatID
-	// this is really wrong but i don't wanna fix it anymore
-	// cuz what is the point of asking the chatid(toID) in body
-	// should be like those get endpoint
-	// this end point should be like this
-	// for private, POST /api/chats/{otherUser_id}/messages
-	// for public, POST /api/chats/groups/{group_id}/messages
-	// for private ,PATCH /api/chats/{otherUser_id}/messages (the service should be called based on the type like "edit","seen" //cuz this route is for both )
-	// for group ,PATH /api/chats/groups/{group_id}/messages (this should use for maybe edit )
-	mux.Handle("POST /api/chats/message", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.SendMessage, apicfg.Secret, &apicfg.Logger)))
-	// m := &autocert.Manager{
-	// 	Cache:      autocert.DirCache("certs"),
-	// 	Prompt:     autocert.AcceptTOS,
-	// 	HostPolicy: autocert.HostWhitelist("ponypigeon.com"),
-	// }
+	mux.Handle("GET /api/chats/ws", middleware.MiddleWareLog(middleware.WSAuthMiddleWare(chatHandler.ServeWs, apicfg.Secret, &apicfg.Logger)))
+	mux.Handle("POST /api/chats/groups", authed(groupHandler.CreateGroup))
+	mux.Handle("POST /api/chats/groups/{group_id}/members", authed(groupHandler.JoinGroup))
+	mux.Handle("DELETE /api/chats/groups/{group_id}/members", authed(groupHandler.LeaveGroup))
+	mux.Handle("POST /api/chats/message", authedLimited(sendLimiter, chatHandler.SendMessage))
+	mux.Handle("GET /api/chat/{otherUser_id}/messages", authed(chatHandler.GetMesagesForPrivateID))
+	mux.Handle("POST /api/chat/{otherUser_id}/messages", authed(chatHandler.UpdateSeen))
+	mux.Handle("GET /api/chat/groups/{group_id}/messages", authed(chatHandler.GetMessagesForPublicID))
 
 	handlerWithCORS := corsMiddleware(mux)
 	cfg := &tls.Config{
-		MinVersion:               tls.VersionTLS12,
-		CurvePreferences:         []tls.CurveID{tls.CurveP521, tls.CurveP256, tls.CurveP384},
-		PreferServerCipherSuites: true,
+		MinVersion:       tls.VersionTLS12,
+		CurvePreferences: []tls.CurveID{tls.CurveP521, tls.CurveP256, tls.CurveP384},
 		CipherSuites: []uint16{
 			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
-			tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
 		},
 	}
 	server := http.Server{
@@ -217,9 +186,6 @@ func main() {
 		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 		//	TLSConfig: m.TLSConfig(),
 	}
-	mux.Handle("GET /api/chat/{otherUser_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMesagesForPrivateID, apicfg.Secret, &apicfg.Logger)))
-	mux.Handle("POST /api/chat/{otherUser_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.UpdateSeen, apicfg.Secret, &apicfg.Logger)))
-	mux.Handle("GET /api/chat/groups/{group_id}/messages", middleware.MiddleWareLog(middleware.AuthMiddleWare(chatHandler.GetMessagesForPublicID, apicfg.Secret, &apicfg.Logger)))
 
 	log.Printf("The server is running on %q\n", Port)
 	log.Fatal(server.ListenAndServeTLS("../server.crt", "../server.key"))

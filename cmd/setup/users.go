@@ -11,6 +11,7 @@ import (
 )
 
 var (
+	registerLimiter      = ratelimit.NewRateLimiter(5, time.Minute)
 	searchUserLimiter    = ratelimit.NewRateLimiter(20, time.Minute)
 	addFriendLimiter     = ratelimit.NewRateLimiter(10, time.Minute)
 	confirmFriendLimiter = ratelimit.NewRateLimiter(30, time.Minute)
@@ -23,13 +24,13 @@ func RunJobsForUsers(mq *mq.MainMQ, userService users.UserService) {
 	go mq.ListeningForTheChannels(users.DeleteFriReq, 100, userService.StartWorkerForDeleteReq)
 	go mq.ListeningForTheChannels(users.CancelReq, 100, userService.StartWorkerForCancelReq)
 
-	go mq.ListeningForTheChannels("UpdateUserCache", 100, userService.StartWorkerForUpdateUserCache)
-	go mq.ListeningForTheChannels("SavePosition", 100, userService.StartWorkerForSaveConfig)
+	go mq.ListeningForTheChannels(users.TopicUpdateUserCache, 100, userService.StartWorkerForUpdateUserCache)
+	go mq.ListeningForTheChannels(users.TopicSaveConfig, 100, userService.StartWorkerForSaveConfig)
 }
 
 func SetUpUserRoutes(mux *http.ServeMux, apiConf *APIConfig, userHandler users.UserHandler) {
 	// create Users
-	mux.Handle("POST /api/users", apiConf.MiddlewareMetricsInc(middleware.MiddleWareLog(userHandler.Register)))
+	mux.Handle("POST /api/users", middleware.MiddleWareLog(ratelimit.RateLimitMiddleware(registerLimiter, userHandler.Register, &apiConf.Logger)))
 
 	// update Password
 	mux.Handle("POST /api/users/password", middleware.MiddleWareLog(middleware.AuthMiddleWare(userHandler.UpdatePassword, apiConf.Secret, &apiConf.Logger)))

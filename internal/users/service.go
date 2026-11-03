@@ -2,13 +2,11 @@ package users
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
@@ -18,6 +16,7 @@ import (
 	"RyanDev-21.com/Chirpy/pkg/auth"
 	"RyanDev-21.com/Chirpy/pkg/middleware"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // need to fix the logging part
@@ -121,6 +120,11 @@ func (s *userService) UpdatePassword(ctx context.Context, userID uuid.UUID, oldP
 	if err != nil {
 		return nil, err
 	}
+	// a password change signs out every other session
+	if err := s.userRepo.RevokeAllRefreshTokens(ctx, userID); err != nil {
+		s.logger.Error("failed to revoke refresh tokens after password change", "userID", userID, "error", err)
+		return nil, err
+	}
 	return user, nil
 }
 
@@ -134,6 +138,13 @@ func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, rec
 	if senderID == recieverID {
 		s.logger.Warn("the client is trying to add the same id", "reqID", reqID, "fromID", senderID)
 		return nil, ErrNotValidReq
+	}
+
+	s.logger.Info("checking the ws connection ...", "reqID", reqID, "fromID", senderID)
+	valid := s.hub.CheckWsConnection(senderID)
+	if !valid {
+		s.logger.Warn("the client is not connected to ws", "reqID", reqID, "fromID", senderID)
+		return nil, chatmodel.ErrNotConnectedToWs
 	}
 
 	friReqID, err := uuid.NewV7()
@@ -193,13 +204,6 @@ func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, rec
 		Lable: "pending",
 	})
 
-	s.logger.Info("checking the ws connection ...", "reqID", reqID, "fromID", senderID)
-	valid := s.hub.CheckWsConnection(senderID)
-	if !valid {
-		s.logger.Warn("the client is not connected to ws", "reqID", reqID, "fromID", senderID)
-		return nil, chatmodel.ErrNotConnectedToWs
-	}
-
 	s.logger.Info("writing into connection", "reqID", reqID, "fromID", senderID)
 	// need to change this to get the infriEvent
 	err = s.hub.WriteIntoConnection(recieverID, chatmodel.Event{
@@ -254,7 +258,7 @@ func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.U
 		// cache miss db fetch
 		user, err := s.userRepo.GetOtherUserIDByReqID(ctx, fromID, reqID)
 		if err != nil {
-			if exists := strings.ContainsAny(err.Error(), "no rows"); exists {
+			if errors.Is(err, pgx.ErrNoRows) {
 				s.logger.Error("failed to get the otherUserInfo", "reqID", reqIDVal, "fromID", fromID, "error", err)
 				return ErrNoRedFound
 			}
@@ -353,7 +357,7 @@ func (s *userService) CancelFriReq(ctx context.Context, userID, reqID uuid.UUID)
 		s.logger.Warn("faield to get the toID from cache", "error", "toID is nil")
 		user, err := s.userRepo.GetOtherUserIDByReqID(ctx, userID, reqID)
 		if err != nil {
-			if exists := strings.ContainsAny(err.Error(), "no rows"); exists {
+			if errors.Is(err, pgx.ErrNoRows) {
 				s.logger.Error("failed to get the otherUserInfo", "reqID", reqIDVal, "fromID", userID, "error", err)
 				return ErrNoRedFound
 			}
@@ -504,7 +508,7 @@ func (s *userService) GetPendingList(ctx context.Context, userID uuid.UUID) (*Ge
 		s.logger.Debug("fetching from db because cache miss", "userID", userID)
 		reqList, err := s.userRepo.GetMyFriReqList(ctx, userID)
 		if err != nil {
-			if err != sql.ErrNoRows {
+			if !errors.Is(err, pgx.ErrNoRows) {
 				s.logger.Error("failed to get pending list from db", "error", err)
 				return nil, err
 			}
@@ -530,7 +534,7 @@ func (s *userService) GetPendingList(ctx context.Context, userID uuid.UUID) (*Ge
 		}
 		reqSendList, err := s.userRepo.GetMySendFirReqList(ctx, userID)
 		if err != nil {
-			if err != sql.ErrNoRows {
+			if !errors.Is(err, pgx.ErrNoRows) {
 				s.logger.Error("failed to get request send list from db", "error", err)
 				return nil, err
 			}
@@ -596,7 +600,7 @@ func (s *userService) SearchUser(ctx context.Context, serachName string) (*[]Use
 
 	userList, err := s.userRepo.GetMatchName(ctx, serachName)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			s.logger.Info("no users found", "reqID", reqID, "searchName", serachName)
 			return &[]User{}, nil
 		}
@@ -604,9 +608,9 @@ func (s *userService) SearchUser(ctx context.Context, serachName string) (*[]Use
 		return nil, err
 	}
 
-	err = s.mainMq.PublishWithContext(ctx, "updateUserCache", userList)
+	err = s.mainMq.PublishWithContext(ctx, TopicUpdateUserCache, userList)
 	if err != nil {
-		handleMqFail("updateUserCache", *userList, err, s.logger)
+		handleMqFail(TopicUpdateUserCache, *userList, err, s.logger)
 	}
 
 	s.logger.Info("search user completed", "reqID", reqID, "searchName", serachName, "count", len(*userList))
@@ -628,9 +632,9 @@ func (s *userService) SaveConfig(ctx context.Context, userID uuid.UUID, configLi
 		UserID:     userID,
 		ConfigList: configList,
 	}
-	err = s.mainMq.PublishWithContext(ctx, "SavePosition", payload)
+	err = s.mainMq.PublishWithContext(ctx, TopicSaveConfig, payload)
 	if err != nil {
-		handleMqFail("SavePosition", payload, err, s.logger)
+		handleMqFail(TopicSaveConfig, payload, err, s.logger)
 		return err
 	}
 	s.logger.Info("update user config completed", "reqID", reqID, "configList", *configList)
@@ -647,7 +651,7 @@ func (s *userService) GetConfig(ctx context.Context, userID uuid.UUID) (*ConfigL
 		s.logger.Info("cache miss trying to fetch from db", "reqID", reqID, "userID", userID)
 		res, err := s.userRepo.GetAllConfigUser(ctx, userID)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
+			if errors.Is(err, pgx.ErrNoRows) {
 				s.logger.Info("found nothing returning empty list", "reqID", reqID, "userID", userID)
 
 				return &ConfigList{

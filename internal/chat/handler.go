@@ -1,7 +1,7 @@
 package chat
 
 import (
-//	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -53,11 +53,11 @@ func (h *chatHandler) GetMesagesForPrivateID(w http.ResponseWriter, r *http.Requ
 		h.logger.Error("failed to get toID from path", "err", err)
 		response.Error(w, 400, "invalid id")
 		return
-	
+
 	}
 	sinceStr := r.URL.Query().Get("since")
-	
-	msgList, err := h.chatService.fetchMessagePrivate(r.Context(), *userID, *toID,sinceStr)
+
+	msgList, err := h.chatService.fetchMessagePrivate(r.Context(), *userID, *toID, sinceStr)
 	if err != nil {
 		h.logger.Error("failed to fetch private messages", "err", err)
 		response.Error(w, 500, "internal server error")
@@ -82,6 +82,10 @@ func (h *chatHandler) GetMessagesForPublicID(w http.ResponseWriter, r *http.Requ
 
 	msgList, err := h.chatService.fetchMessagePublic(r.Context(), *userID, *toID)
 	if err != nil {
+		if errors.Is(err, chatmodel.ErrNotAuthorized) {
+			response.Error(w, 403, "not a member of this group")
+			return
+		}
 		h.logger.Error("failed to fetch public messages", "err", err)
 		response.Error(w, 500, "internal server error")
 		return
@@ -105,8 +109,15 @@ func (h *chatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	msgID, err := h.chatService.sendMessage(r.Context(), *userID, payload)
 	if err != nil {
-		if err == chatmodel.ErrNotConnectedToWs {
-			response.Error(w, 404, "connect to ws first to send message")
+		switch {
+		case errors.Is(err, chatmodel.ErrNotConnectedToWs):
+			response.Error(w, 409, "connect to ws first to send message")
+			return
+		case errors.Is(err, chatmodel.ErrNotAuthorized):
+			response.Error(w, 403, "not a member of this group")
+			return
+		case errors.Is(err, chatmodel.ErrNotValidToID), errors.Is(err, chatmodel.ErrNotValidParentID), errors.Is(err, ErrNotSupportedTypeMsg):
+			response.Error(w, 400, err.Error())
 			return
 		}
 		h.logger.Error("failed to send message", "err", err)
@@ -116,37 +127,37 @@ func (h *chatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, 200, chatmodel.ResponseMessageID{MsgID: *msgID})
 }
 
-func (h *chatHandler)UpdateSeen(w http.ResponseWriter,r *http.Request){
-	userID,err:= middleware.GetContextKey(r.Context(),"user")
-	if err !=nil{
-		response.Error(w,401,"unauthorized")
+func (h *chatHandler) UpdateSeen(w http.ResponseWriter, r *http.Request) {
+	userID, err := middleware.GetContextKey(r.Context(), "user")
+	if err != nil {
+		response.Error(w, 401, "unauthorized")
 		return
 	}
-	toID ,err:= middleware.GetPathValue("otherUser_id",r)
-	if err !=nil{
-		response.Error(w,400,"invalid request")
+	toID, err := middleware.GetPathValue("otherUser_id", r)
+	if err != nil {
+		response.Error(w, 400, "invalid request")
 		return
 	}
 	//there might be better one than this
 	//i am too tired to rethink
 	body := &chatmodel.PayloadForSeen{}
-	err = encoder.Decode(r,body)
+	err = encoder.Decode(r, body)
 	if err != nil {
 		h.logger.Error("failed to decode message payload", "err", err)
 		response.Error(w, 400, "invalid parameters")
 		return
 	}
 	payload := &chatmodel.InCommingEventForSeen{
-		ToID: toID.String(),
+		ToID:  toID.String(),
 		MsgID: body.MsgID,
 	}
-	err= h.chatService.updateLastSeen(r.Context(),*userID,payload)
-	 if err !=nil{
-		if err == chatmodel.ErrNotValidUUID{
-			response.Error(w,400,"invalid request")
+	err = h.chatService.updateLastSeen(r.Context(), *userID, payload)
+	if err != nil {
+		if err == chatmodel.ErrNotValidUUID {
+			response.Error(w, 400, "invalid request")
 			return
 		}
-		response.Error(w,500,"something went wrong")
+		response.Error(w, 500, "something went wrong")
 		return
 	}
 	w.WriteHeader(http.StatusCreated)

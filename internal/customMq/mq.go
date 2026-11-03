@@ -1,43 +1,18 @@
+// Package mq is a small in-process job queue. It is replaced by the Redis
+// Streams queue in internal/platform/queue; this version only keeps the
+// existing call sites working safely.
 package mq
 
 import (
 	"context"
-	"errors"
 	"log"
 	"sync"
+	"time"
 )
 
-//the most basic form of the mq first
-
-//stores tag and the channel whcih can receive anything
-
-type PubStruct struct {
-	topic string
-	info  any
-}
+const topicBuffer = 1000
 
 type WorkerFunction func(chan *Channel)
-
-type DoneStruct struct {
-	topic    string
-	localTag int
-}
-
-type ResultStruct struct {
-	tag     int
-	topic   string
-	msg     any
-	retries int
-}
-
-type MainMQ struct {
-	mainMq map[string]chan *Channel
-	mu     sync.RWMutex
-	//pub should stores the task name and then channel
-	pub          chan PubStruct
-	FailedResult chan ResultStruct
-	retriesLimit int
-}
 
 type Channel struct {
 	topic        string
@@ -46,111 +21,76 @@ type Channel struct {
 	RetriesCount int
 }
 
-func NewMainMQ(mq *map[string]chan *Channel, retiresLimit int) *MainMQ {
+type MainMQ struct {
+	mu           sync.Mutex
+	topics       map[string]chan *Channel
+	tags         map[string]int
+	retriesLimit int
+}
+
+func NewMainMQ(retriesLimit int) *MainMQ {
 	return &MainMQ{
-		mainMq:       *mq,
-		pub:          make(chan PubStruct),
-		FailedResult: make(chan ResultStruct, 100),
-		retriesLimit: retiresLimit,
+		topics:       make(map[string]chan *Channel),
+		tags:         make(map[string]int),
+		retriesLimit: retriesLimit,
 	}
 }
 
-func (mq *MainMQ) AddTopic(topic string) {
-	mq.mainMq = make(map[string]chan *Channel)
-	mq.mainMq[topic] = make(chan *Channel, 1000)
-}
-
-func (mq *MainMQ) Run() {
-	jobCount := make(map[string]int)
-	for {
-		select {
-		case task := <-mq.pub:
-			log.Printf("inside the pub struct now")
-			mq.mu.Lock()
-			//if the topic doesn't exist create one
-			//and set its job count to 0
-			if _, ok := mq.mainMq[task.topic]; !ok {
-				mq.mainMq[task.topic] = make(chan *Channel, 1000)
-				jobCount[task.topic] = 0
-			}
-			//before firiing ,increment jobCount to make the lcoalTag start at 1
-			jobCount[task.topic] += 1
-
-			log.Printf("firing of for the topic %v workerNubmer %v", task.topic, jobCount[task.topic])
-			//send the Channel type struct into the channel
-			mq.mainMq[task.topic] <- &Channel{
-				topic:    task.topic,
-				LocalTag: jobCount[task.topic],
-				Msg:      task.info,
-			}
-			mq.mu.Unlock()
-			//finally unlock the read lock
-		case result := <-mq.FailedResult:
-			//pull from the fail channel and if their retires count is lower than the limit then
-			//resend it through the pub channel again with the same tag and info
-			// log.Printf("got result from %v ,retries :%v\n",result.topic,result.retries)
-			// 	log.Printf("restrying the msg id :%v\n",result.tag)
-			if result.retries < mq.retriesLimit {
-				mq.mu.Lock()
-				mq.mainMq[result.topic] <- &Channel{
-					topic:        result.topic,
-					LocalTag:     result.tag,
-					Msg:          result.msg,
-					RetriesCount: result.retries,
-				}
-				mq.mu.Unlock()
-			} else {
-				log.Printf("retries count exceed the limit\n saving it to log\n")
-			}
-		}
+// topic returns the channel for name, creating it on first use.
+func (mq *MainMQ) topic(name string) chan *Channel {
+	mq.mu.Lock()
+	defer mq.mu.Unlock()
+	ch, ok := mq.topics[name]
+	if !ok {
+		ch = make(chan *Channel, topicBuffer)
+		mq.topics[name] = ch
 	}
+	return ch
 }
 
-// use this one to publish the topic along with the info
-func (mq *MainMQ) Publish(topic string, info any) {
-	mq.pub <- PubStruct{
-		topic: topic,
-		info:  info,
-	}
+func (mq *MainMQ) nextTag(name string) int {
+	mq.mu.Lock()
+	defer mq.mu.Unlock()
+	mq.tags[name]++
+	return mq.tags[name]
 }
 
+// Run is kept for compatibility; the queue no longer needs a dispatcher loop.
+func (mq *MainMQ) Run() {}
+
+// PublishWithContext enqueues info on topic, giving up when ctx is done.
 func (mq *MainMQ) PublishWithContext(ctx context.Context, topic string, info any) error {
-	job := PubStruct{
-		topic: topic,
-		info:  info,
-	}
+	job := &Channel{topic: topic, LocalTag: mq.nextTag(topic), Msg: info}
 	select {
-	case <-ctx.Done():
-		log.Printf("publish cancelled")
-		return errors.New("context cancelled")
-	case mq.pub <- job:
+	case mq.topic(topic) <- job:
 		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
+// Republish schedules a failed job for another attempt with exponential
+// backoff. It never blocks the calling worker.
 func (mq *MainMQ) Republish(channel *Channel, retries int) {
-	mq.FailedResult <- ResultStruct{
-		topic:   channel.topic,
-		tag:     channel.LocalTag,
-		msg:     channel.Msg,
-		retries: retries,
+	if retries >= mq.retriesLimit {
+		log.Printf("mq: job on %q (tag %d) dropped after %d retries", channel.topic, channel.LocalTag, retries)
+		return
 	}
+	channel.RetriesCount = retries
+	delay := min(time.Duration(1<<min(retries, 6))*100*time.Millisecond, 10*time.Second)
+	time.AfterFunc(delay, func() {
+		select {
+		case mq.topic(channel.topic) <- channel:
+		default:
+			log.Printf("mq: topic %q is full, retry for tag %d dropped", channel.topic, channel.LocalTag)
+		}
+	})
 }
 
-// wait the topic to be created and then make those worker do the job
+// ListeningForTheChannels starts numWorkers workers consuming topic.
 func (mq *MainMQ) ListeningForTheChannels(topic string, numWorkers int, workFunction WorkerFunction) {
-	var channel chan *Channel
-	for {
-		mq.mu.RLock()
-		if ch, ok := mq.mainMq[topic]; ok {
-			channel = ch
-			mq.mu.RUnlock()
-			break
-		}
-		mq.mu.RUnlock()
-
-	}
-	for i := 0; i < numWorkers; i++ {
-		go workFunction(channel)
+	ch := mq.topic(topic)
+	for range numWorkers {
+		go workFunction(ch)
 	}
 }

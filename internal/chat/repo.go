@@ -20,8 +20,6 @@ type ChatRepo interface {
 
 	getMessagesForPrivateWithTime(ctx context.Context, fromID, toID uuid.UUID, since time.Time) (*[]database.Message, error)
 	getMessagesForPublic(ctx context.Context, toID uuid.UUID) (*[]database.Groupmessage, error)
-	getAllPrivateMessages(ctx context.Context) (*[]database.Message, error)
-	getAllPublicMessages(ctx context.Context) (*[]database.Groupmessage, error)
 	updateLastSeen(chatID string, userID uuid.UUID, msgID uuid.UUID) error
 }
 
@@ -74,16 +72,6 @@ func (r *chatRepo) getMessagesForPublic(ctx context.Context, toID uuid.UUID) (*[
 		return nil, err
 	}
 	return &message, nil
-}
-
-func (r *chatRepo) getAllPrivateMessages(ctx context.Context) (*[]database.Message, error) {
-	msgs, err := r.queries.GetMessagesForAllPrivateChats(ctx)
-	return &msgs, err
-}
-
-func (r *chatRepo) getAllPublicMessages(ctx context.Context) (*[]database.Groupmessage, error) {
-	msgs, err := r.queries.GetMessagesForAllPublicChats(ctx)
-	return &msgs, err
 }
 
 func (r *chatRepo) updateLastSeen(chatID string, userID uuid.UUID, msgID uuid.UUID) error {

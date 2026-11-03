@@ -2,7 +2,7 @@ package users
 
 import (
 	"context"
-	"database/sql"
+	"github.com/jackc/pgx/v5"
 	"encoding/json"
 	"errors"
 
@@ -27,6 +27,7 @@ type UserRepo interface {
 	GetUserByEmail(ctx context.Context, email string) (*User, string, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (*User, string, error)
 	UpdateUserPassword(ctx context.Context, payload UpdateUserPassword) (*User, error)
+	RevokeAllRefreshTokens(ctx context.Context, userID uuid.UUID) error
 	GetAllUsers(ctx context.Context) (*[]database.User, error)
 	GetAllUsersRs(ctx context.Context) (*[]database.GetAllUserRsRow, error)
 	SendFriendRequest(fromID, toID, friReqID uuid.UUID) error
@@ -114,7 +115,7 @@ func (r *userRepo) Create(ctx context.Context, input CreateUserInput) (*User, er
 func (r *userRepo) GetUserByEmail(ctx context.Context, email string) (*User, string, error) {
 	user, err := r.queries.GetUserInfoByEmail(ctx, email)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, "", NoUserFoundErr
 		}
 		return nil, "", err
@@ -138,11 +139,15 @@ func (r *userRepo) UpdateUserPassword(ctx context.Context, payload UpdateUserPas
 	return toUserFormat(user), nil
 }
 
+func (r *userRepo) RevokeAllRefreshTokens(ctx context.Context, userID uuid.UUID) error {
+	return r.queries.RevokeAllUserRefreshTokens(ctx, userID)
+}
+
 // returns same thing as byEmail
 func (r *userRepo) GetUserByID(ctx context.Context, userID uuid.UUID) (*User, string, error) {
 	user, err := r.queries.GetUserInfoByID(ctx, userID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, "", NoUserFoundErr
 		}
 		return nil, "", err
@@ -154,7 +159,7 @@ func (r *userRepo) GetUserByID(ctx context.Context, userID uuid.UUID) (*User, st
 func (r *userRepo) GetAllUsers(ctx context.Context) (*[]database.User, error) {
 	userList, err := r.queries.GetAllUser(ctx)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, NoUserFoundErr
 		}
 		return nil, err
@@ -184,7 +189,7 @@ func (r *userRepo) SendFriendRequest(fromID, toID, friReqID uuid.UUID) error {
 func (r *userRepo) GetMyFriReqList(ctx context.Context, userID uuid.UUID) (*[]database.GetFriReqListRow, error) {
 	list, err := r.queries.GetFriReqList(ctx, userID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, NoRecordFoundErr
 		}
 		return nil, err
@@ -195,7 +200,7 @@ func (r *userRepo) GetMyFriReqList(ctx context.Context, userID uuid.UUID) (*[]da
 func (r *userRepo) GetMySendFirReqList(ctx context.Context, userID uuid.UUID) (*[]database.GetYourSendReqListRow, error) {
 	list, err := r.queries.GetYourSendReqList(ctx, userID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, NoRecordFoundErr
 		}
 		return nil, err
@@ -276,7 +281,7 @@ func (r *userRepo) GetMatchName(ctx context.Context, searchName string) (*[]User
 }
 
 func (r *userRepo) SaveEleConfig(userID uuid.UUID, eleconfigs *[]ElementCustom) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	var byteArr []byte
 	byteArr, err := json.Marshal(eleconfigs)

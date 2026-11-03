@@ -1,147 +1,94 @@
 package auth
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
-	"RyanDev-21.com/Chirpy/internal/database"
 	"github.com/alexedwards/argon2id"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
 
-var ErrPassNotMatch = errors.New("password incorrect")
+const issuer = "chirpy"
 
-// For extracting apiKey from authorization
-func GetAPIKEY(headers http.Header) (string, error) {
-	headerString := headers.Get("Authorization")
-	if headerString == "" {
-		return "", errors.New("invalid apiKey")
-	}
-	key := strings.TrimPrefix(headerString, "ApiKey ")
+var (
+	ErrPassNotMatch   = errors.New("password incorrect")
+	ErrExpiredToken   = errors.New("expired token")
+	ErrInvalidToken   = errors.New("invalid token")
+	ErrMissingToken   = errors.New("missing bearer token")
+	dummyPasswordHash string
+)
 
-	return key, nil
+func init() {
+	// used to keep login timing constant when the email does not exist
+	dummyPasswordHash, _ = argon2id.CreateHash("chirpy-dummy-password", argon2id.DefaultParams)
 }
 
-// For hashing and checking
 func HashPassword(password string) (string, error) {
-	hash, err := argon2id.CreateHash(password, argon2id.DefaultParams)
-	if err != nil {
-		return "", err
-	}
-	return hash, nil
+	return argon2id.CreateHash(password, argon2id.DefaultParams)
 }
 
 func CheckPassword(password string, hash string) (bool, error) {
-	valid, err := argon2id.ComparePasswordAndHash(password, hash)
-	if err != nil {
-		return valid, err
-	}
-	return valid, nil
+	return argon2id.ComparePasswordAndHash(password, hash)
 }
 
-// For making jwt
+// BurnPasswordCheck spends the same time as a real password check.
+func BurnPasswordCheck(password string) {
+	_, _ = argon2id.ComparePasswordAndHash(password, dummyPasswordHash)
+}
+
 func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
-	signedKey := []byte(tokenSecret)
+	now := time.Now()
 	claims := jwt.RegisteredClaims{
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiresIn)),
-		Issuer:    "chirpy",
-		IssuedAt:  jwt.NewNumericDate(time.Now()),
-		Subject:   fmt.Sprintf("%v", userID),
+		ExpiresAt: jwt.NewNumericDate(now.Add(expiresIn)),
+		Issuer:    issuer,
+		IssuedAt:  jwt.NewNumericDate(now),
+		Subject:   userID.String(),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	accessToken, err := token.SignedString(signedKey)
-	if err != nil {
-		return accessToken, err
-	}
-	return accessToken, nil
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(tokenSecret))
 }
 
 func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
-	registerdClaims := &jwt.RegisteredClaims{}
-	token, err := jwt.ParseWithClaims(tokenString, registerdClaims, func(t *jwt.Token) (any, error) {
+	claims := &jwt.RegisteredClaims{}
+	_, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method:%v,", t.Header["alg"])
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return []byte(tokenSecret), nil
-	})
+	}, jwt.WithIssuer(issuer), jwt.WithExpirationRequired())
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
-			log.Printf("expired token %s", err)
-			return uuid.Nil, errors.New("expired token")
+			return uuid.Nil, ErrExpiredToken
 		}
-		log.Printf("failed to parse the token %s", err)
-		return uuid.Nil, errors.New("invalid token")
+		return uuid.Nil, ErrInvalidToken
 	}
-	if !token.Valid {
-		log.Print("failed to match the token claim type ")
-		return uuid.Nil, errors.New("invalid token claim type")
-	}
-	userIDstring, err := token.Claims.GetSubject()
+	userID, err := uuid.Parse(claims.Subject)
 	if err != nil {
-		return uuid.Nil, errors.New("jwt subject field is mssing")
-	}
-
-	userID, err := uuid.Parse(userIDstring)
-	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, ErrInvalidToken
 	}
 	return userID, nil
 }
 
-// Get Token From the header
+// GetBearerToken extracts the token from an "Authorization: Bearer <token>" header.
 func GetBearerToken(headers http.Header) (string, error) {
-	tokenHeader := headers.Get("Authorization")
-	if tokenHeader == "" {
-
-		log.Printf("token header not set")
-		return "", errors.New("invalid token header")
+	h := headers.Get("Authorization")
+	token, ok := strings.CutPrefix(h, "Bearer ")
+	token = strings.TrimSpace(token)
+	if !ok || token == "" {
+		return "", ErrMissingToken
 	}
-	token := strings.TrimSpace(strings.TrimPrefix(tokenHeader, "Bearer"))
 	return token, nil
 }
 
-// For refreshToken
 func MakeRefreshToken() (string, error) {
 	key := make([]byte, 32)
-	_, err := rand.Read(key)
-	if err != nil {
+	if _, err := rand.Read(key); err != nil {
 		return "", errors.New("failed to generate the random data")
 	}
-	hexString := hex.EncodeToString(key)
-	return hexString, nil
-}
-
-// get both access and refresh and do the thing need to be doing (storing and stuff)
-func GetAccessTokenAndRefreshToken(ctx context.Context, userID uuid.UUID, secret string, queries *database.Queries) (string, string, error) {
-	expireIn := 30 * time.Minute
-	accessToken, err := MakeJWT(userID, secret, expireIn)
-	if err != nil {
-		log.Printf("failed to make accessToken %s", err)
-		return "", "", err
-	}
-	refreshToken, err := MakeRefreshToken()
-	if err != nil {
-		log.Printf("failed to make a refreshToken %s", err)
-		return "", "", err
-	}
-	refreshTokenExpireDate := 30 * (24 * time.Hour)
-	_, err = queries.CreateARefreshToken(ctx, database.CreateARefreshTokenParams{
-		Token:    refreshToken,
-		UserID:   userID,
-		ExpireAt: time.Now().Add(refreshTokenExpireDate),
-	})
-	if err != nil {
-		log.Printf("failed to insert into db #%s#", err)
-		return "", "", err
-	}
-
-	return accessToken, refreshToken, nil
+	return hex.EncodeToString(key), nil
 }

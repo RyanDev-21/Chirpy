@@ -2,11 +2,6 @@ package groups
 
 import (
 	"context"
-//	"log"
-	// "database/sql"
-	// "errors"
-
-	//	"database/sql"
 	"time"
 
 	"RyanDev-21.com/Chirpy/internal/database"
@@ -14,137 +9,90 @@ import (
 )
 
 type GroupRepo interface {
-	createGroup(groupID uuid.UUID,groupInfo createGroupStruct)error
-	createGroupLeader(payload creatorPublishStruct)error
-	getGroupInfoByName(ctx context.Context,name string)error
-getGroupInfoByID(ctx context.Context,id uuid.UUID)(*database.ChatGroup,error)
-	//joinGroup(groupID uuid.UUID,userID uuid.UUID)error
-	getAllGroupInfo(ctx context.Context)(*[]database.GetAllGroupInfoRow,error)
-	getMemsByID(ctx context.Context,groupID uuid.UUID)(*[]uuid.UUID,error)
-	addMemberList(ctx context.Context,payload *[]database.AddMemberListParams)error
-	addMember(ctx context.Context,payload *database.AddMemberParams)error
-	deleteMember(ctx context.Context,payload *database.DeleteMemFromGroupParams)error
-	//getMemFromGroup(ctx context.Context,payload database.GetMemFromGroupParams)error
-
+	createGroup(groupID uuid.UUID, groupInfo createGroupStruct) error
+	createGroupLeader(payload creatorPublishStruct) error
+	getGroupInfoByName(ctx context.Context, name string) error
+	getGroupInfoByID(ctx context.Context, id uuid.UUID) (*database.ChatGroup, error)
+	getAllGroupInfo(ctx context.Context) (*[]database.GetAllGroupInfoRow, error)
+	getMemsByID(ctx context.Context, groupID uuid.UUID) (*[]uuid.UUID, error)
+	getMemberRole(ctx context.Context, groupID, userID uuid.UUID) (string, error)
+	addMember(ctx context.Context, payload *database.AddMemberParams) error
+	deleteMember(ctx context.Context, payload *database.DeleteMemFromGroupParams) error
 }
 
 type groupRepo struct {
 	queries *database.Queries
 }
 
-func NewGroupRepo(queries *database.Queries)GroupRepo{
-	return &groupRepo{
-		queries: queries,
-	}
+func NewGroupRepo(queries *database.Queries) GroupRepo {
+	return &groupRepo{queries: queries}
 }
 
-
-// func (r *groupRepo)createChatRecord(ctx context.Context,chatID uuid.UUID,groupInfo *createGroupRequest)error{
-// 	fmt.Println("saved into db")
-// 	return nil
-// }
-func (r *groupRepo)createGroup(groupID uuid.UUID,groupInfo createGroupStruct)error{
-	context,cancel := context.WithTimeout(context.Background(),5*time.Second)
+func (r *groupRepo) createGroup(groupID uuid.UUID, groupInfo createGroupStruct) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_,err := r.queries.CreateGroup(context,database.CreateGroupParams{
-		ID: groupID,
-		Name: groupInfo.GroupName,
-		Description: groupInfo.Description,
-		MaxMember: groupInfo.MaxMems,
-		CurrentMember:groupInfo.CurrentMem,
+	_, err := r.queries.CreateGroup(ctx, database.CreateGroupParams{
+		ID:            groupID,
+		Name:          groupInfo.GroupName,
+		Description:   groupInfo.Description,
+		MaxMember:     groupInfo.MaxMems,
+		CurrentMember: groupInfo.CurrentMem,
 	})
-	if err !=nil{
-		return err
-	}
-
-	return nil
-}
-
-func (r *groupRepo)createGroupLeader(payload creatorPublishStruct)error{
-	context,cancel := context.WithTimeout(context.Background(),5*time.Second)
-	defer cancel()
-	_,err := r.queries.CreateGroupLeaderRole(context,database.CreateGroupLeaderRoleParams{
-		GroupID: payload.GroupID,
-		MemberID: payload.UserID,
-		Role: payload.Role,
-	})
-	if err !=nil{
-		return err
-	}
-	return nil
-}
-
-
-func (r *groupRepo)getGroupInfoByName(ctx context.Context,name string)error{
-	_,err :=r.queries.SearchInfoByName(ctx,name)
-	
-	if err !=nil{
-		return  err
-	}
-	return nil
-}
-
-func (r *groupRepo)getGroupInfoByID(ctx context.Context,id uuid.UUID)(*database.ChatGroup,error){
-	groupInfo, err := r.queries.GetGroupInfoByID(ctx,id)
-	if err !=nil{
-		return nil,	err
-	}
-	return &groupInfo,nil
-}
-
-
-//this one will return all the member id list too
-func (r *groupRepo)getAllGroupInfo(ctx context.Context)(*[]database.GetAllGroupInfoRow,error){
-	groupInfo, err := r.queries.GetAllGroupInfo(ctx)
-	if err !=nil{
-		return nil,err
-	}
-	return &groupInfo,nil
-
-}
-
-
-//if i do something like add all the member id to the db like line by line that would really slow me down i need to find a way to make this sure it keep storing the db fast
-//func (r *groupRepo)addMember(ctx context.Context,members *)
-func(r *groupRepo) getMemsByID(ctx context.Context,groupID uuid.UUID)(*[]uuid.UUID,error){
-	groupMems , err := 	r.queries.GetMemberListByID(ctx,groupID)
-	if err !=nil{
-		return nil,err
-	}
-	return &groupMems,nil
-}
-
-
-func(r *groupRepo)addMemberList(ctx context.Context,payload *[]database.AddMemberListParams)error{
-	_,err := r.queries.AddMemberList(ctx,*payload)
-	if err !=nil{
-		return err
-	}
-	return nil
-}
-
-
-func (r *groupRepo)addMember(ctx context.Context,payload *database.AddMemberParams)error{
-	err := r.queries.AddMember(ctx,*payload)
-	if err !=nil{
-		return err
-	}
-	return nil
-}
-
-
-func (r *groupRepo)deleteMember(ctx context.Context,payload *database.DeleteMemFromGroupParams)error{
-	err:= r.queries.DeleteMemFromGroup(ctx,*payload)
 	return err
 }
 
-// func (r *groupRepo)getMemFromGroup(ctx context.Context,payload database.GetMemFromGroupParams)error{
-// 	_,err := r.queries.GetMemFromGroup(ctx,payload)
-// 	if err !=nil{
-// 		if err == sql.ErrNoRows{
-// 			return errors.New("not found")
-// 		}
-// 		return err
-// 	}
-// 	return errors.New("already exist")
-// }
+func (r *groupRepo) createGroupLeader(payload creatorPublishStruct) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := r.queries.CreateGroupLeaderRole(ctx, database.CreateGroupLeaderRoleParams{
+		GroupID:  payload.GroupID,
+		MemberID: payload.UserID,
+		Role:     payload.Role,
+	})
+	return err
+}
+
+func (r *groupRepo) getGroupInfoByName(ctx context.Context, name string) error {
+	_, err := r.queries.SearchInfoByName(ctx, name)
+	return err
+}
+
+func (r *groupRepo) getGroupInfoByID(ctx context.Context, id uuid.UUID) (*database.ChatGroup, error) {
+	groupInfo, err := r.queries.GetGroupInfoByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &groupInfo, nil
+}
+
+func (r *groupRepo) getAllGroupInfo(ctx context.Context) (*[]database.GetAllGroupInfoRow, error) {
+	groupInfo, err := r.queries.GetAllGroupInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &groupInfo, nil
+}
+
+func (r *groupRepo) getMemsByID(ctx context.Context, groupID uuid.UUID) (*[]uuid.UUID, error) {
+	groupMems, err := r.queries.GetMemberListByID(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	return &groupMems, nil
+}
+
+func (r *groupRepo) getMemberRole(ctx context.Context, groupID, userID uuid.UUID) (string, error) {
+	row, err := r.queries.GetMemFromGroup(ctx, database.GetMemFromGroupParams{GroupID: groupID, MemberID: userID})
+	if err != nil {
+		return "", err
+	}
+	return row.Role, nil
+}
+
+func (r *groupRepo) addMember(ctx context.Context, payload *database.AddMemberParams) error {
+	return r.queries.AddMember(ctx, *payload)
+}
+
+func (r *groupRepo) deleteMember(ctx context.Context, payload *database.DeleteMemFromGroupParams) error {
+	return r.queries.DeleteMemFromGroup(ctx, *payload)
+}

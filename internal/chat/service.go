@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
@@ -16,7 +17,6 @@ import (
 	// rabbitmq "RyanDev-21.com/Chirpy/internal/rabbitMq"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/redis/go-redis/v9"
 )
 
 var upgrader = websocket.Upgrader{
@@ -32,8 +32,8 @@ type ChatService interface {
 	initWs(conn *websocket.Conn, userID uuid.UUID)
 	//	createGroup(userID uuid.UUID)
 	sendMessage(ctx context.Context, userID uuid.UUID, paylod *chatmodel.InCommingMessage) (*uuid.UUID, error)
-	fetchMessagePrivate(ctx context.Context, userID, toID uuid.UUID,since string) (*chatmodel.MessageListRes, error) // the chatID will be otherUserID if private
-	fetchMessagePublic(ctx context.Context, userID, toID uuid.UUID) (*chatmodel.MessageListRes, error)  // the chatID will be otherUserID if private
+	fetchMessagePrivate(ctx context.Context, userID, toID uuid.UUID, since string) (*chatmodel.MessageListRes, error) // the chatID will be otherUserID if private
+	fetchMessagePublic(ctx context.Context, userID, toID uuid.UUID) (*chatmodel.MessageListRes, error)                // the chatID will be otherUserID if private
 	updateLastSeen(ctx context.Context, userID uuid.UUID, payload *chatmodel.InCommingEventForSeen) error
 	StartWorkerForAddPrivateMessage(channel chan *mq.Channel)
 	StartWorkerForAddPublicMessage(channel chan *mq.Channel)
@@ -80,38 +80,53 @@ func (s *chatService) upgradeWebsocket(w http.ResponseWriter, r *http.Request) (
 	return conn, nil
 }
 
-// send the message struct based on the toId
-// WARN : should consider validating the toID
+// sendMessage validates the payload, delivers it over the hub, caches it and
+// queues the database write.
 func (s *chatService) sendMessage(ctx context.Context, userID uuid.UUID, payload *chatmodel.InCommingMessage) (*uuid.UUID, error) {
 	reqIDVal, _ := middleware.GetContextKey(ctx, "request")
-
-	s.logger.Info("send Message request started", "reqID", reqIDVal, "fromID", userID)
+	s.logger.Info("send message request started", "reqID", reqIDVal, "fromID", userID)
 
 	toID, err := uuid.Parse(payload.ToID)
 	if err != nil {
 		return nil, chatmodel.ErrNotValidToID
 	}
-
 	if payload.ParendID != "" {
-		_, err = uuid.Parse(payload.ParendID)
-		if err != nil {
-			return nil, errors.New("not valid parentID(type uuid)")
+		if _, err = uuid.Parse(payload.ParendID); err != nil {
+			return nil, chatmodel.ErrNotValidParentID
 		}
 	}
-	s.logger.Info("checking the connection first ", "reqID", reqIDVal, "fromID", userID)
-	valid := s.hub.CheckWsConnection(userID)
-	if !valid {
+	switch payload.Type {
+	case "private":
+		if toID == userID {
+			return nil, chatmodel.ErrNotValidToID
+		}
+	case "public":
+		if !s.groupCache.CheckNameFromGroup(toID, userID) {
+			return nil, chatmodel.ErrNotAuthorized
+		}
+	default:
+		return nil, ErrNotSupportedTypeMsg
+	}
+
+	if !s.hub.CheckWsConnection(userID) {
 		return nil, chatmodel.ErrNotConnectedToWs
 	}
 
-	msgID, err := uuid.NewUUID()
+	msgID, err := uuid.NewV7()
 	if err != nil {
 		return nil, err
 	}
+	msgMeta := getPayload(userID, msgID, payload)
 
-	// i need somehow get the client connection and then use the send one
-	s.logger.Info("trying to write into connection ", "reqID", reqIDVal, "fromID", userID)
-	err = s.hub.WriteIntoConnection(toID, chatmodel.Event{
+	targets := []uuid.UUID{toID}
+	if payload.Type == "public" {
+		members, err := s.groupCache.GetFromMember(toID)
+		if err != nil {
+			return nil, err
+		}
+		targets = slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == userID })
+	}
+	if err := s.hub.WriteToUsers(targets, chatmodel.Event{
 		Event: "msg",
 		Payload: chatmodel.OutGoingMessage{
 			ID:        msgID.String(),
@@ -119,160 +134,102 @@ func (s *chatService) sendMessage(ctx context.Context, userID uuid.UUID, payload
 			FromID:    userID.String(),
 			ParentID:  payload.ParendID,
 			Type:      payload.Type,
-			CreatedAt: time.Now().UTC(),
+			CreatedAt: msgMeta.MsgInfo.CreatedAt,
 		},
-	})
-	if err != nil {
-		s.logger.Error("failed to parse into bytes", "reqID", reqIDVal, "fromID", userID)
+	}); err != nil {
+		s.logger.Error("failed to write into connection", "reqID", reqIDVal, "fromID", userID, "err", err)
 		return nil, err
 	}
-	msgMeta := getPayload(userID, msgID, payload)
-	// handle the reply and stuff
-	switch payload.Type {
-	case "private":
-		err := s.handlePrivateMsg(ctx, userID, toID, msgMeta) // update the cache
-		if err != nil {
-			s.logger.Error("failed to update the  cache", "reqID", reqIDVal, "fromID", userID, "error", err)
+
+	if payload.Type == "private" {
+		if err := s.handlePrivateMsg(ctx, userID, toID, msgMeta); err != nil {
 			return nil, err
 		}
-		s.publishJobHelper(chatmodel.PrivateMessageConstant, *msgMeta) // upadate the db
-
-	case "public":
-		err := s.handlePublicMsg(ctx, userID, msgMeta)
-		if err != nil {
-			s.logger.Error("failed to update the  cache", "reqID", reqIDVal, "fromID", userID, "error", err)
+		s.publishJobHelper(chatmodel.PrivateMessageConstant, *msgMeta)
+	} else {
+		if err := s.handlePublicMsg(ctx, userID, msgMeta); err != nil {
 			return nil, err
 		}
-
 		s.publishJobHelper(chatmodel.PublicMessageConstant, *msgMeta)
-
-	default:
-		return nil, ErrNotSupportedTypeMsg
 	}
-	return &msgID, err
+	return &msgID, nil
 }
 
-func (s *chatService) fetchMessagePrivate(ctx context.Context, userID, toID uuid.UUID,since string) (*chatmodel.MessageListRes, error) {
-	key := getChatKey(userID, toID)
-	redisKey := s.rediscache.generateRedisKey(key, "private")
-
-	msgList, err := s.getMessagesFromCache(ctx, redisKey,since)
-	if err != nil || msgList == nil || len(*msgList) == 0 {
-		s.logger.Debug("cache miss or empty, fetching from DB", "err", err)
-		
-		message, err := s.getMessagesFromRepoPrivate(ctx,userID,toID,since)
+func (s *chatService) fetchMessagePrivate(ctx context.Context, userID, toID uuid.UUID, since string) (*chatmodel.MessageListRes, error) {
+	var sinceTime time.Time
+	if since != "" {
+		t, err := convertTimeFromString(since)
 		if err != nil {
 			return nil, err
 		}
-		s.logger.Debug("fetched messages from DB", "count", len(*message))
-		for _, v := range *message {
-			err := s.rediscache.addMessage(ctx, redisKey, convertFromMessageToMeta(v))
-			if err != nil {
+		sinceTime = t
+	}
+	redisKey := s.rediscache.generateRedisKey(getChatKey(userID, toID), "private")
+
+	msgList, err := s.rediscache.getMessages(ctx, redisKey, sinceTime)
+	if err == nil && len(msgList) > 0 {
+		return &chatmodel.MessageListRes{MsgList: msgList}, nil
+	}
+	if err != nil {
+		s.logger.Warn("chat cache read failed, falling back to db", "err", err)
+	}
+
+	var messages *[]database.Message
+	if sinceTime.IsZero() {
+		messages, err = s.chatRepo.getMessagesForPrivate(ctx, userID, toID)
+	} else {
+		messages, err = s.chatRepo.getMessagesForPrivateWithTime(ctx, userID, toID, sinceTime)
+	}
+	if err != nil {
+		return nil, err
+	}
+	// only warm the cache with a full history read, otherwise the stream
+	// would be seeded with a partial window
+	if sinceTime.IsZero() {
+		for _, v := range *messages {
+			if err := s.rediscache.addMessage(ctx, redisKey, convertFromMessageToMeta(v)); err != nil {
 				s.logger.Warn("failed to cache message", "err", err)
+				break
 			}
 		}
-		msgMetaList, err := convertToMsgMetaList(message)
-		if err != nil {
-			return nil, err
-		}
-		return msgMetaList, nil
 	}
-	return &chatmodel.MessageListRes{
-		MsgList: *msgList,
-	}, nil
+	return convertToMsgMetaList(messages)
 }
 
-func (s *chatService)getMessagesFromCache(ctx context.Context,redisKey string,since string)(*[]chatmodel.MessageMetaDataRes,error){
-	if since == ""{
-		msgList,err:= s.rediscache.getMessages(ctx,redisKey)
-		if err!=nil{
-			return nil,err
-		}
-		return msgList,nil
+func convertTimeFromString(timeStr string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339Nano, timeStr); err == nil {
+		return t, nil
 	}
-	timeFmt,err:= convertTimeFromString(since)
-	if err !=nil{
-		return nil,chatmodel.ErrNotValidTimeFmt
+	t, err := time.Parse(time.RFC3339, timeStr)
+	if err != nil {
+		return time.Time{}, chatmodel.ErrNotValidTimeFmt
 	}
-	msgList,err:= s.rediscache.getMessagesWithTime(ctx,redisKey,timeFmt)	
-	if err !=nil{
-		return nil,err
-	}
-	return msgList,nil
+	return t, nil
 }
 
-func (s *chatService)getMessagesFromRepoPrivate(ctx context.Context,userID,toID uuid.UUID,since string)(*[]database.Message,error){
-	if since == ""{
-		msgList,err:=s.chatRepo.getMessagesForPrivate(ctx,userID,toID)	
-		if err !=nil{
-			return nil,err
-		}
-		return msgList,nil
-	}
-	timeFmt,err:=convertTimeFromString(since)
-	if err!=nil{
-		return nil,chatmodel.ErrNotValidTimeFmt
-	}
-	msgList,err:=s.chatRepo.getMessagesForPrivateWithTime(ctx,userID,toID,timeFmt)
-	if err !=nil{
-		return msgList,err
-	}
-	return msgList,nil
-
-	}
-
-
-func convertTimeFromString(timeStr string)(time.Time,error){
-	timeFmt,err:=time.Parse(time.RFC3339Nano,timeStr)	
-	if err !=nil{
-		timeFmtFB,err:= time.Parse(time.RFC3339,timeStr)
-		if err !=nil{
-			return timeFmtFB,chatmodel.ErrNotValidTimeFmt
-		}		
-		return timeFmtFB,nil
-	}
-	return timeFmt,nil
-}
-
-// func (s *chatService)fetchMessagePrivateWithSince(ctx context.Context,userID,toID uuid.UUID,since time.Time)(*chatmodel.MessageListRes,error){
-//
-// }
-
-// need a way to check the member in the group or not
 func (s *chatService) fetchMessagePublic(ctx context.Context, userID, toID uuid.UUID) (*chatmodel.MessageListRes, error) {
-	valid := s.groupCache.CheckNameFromGroup(toID, userID)
-	if !valid {
+	if !s.groupCache.CheckNameFromGroup(toID, userID) {
 		return nil, chatmodel.ErrNotAuthorized
 	}
-	rediskey := s.rediscache.generateRedisKey(toID.String(), "public")
-	msgList, err := s.rediscache.getMessages(ctx, rediskey)
+	redisKey := s.rediscache.generateRedisKey(toID.String(), "public")
+	msgList, err := s.rediscache.getMessages(ctx, redisKey, time.Time{})
+	if err == nil && len(msgList) > 0 {
+		return &chatmodel.MessageListRes{MsgList: msgList}, nil
+	}
 	if err != nil {
-		if errors.Is(err, redis.Nil) { // if miss ,db hit
-			// fetch from db
-			message, err := s.chatRepo.getMessagesForPublic(ctx, toID)
-			if err != nil {
-				return nil, err
-			}
-			// update the cache
-			for _, v := range *message {
-				err := s.rediscache.addMessage(ctx, rediskey, convertFromGroupMessageToMeta(v))
-				if err != nil {
-					return nil, err
-				}
-			}
-			// convert to list type
-			msgMetaList, err := convertToMsgMetaList(message)
-			if err != nil {
-				return nil, err
-			}
-
-			return msgMetaList, nil
+		s.logger.Warn("group cache read failed, falling back to db", "err", err)
+	}
+	messages, err := s.chatRepo.getMessagesForPublic(ctx, toID)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range *messages {
+		if err := s.rediscache.addMessage(ctx, redisKey, convertFromGroupMessageToMeta(v)); err != nil {
+			s.logger.Warn("failed to cache group message", "err", err)
+			break
 		}
 	}
-
-	return &chatmodel.MessageListRes{
-		MsgList: *msgList,
-	}, nil
+	return convertToMsgMetaList(messages)
 }
 
 func (s *chatService) updateLastSeen(ctx context.Context, userID uuid.UUID, payload *chatmodel.InCommingEventForSeen) error {
@@ -303,7 +260,7 @@ func (s *chatService) updateLastSeen(ctx context.Context, userID uuid.UUID, payl
 		SeenID: userID,
 		ChatID: chatID,
 	}
-	err = s.mq.PublishWithContext(ctx, "JobForSeen", payloadForJob)
+	err = s.mq.PublishWithContext(ctx, chatmodel.SeenMessageConstant, payloadForJob)
 	if err != nil {
 		s.logger.Error("failed to publish to main queue", "reqID", reqIDVal, "userID", userID, "error", err)
 		return err

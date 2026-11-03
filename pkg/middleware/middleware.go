@@ -25,39 +25,39 @@ type payload struct {
 	reqContext  uuid.UUID
 }
 
+// AuthMiddleWare requires a valid bearer token in the Authorization header.
 func AuthMiddleWare(next http.HandlerFunc, secret string, logger *slog.Logger) http.HandlerFunc {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token, err := auth.GetBearerToken(r.Header)
-		if err != nil {
-			token = r.URL.Query().Get("token")
-			if token == "" {
-				response.Error(w, 400, "token is required")
-				return
-			}
-		}
+	return authenticate(next, secret, logger, false)
+}
 
-		userID, err := auth.ValidateJWT(token, secret)
-		if err != nil {
-			response.Error(w, 403, "unauthorized")
+// WSAuthMiddleWare is AuthMiddleWare for websocket upgrades, where browsers
+// cannot set headers; it also accepts ?token=.
+func WSAuthMiddleWare(next http.HandlerFunc, secret string, logger *slog.Logger) http.HandlerFunc {
+	return authenticate(next, secret, logger, true)
+}
+
+func authenticate(next http.HandlerFunc, secret string, logger *slog.Logger, allowQuery bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token, err := auth.GetBearerToken(r.Header)
+		if err != nil && allowQuery {
+			token = r.URL.Query().Get("token")
+		}
+		if token == "" {
+			response.Error(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		var contextStruct payload
+		userID, err := auth.ValidateJWT(token, secret)
+		if err != nil {
+			response.Error(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
 		reqID, err := getReqContextKey(r.Context())
 		if err != nil {
 			logger.Warn("failed to get the req id")
-			contextStruct = payload{
-				userContext: userID,
-			}
-		} else {
-			contextStruct = payload{
-				userContext: userID,
-				reqContext:  reqID,
-			}
 		}
-
-		ctx := context.WithValue(r.Context(), PAYLOADCONTEXT, contextStruct)
+		ctx := context.WithValue(r.Context(), PAYLOADCONTEXT, payload{userContext: userID, reqContext: reqID})
 		next.ServeHTTP(w, r.WithContext(ctx))
-	})
+	}
 }
 
 func GetContextKey(context context.Context, field string) (*uuid.UUID, error) {
@@ -95,14 +95,6 @@ func GetPathValue(pathName string, req *http.Request) (*uuid.UUID, error) {
 	return &pathID, nil
 }
 
-//	func MiddleWareLog(next http.HandlerFunc) http.Handler {
-//		Logger := slog.Default()
-//		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-//			reqID := uuid.New().String()
-//			Logger = Logger.With("req_id", reqID)
-//			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "logger", Logger)))
-//		})
-//	}
 func MiddleWareLog(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqRandomID := uuid.New()

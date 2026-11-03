@@ -2,9 +2,7 @@ package users
 
 import (
 	"context"
-	"errors"
 	"log"
-	"slices"
 	"sync"
 	"time"
 
@@ -107,8 +105,6 @@ func (c *Cache) UpdateUserCache(user *User) {
 		Info:     user,
 		IsActive: false,
 	}
-	log.Printf("userID about to update :%v", user.ID)
-	log.Printf("userCache :%v", c.UserCache[user.ID])
 }
 
 func (c *Cache) GetUserNameByID(userID uuid.UUID) string {
@@ -157,10 +153,8 @@ func (c *Cache) GetUserSendReqList(userID uuid.UUID) *map[uuid.UUID]FriendMetaDa
 	c.UserRsMuLock.Lock()
 	defer c.UserRsMuLock.Unlock()
 	if v, ok := c.UserRsCache[userID]["send"]; ok {
-		log.Print("returning the address of send")
 		return v
 	}
-	log.Print("returning nil address")
 	return nil
 }
 
@@ -169,12 +163,14 @@ func (c *Cache) Load() {
 	defer cancel()
 	userList, err := c.UserRepo.GetAllUsers(ctx)
 	if err != nil {
-		log.Printf("failed to fetch the user data from db \n#%s#", err)
+		log.Printf("failed to fetch the user data from db: %s", err)
+		return
 	}
 	// this one is for the already confirmed friends rs
 	userRsList, err := c.UserRepo.GetAllUsersRs(ctx)
 	if err != nil {
-		log.Printf("failed to fetch the userRs from db \n #%s#", err)
+		log.Printf("failed to fetch the userRs from db: %s", err)
+		return
 	}
 	go func() {
 		for _, user := range *userList {
@@ -186,20 +182,22 @@ func (c *Cache) Load() {
 			c.UserMuLock.Unlock()
 
 			context, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
 			// fetcht the req list of current user
 			list, err := c.UserRepo.GetMyFriReqList(context, user.ID)
 			if err != nil {
 				if err == NoRecordFoundErr {
 					log.Printf("no friend request list found for user(%v)", user.ID)
+					cancel()
 					continue
 				}
 				log.Printf("failed to get the fri req list for user(%v)", user.ID)
+				cancel()
 				continue
 
 			}
 
 			sendList, err := c.UserRepo.GetMySendFirReqList(context, user.ID)
+			cancel()
 			if err != nil {
 				if err == NoRecordFoundErr {
 					log.Printf("no send record found for user(%v)", user.ID)
@@ -262,13 +260,6 @@ func (c *Cache) Load() {
 			})
 		}
 	}()
-	log.Printf("Successfully loaded the user and its relations cache ")
-	for k, v := range c.UserCache {
-		log.Printf("%v : %v", k, v)
-	}
-	for k, v := range c.UserRsCache {
-		log.Printf("%v : %v", k, v)
-	}
 }
 
 // NOTE::the label from the payload and from db is not the same one
@@ -292,11 +283,10 @@ func (c *Cache) updateRsCache(userID uuid.UUID, otherUserInfo FriendMetaData, re
 	if _, ok := c.UserRsCache[userID]; !ok {
 		c.UserRsCache[userID] = make(map[string]*map[uuid.UUID]FriendMetaData)
 	}
-	log.Printf("otherID value :%v in updateRsCache", otherUserInfo.UserID)
-	c.UserRsCache[userID][label] = &map[uuid.UUID]FriendMetaData{
-		reqID: otherUserInfo,
+	if _, ok := c.UserRsCache[userID][label]; !ok {
+		c.UserRsCache[userID][label] = &map[uuid.UUID]FriendMetaData{}
 	}
-	log.Printf("req list after udpate :%v", c.UserRsCache[userID][label])
+	(*c.UserRsCache[userID][label])[reqID] = otherUserInfo
 }
 
 func (c *Cache) updateFriCache(userID uuid.UUID, otherUserInfo FriendMetaData, lable string) {
@@ -307,6 +297,11 @@ func (c *Cache) updateFriCache(userID uuid.UUID, otherUserInfo FriendMetaData, l
 	}
 	if _, ok := c.UserFriCache[userID][lable]; !ok {
 		c.UserFriCache[userID][lable] = &[]FriendMetaData{}
+	}
+	for _, f := range *c.UserFriCache[userID][lable] {
+		if f.UserID == otherUserInfo.UserID {
+			return
+		}
 	}
 	*c.UserFriCache[userID][lable] = append(*c.UserFriCache[userID][lable], otherUserInfo)
 }
@@ -328,14 +323,3 @@ func (c *Cache) CleanUpUserRs(payload *CacheRsDeleteStruct) {
 	}
 }
 
-func removeEleFromSlice(slice *[]uuid.UUID, ele uuid.UUID) (*[]uuid.UUID, error) {
-	orgList := *slice
-	index := slices.Index(orgList, ele)
-	if index == -1 {
-		return nil, errors.New("failed to get the index")
-	}
-	var newSlice []uuid.UUID
-	orgList[index] = orgList[len(orgList)-1]
-	newSlice = orgList[:len(orgList)-1]
-	return &newSlice, nil
-}

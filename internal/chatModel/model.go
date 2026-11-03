@@ -47,14 +47,6 @@ type SeenEvent struct {
 	MsgID  string
 }
 
-// type Event struct {
-// 	FromID   string `json:"from_id"`
-// 	ToID     string `json:"to_id"`
-// 	ParentID string `json:"parent_id,omitempty"`
-// 	Content  string `json:"content,omitempty"`
-// 	Type     string `json:"type,omitempty"`
-// }
-
 type OutFriEvent struct {
 	ReqID  string `json:"req_id"`
 	FromID string `json:"from_id"`
@@ -72,11 +64,6 @@ type InCommingEventForTyping struct {
 	ToID string `json:"to_id"`
 }
 
-//	type Event struct {
-//		FromID string `json:"from_id"`
-//		ToID   string `json:"to_id"`
-//		Event  string `json:"event"`
-//	}
 type OutGoingMessage struct {
 	ID        string    `json:"id"`
 	Content   string    `json:"msg"`
@@ -103,8 +90,8 @@ type GroupActionInfo struct {
 	GroupID uuid.UUID
 }
 type MessageCache struct {
-	Msg    InCommingMessage
-	FromID uuid.UUID
+	Msg       InCommingMessage
+	FromID    uuid.UUID
 	CreatedAt time.Time
 }
 type MessageList struct {
@@ -116,8 +103,8 @@ type MessageListRes struct {
 	MsgList []MessageMetaDataRes `json:"msgList"`
 }
 type MessageMetaData struct {
-	ID        uuid.UUID
-	MsgInfo   *MessageCache
+	ID      uuid.UUID
+	MsgInfo *MessageCache
 }
 
 type MessageMetaDataRes struct {
@@ -136,8 +123,6 @@ type JobForSeen struct {
 	SeenID uuid.UUID
 }
 
-
-
 // var (
 //
 //	ErrUpdateCache         = errors.New("failed to update the cache")
@@ -149,11 +134,13 @@ var (
 	ErrNotValidToID     = errors.New("not valid toID(type uuid)")
 	ErrNotConnectedToWs = errors.New("not connected to ws")
 	ErrNotValidUUID     = errors.New("not valid uuid")
-	ErrNotValidStruct = errors.New("not valid request")
-	ErrNotValidTimeFmt = errors.New("not valit time")
+	ErrNotValidStruct   = errors.New("not valid request")
+	ErrNotValidTimeFmt  = errors.New("not valid time")
+	ErrNotValidParentID = errors.New("not valid parentID(type uuid)")
 )
-	
+
 const (
 	PrivateMessageConstant = "addPrivateMessage"
 	PublicMessageConstant  = "addPublicMessage"
+	SeenMessageConstant    = "chat.seen.update"
 )

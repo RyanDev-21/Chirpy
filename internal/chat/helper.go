@@ -33,7 +33,7 @@ func getPayload(userID, msgID uuid.UUID, msg *chatmodel.InCommingMessage) *chatm
 				ToID:     msg.ToID,
 				Content:  msg.Content,
 				ParendID: msg.ParendID,
-				Type:     msg.Type,	
+				Type:     msg.Type,
 			},
 			CreatedAt: time.Now().UTC(),
 		},
@@ -88,7 +88,6 @@ func convertFromMessageToMeta(msg database.Message) *chatmodel.MessageMetaData {
 				Type:     "private",
 			},
 			CreatedAt: msg.CreatedAt.Time.UTC(),
-
 		},
 	}
 }
@@ -106,7 +105,6 @@ func convertFromGroupMessageToMeta(msg database.Groupmessage) *chatmodel.Message
 			},
 			CreatedAt: msg.CreatedAt.Time.UTC(),
 		},
-		
 	}
 }
 
