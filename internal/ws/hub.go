@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -15,12 +16,33 @@ type Hub struct {
 	mu      sync.RWMutex
 	clients map[uuid.UUID]*Client
 	logger  *slog.Logger
+	policy  EventPolicy
 
 	Register   chan *Client
 	Unregister chan *Client
-	// Broadcast carries client-originated events (typing, seen).
-	Broadcast chan Event
 }
+
+// EventPolicy decides who may receive events that clients send over the
+// socket. Anything it rejects is dropped, so strangers cannot push typing
+// indicators or read receipts at arbitrary users.
+type EventPolicy interface {
+	// TypingTargets returns the recipients of from's typing indicator in a
+	// private chat with user `to`, or (group=true) in group `to`.
+	TypingTargets(ctx context.Context, from, to uuid.UUID, group bool) ([]uuid.UUID, error)
+	// SeenAllowed reports whether from may send a read receipt to user `to`.
+	SeenAllowed(ctx context.Context, from, to uuid.UUID) (bool, error)
+}
+
+// denyAll is used until SetPolicy is called.
+type denyAll struct{}
+
+func (denyAll) TypingTargets(context.Context, uuid.UUID, uuid.UUID, bool) ([]uuid.UUID, error) {
+	return nil, nil
+}
+func (denyAll) SeenAllowed(context.Context, uuid.UUID, uuid.UUID) (bool, error) { return false, nil }
+
+// SetPolicy installs the event policy; call it before Run.
+func (h *Hub) SetPolicy(p EventPolicy) { h.policy = p }
 
 var ErrNoClientFound = errors.New("no client exist")
 
@@ -28,9 +50,9 @@ func NewHub(logger *slog.Logger) *Hub {
 	return &Hub{
 		clients:    make(map[uuid.UUID]*Client),
 		logger:     logger,
+		policy:     denyAll{},
 		Register:   make(chan *Client),
 		Unregister: make(chan *Client),
-		Broadcast:  make(chan Event, 1000),
 	}
 }
 
@@ -70,27 +92,6 @@ func (h *Hub) Run() {
 
 		case client := <-h.Unregister:
 			h.remove(client)
-
-		case event := <-h.Broadcast:
-			var out Event
-			var target string
-			switch p := event.Payload.(type) {
-			case TypoEvent:
-				out = Event{Event: event.Event, Payload: OutGoingEventForTyping{FromID: p.FromID}}
-				target = p.ToID
-			case SeenEvent:
-				out = Event{Event: event.Event, Payload: OutGoingEventForSeen{FromID: p.FromID, MsgID: p.MsgID}}
-				target = p.ToID
-			default:
-				continue
-			}
-			toID, err := uuid.Parse(target)
-			if err != nil {
-				continue
-			}
-			if err := h.WriteIntoConnection(toID, out); err != nil {
-				h.logger.Error("hub: failed to marshal event", "error", err)
-			}
 		}
 	}
 }

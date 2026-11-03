@@ -27,17 +27,15 @@ func TestAuthenticate(t *testing.T) {
 	})
 
 	tests := []struct {
-		name       string
-		allowQuery bool
-		header     string
-		query      string
-		wantCode   int
+		name     string
+		header   string
+		query    string
+		wantCode int
 	}{
-		{"header ok", false, "Bearer " + token, "", 200},
-		{"missing", false, "", "", 401},
-		{"bad token", false, "Bearer nope", "", 401},
-		{"query rejected by default", false, "", token, 401},
-		{"query allowed for ws", true, "", token, 200},
+		{"header ok", "Bearer " + token, "", 200},
+		{"missing", "", "", 401},
+		{"bad token", "Bearer nope", "", 401},
+		{"token in URL is rejected", "", token, 401},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -50,7 +48,7 @@ func TestAuthenticate(t *testing.T) {
 				req.Header.Set("Authorization", tt.header)
 			}
 			rec := httptest.NewRecorder()
-			Authenticate(secret, tt.allowQuery)(echoUser).ServeHTTP(rec, req)
+			Authenticate(secret)(echoUser).ServeHTTP(rec, req)
 			if rec.Code != tt.wantCode {
 				t.Fatalf("code = %d, want %d", rec.Code, tt.wantCode)
 			}

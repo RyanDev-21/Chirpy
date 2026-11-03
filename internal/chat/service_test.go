@@ -209,7 +209,13 @@ func TestMarkSeen(t *testing.T) {
 	if err := f.svc.MarkSeen(context.Background(), f.alice, f.bob, "bad"); !errors.Is(err, ErrNotValidUUID) {
 		t.Fatalf("err = %v", err)
 	}
-	if err := f.svc.MarkSeen(context.Background(), f.alice, f.bob, uuid.NewString()); err != nil {
+	foreign := uuid.New()
+	if err := f.svc.MarkSeen(context.Background(), f.alice, f.bob, foreign.String()); !errors.Is(err, ErrMessageNotInChat) {
+		t.Fatalf("receipt for a message outside the chat: %v", err)
+	}
+	inChat := uuid.New()
+	f.repo.parents[inChat] = true
+	if err := f.svc.MarkSeen(context.Background(), f.alice, f.bob, inChat.String()); err != nil {
 		t.Fatal(err)
 	}
 	if f.queue.topics[0] != TopicSeen || f.push.targets[0][0] != f.bob {
@@ -251,5 +257,35 @@ func TestDatabaseFailureFailsSendAndSkipsDelivery(t *testing.T) {
 	got, _ := f.svc.PrivateMessages(context.Background(), f.bob, f.alice, "")
 	if len(got) != 0 {
 		t.Fatalf("an unsaved message must not be cached: %+v", got)
+	}
+}
+
+func TestRealtimeEventPolicy(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+
+	// private typing: friends only
+	if got, _ := f.svc.TypingTargets(ctx, f.alice, f.bob, false); len(got) != 1 || got[0] != f.bob {
+		t.Fatalf("friend typing targets = %v", got)
+	}
+	if got, _ := f.svc.TypingTargets(ctx, f.carol, f.bob, false); len(got) != 0 {
+		t.Fatalf("stranger typing must be dropped, got %v", got)
+	}
+	// group typing: members only, never echoed to the sender
+	if got, _ := f.svc.TypingTargets(ctx, f.alice, f.group, true); len(got) != 1 || got[0] != f.bob {
+		t.Fatalf("group typing targets = %v", got)
+	}
+	if got, _ := f.svc.TypingTargets(ctx, f.carol, f.group, true); len(got) != 0 {
+		t.Fatalf("non-member group typing must be dropped, got %v", got)
+	}
+	if got, err := f.svc.TypingTargets(ctx, f.alice, uuid.New(), true); err != nil || len(got) != 0 {
+		t.Fatalf("unknown group: %v %v", got, err)
+	}
+	// seen receipts: friends only
+	if ok, _ := f.svc.SeenAllowed(ctx, f.alice, f.bob); !ok {
+		t.Fatal("friends may send read receipts")
+	}
+	if ok, _ := f.svc.SeenAllowed(ctx, f.carol, f.bob); ok {
+		t.Fatal("strangers must not send read receipts")
 	}
 }

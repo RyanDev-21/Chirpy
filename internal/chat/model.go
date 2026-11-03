@@ -27,6 +27,7 @@ var (
 	ErrNotValidParentID    = errors.New("parent_id must be the id of a message in the same chat")
 	ErrNotSupportedTypeMsg = errors.New(`type must be "private" or "public"`)
 	ErrEmptyMessage        = errors.New("msg must be 1-500 characters")
+	ErrMessageNotInChat    = errors.New("msg_id is not a message in this chat")
 )
 
 const maxMessageLen = 500 // matches message.content VARCHAR(500)

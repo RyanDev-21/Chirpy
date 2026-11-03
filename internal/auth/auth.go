@@ -28,8 +28,9 @@ type PayloadForRefresh struct {
 	expiresAt time.Time
 }
 
+// RefreshToken is a stored refresh token; the token itself is never kept,
+// only its hash.
 type RefreshToken struct {
-	Token     string
 	UserID    uuid.UUID
 	ExpiresAt time.Time
 	UpdatedAt time.Time

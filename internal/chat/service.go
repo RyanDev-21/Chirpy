@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"RyanDev-21.com/Chirpy/internal/groups"
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
 	"RyanDev-21.com/Chirpy/internal/ws"
 	"github.com/google/uuid"
@@ -38,6 +39,10 @@ type ChatService interface {
 	MarkSeen(ctx context.Context, me, other uuid.UUID, msgID string) error
 
 	HandleSeen(ctx context.Context, j JobSeen) error
+
+	// ws.EventPolicy: who may receive client-sent typing and seen events.
+	TypingTargets(ctx context.Context, from, to uuid.UUID, group bool) ([]uuid.UUID, error)
+	SeenAllowed(ctx context.Context, from, to uuid.UUID) (bool, error)
 }
 
 type chatService struct {
@@ -232,6 +237,15 @@ func (s *chatService) MarkSeen(ctx context.Context, me, other uuid.UUID, msgIDSt
 	if err != nil {
 		return ErrNotValidUUID
 	}
+	// the message must belong to this conversation, otherwise anyone could
+	// send read receipts to anyone for arbitrary ids
+	inChat, err := s.repo.ParentInPrivate(ctx, msgID, me, other)
+	if err != nil {
+		return err
+	}
+	if !inChat {
+		return ErrMessageNotInChat
+	}
 	chatID := PrivateChatID(me, other)
 	if err := s.cache.SetSeen(ctx, chatID, me, msgID); err != nil {
 		return err
@@ -241,12 +255,50 @@ func (s *chatService) MarkSeen(ctx context.Context, me, other uuid.UUID, msgIDSt
 	if err := s.queue.Publish(pubCtx, TopicSeen, JobSeen{ChatID: chatID, MsgID: msgID, SeenID: me}); err != nil {
 		return err
 	}
-	if err := s.push.WriteToUsers([]uuid.UUID{other}, ws.Event{Event: ws.EventSeen, Payload: ws.OutGoingEventForSeen{
-		MsgID: msgID.String(), FromID: me.String(),
-	}}); err != nil {
-		s.logger.WarnContext(ctx, "failed to push seen event", "error", err)
+	// the receipt is stored either way; it is only pushed to friends
+	if ok, err := s.SeenAllowed(ctx, me, other); err == nil && ok {
+		if err := s.push.WriteToUsers([]uuid.UUID{other}, ws.Event{Event: ws.EventSeen, Payload: ws.OutGoingEventForSeen{
+			MsgID: msgID.String(), FromID: me.String(),
+		}}); err != nil {
+			s.logger.WarnContext(ctx, "failed to push seen event", "error", err)
+		}
 	}
 	return nil
+}
+
+// --- realtime event policy (ws.EventPolicy) ---
+
+// TypingTargets: private typing only between friends; group typing only
+// from a member, delivered to the other members.
+func (s *chatService) TypingTargets(ctx context.Context, from, to uuid.UUID, group bool) ([]uuid.UUID, error) {
+	if !group {
+		ok, err := s.friends.AreFriends(ctx, from, to)
+		if err != nil || !ok {
+			return nil, err
+		}
+		return []uuid.UUID{to}, nil
+	}
+	members, err := s.groups.Members(ctx, to)
+	if err != nil || !slices.Contains(members, from) {
+		return nil, ignoreNotFound(err)
+	}
+	return slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == from }), nil
+}
+
+// SeenAllowed: read receipts only between friends.
+func (s *chatService) SeenAllowed(ctx context.Context, from, to uuid.UUID) (bool, error) {
+	if from == to {
+		return false, nil
+	}
+	return s.friends.AreFriends(ctx, from, to)
+}
+
+// ignoreNotFound treats an unknown group as "no recipients", not an error.
+func ignoreNotFound(err error) error {
+	if errors.Is(err, groups.ErrNotFoundGroup) {
+		return nil
+	}
+	return err
 }
 
 // --- workers ---

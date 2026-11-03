@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -67,36 +68,7 @@ func (c *Client) ReadPump() {
 			continue
 		}
 
-		switch eventMap.Event {
-		case "Typing":
-			var p InCommingEventForTyping
-			if err := json.Unmarshal(eventMap.Payload, &p); err != nil {
-				c.Hub.logger.Debug("ignoring malformed websocket event", "user_id", c.UserID, "event", eventMap.Event)
-				continue
-			}
-			c.Hub.Broadcast <- Event{
-				Event: "Typing",
-				Payload: TypoEvent{
-					FromID: c.UserID.String(),
-					ToID:   p.ToID,
-				},
-			}
-		case "Seen":
-			var p InCommingEventForSeen
-			if err := json.Unmarshal(eventMap.Payload, &p); err != nil {
-				c.Hub.logger.Debug("ignoring malformed websocket event", "user_id", c.UserID, "event", eventMap.Event)
-				continue
-			}
-			c.Hub.Broadcast <- Event{
-				Event: "Seen",
-				Payload: SeenEvent{
-					FromID: c.UserID.String(),
-					ToID:   p.ToID,
-					MsgID:  p.MsgID,
-				},
-			}
-
-		}
+		c.handleEvent(eventMap)
 	}
 }
 
@@ -137,4 +109,53 @@ func (c *Client) WritePump() {
 			}
 		}
 	}
+}
+
+// handleEvent routes a client-sent event through the hub's policy. Rejected
+// or malformed events are dropped without telling the sender.
+func (c *Client) handleEvent(ev InCommingEvent) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	switch ev.Event {
+	case EventTyping:
+		var p InCommingEventForTyping
+		to, err := decodeTarget(ev.Payload, &p, func() string { return p.ToID })
+		if err != nil {
+			c.Hub.logger.Debug("ignoring malformed websocket event", "user_id", c.UserID, "event", ev.Event)
+			return
+		}
+		group := p.Type == "public"
+		targets, err := c.Hub.policy.TypingTargets(ctx, c.UserID, to, group)
+		if err != nil {
+			c.Hub.logger.Warn("typing policy failed", "user_id", c.UserID, "error", err)
+			return
+		}
+		out := OutGoingEventForTyping{FromID: c.UserID.String()}
+		if group {
+			out.GroupID = to.String()
+		}
+		_ = c.Hub.WriteToUsers(targets, Event{Event: EventTyping, Payload: out})
+	case EventSeen:
+		var p InCommingEventForSeen
+		to, err := decodeTarget(ev.Payload, &p, func() string { return p.ToID })
+		if err != nil {
+			c.Hub.logger.Debug("ignoring malformed websocket event", "user_id", c.UserID, "event", ev.Event)
+			return
+		}
+		ok, err := c.Hub.policy.SeenAllowed(ctx, c.UserID, to)
+		if err != nil {
+			c.Hub.logger.Warn("seen policy failed", "user_id", c.UserID, "error", err)
+			return
+		}
+		if ok {
+			_ = c.Hub.WriteIntoConnection(to, Event{Event: EventSeen, Payload: OutGoingEventForSeen{MsgID: p.MsgID, FromID: c.UserID.String()}})
+		}
+	}
+}
+
+func decodeTarget[T any](raw json.RawMessage, v *T, id func() string) (uuid.UUID, error) {
+	if err := json.Unmarshal(raw, v); err != nil {
+		return uuid.Nil, err
+	}
+	return uuid.Parse(id())
 }
