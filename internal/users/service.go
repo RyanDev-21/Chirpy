@@ -9,12 +9,12 @@ import (
 	"path/filepath"
 	"time"
 
-	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
+	"RyanDev-21.com/Chirpy/internal/ws"
 
 	//	"RyanDev-21.com/Chirpy/internal/database"
-	"RyanDev-21.com/Chirpy/pkg/auth"
-	"RyanDev-21.com/Chirpy/pkg/middleware"
+	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
+	"RyanDev-21.com/Chirpy/internal/platform/secure"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -51,12 +51,12 @@ type userService struct {
 	userRepo    UserRepo
 	userCache   UserCacheItf
 	mainMq      *mq.MainMQ
-	hub         *chatmodel.Hub
+	hub         *ws.Hub
 	logger      *slog.Logger
 	configCache ConfigCache
 }
 
-func NewUserService(userRepo UserRepo, userCache UserCacheItf, mainMq *mq.MainMQ, logger *slog.Logger, hub *chatmodel.Hub, configCache ConfigCache) UserService {
+func NewUserService(userRepo UserRepo, userCache UserCacheItf, mainMq *mq.MainMQ, logger *slog.Logger, hub *ws.Hub, configCache ConfigCache) UserService {
 	return &userService{
 		userRepo:    userRepo,
 		userCache:   userCache,
@@ -69,13 +69,8 @@ func NewUserService(userRepo UserRepo, userCache UserCacheItf, mainMq *mq.MainMQ
 
 // name check still have to be implemented
 func (s *userService) Register(ctx context.Context, name, email, password string) (*User, error) {
-	reqID, err := middleware.GetContextKey(ctx, "request")
-	if err != nil {
-
-		s.logger.Error("failed to get the ID")
-		return nil, err
-	}
-	hashpassword, err := auth.HashPassword(password)
+	reqID := reqctx.RequestID(ctx)
+	hashpassword, err := secure.HashPassword(password)
 	if err != nil {
 		s.logger.Error("hash function failed", "reqID", reqID)
 		return nil, err
@@ -100,14 +95,14 @@ func (s *userService) UpdatePassword(ctx context.Context, userID uuid.UUID, oldP
 	if err != nil {
 		return nil, err
 	}
-	valid, err := auth.CheckPassword(oldPassword, pass)
+	valid, err := secure.CheckPassword(oldPassword, pass)
 	if err != nil {
 		return nil, err
 	}
 	if !valid {
-		return nil, auth.ErrPassNotMatch
+		return nil, secure.ErrPassNotMatch
 	}
-	hashPassword, err := auth.HashPassword(newPassword)
+	hashPassword, err := secure.HashPassword(newPassword)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +126,7 @@ func (s *userService) UpdatePassword(ctx context.Context, userID uuid.UUID, oldP
 // you should not store both the req and otherUserID
 // will save  record with pending stauts
 func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, recieverID uuid.UUID, label string) (*uuid.UUID, error) {
-	reqID, _ := middleware.GetContextKey(ctx, "request")
+	reqID := reqctx.RequestID(ctx)
 
 	s.logger.Info("add friend request started", "reqID", reqID, "senderID", senderID, "receiverID", recieverID)
 
@@ -144,7 +139,7 @@ func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, rec
 	valid := s.hub.CheckWsConnection(senderID)
 	if !valid {
 		s.logger.Warn("the client is not connected to ws", "reqID", reqID, "fromID", senderID)
-		return nil, chatmodel.ErrNotConnectedToWs
+		return nil, ws.ErrNotConnectedToWs
 	}
 
 	friReqID, err := uuid.NewV7()
@@ -206,9 +201,9 @@ func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, rec
 
 	s.logger.Info("writing into connection", "reqID", reqID, "fromID", senderID)
 	// need to change this to get the infriEvent
-	err = s.hub.WriteIntoConnection(recieverID, chatmodel.Event{
+	err = s.hub.WriteIntoConnection(recieverID, ws.Event{
 		Event: "AddFri",
-		Payload: chatmodel.OutFriEvent{
+		Payload: ws.OutFriEvent{
 			ReqID:  friReqID.String(),
 			FromID: senderID.String(),
 		},
@@ -241,13 +236,13 @@ func (s *userService) AddFriendSend(ctx context.Context, senderID uuid.UUID, rec
 
 // this need to return error for failed case didn't do any of that
 func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.UUID, status string) error {
-	reqIDVal, _ := middleware.GetContextKey(ctx, "request")
+	reqIDVal := reqctx.RequestID(ctx)
 
 	s.logger.Info("checking the ws connection ...", "reqID", reqIDVal, "fromID", fromID)
 	valid := s.hub.CheckWsConnection(fromID)
 	if !valid {
 		s.logger.Warn("the client is not connected to ws", "reqID", reqIDVal, "fromID", fromID)
-		return chatmodel.ErrNotConnectedToWs
+		return ws.ErrNotConnectedToWs
 	}
 
 	s.logger.Info("confirm friend request started", "reqID", reqIDVal, "fromID", fromID, "reqID", reqID)
@@ -314,9 +309,9 @@ func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.U
 
 	s.logger.Info("writing into connection", "reqID", reqIDVal, "fromID", fromID)
 	// need to change this to get the infriEvent
-	err := s.hub.WriteIntoConnection(toID.UserID, chatmodel.Event{
+	err := s.hub.WriteIntoConnection(toID.UserID, ws.Event{
 		Event: "AcceptFri",
-		Payload: chatmodel.OutFriEvent{
+		Payload: ws.OutFriEvent{
 			ReqID:  reqID.String(),
 			FromID: fromID.String(),
 		},
@@ -343,12 +338,12 @@ func (s *userService) ConfirmFriendReq(ctx context.Context, fromID, reqID uuid.U
 
 // need to handle the errorr from that PublishWithContext
 func (s *userService) CancelFriReq(ctx context.Context, userID, reqID uuid.UUID) error {
-	reqIDVal, _ := middleware.GetContextKey(ctx, "request")
+	reqIDVal := reqctx.RequestID(ctx)
 	s.logger.Info("checking the ws connection ...", "reqID", reqIDVal, "fromID", userID)
 	valid := s.hub.CheckWsConnection(userID)
 	if !valid {
 		s.logger.Warn("the client is not connected to ws", "reqID", reqIDVal, "fromID", userID)
-		return chatmodel.ErrNotConnectedToWs
+		return ws.ErrNotConnectedToWs
 	}
 	s.logger.Info("confirm friend request started", "reqID", reqIDVal, "fromID", userID, "reqID", reqID)
 	toID := s.userCache.GetOtherUserIDByReqID(userID, reqID, "pending")
@@ -390,9 +385,9 @@ func (s *userService) CancelFriReq(ctx context.Context, userID, reqID uuid.UUID)
 	})
 
 	s.logger.Info("writing into connection", "reqID", reqIDVal, "fromID", userID)
-	err := s.hub.WriteIntoConnection(toID.UserID, chatmodel.Event{
+	err := s.hub.WriteIntoConnection(toID.UserID, ws.Event{
 		Event: "DenyFri",
-		Payload: chatmodel.OutFriEvent{
+		Payload: ws.OutFriEvent{
 			ReqID:  reqID.String(),
 			FromID: userID.String(),
 		},
@@ -594,7 +589,7 @@ func saveIntoLog(jobName string, job interface{}, logger *slog.Logger) {
 }
 
 func (s *userService) SearchUser(ctx context.Context, serachName string) (*[]User, error) {
-	reqID, _ := middleware.GetContextKey(ctx, "request")
+	reqID := reqctx.RequestID(ctx)
 
 	s.logger.Info("search user started", "reqID", reqID, "searchName", serachName)
 
@@ -619,7 +614,7 @@ func (s *userService) SearchUser(ctx context.Context, serachName string) (*[]Use
 }
 
 func (s *userService) SaveConfig(ctx context.Context, userID uuid.UUID, configList *ConfigList) error {
-	reqID, _ := middleware.GetContextKey(ctx, "request")
+	reqID := reqctx.RequestID(ctx)
 	s.logger.Info("save position started ", "reqID", reqID, "userID", userID)
 
 	s.logger.Info("updating the config cache", "reqID", reqID, "userID", userID)
@@ -642,7 +637,7 @@ func (s *userService) SaveConfig(ctx context.Context, userID uuid.UUID, configLi
 }
 
 func (s *userService) GetConfig(ctx context.Context, userID uuid.UUID) (*ConfigList, error) {
-	reqID, _ := middleware.GetContextKey(ctx, "request")
+	reqID := reqctx.RequestID(ctx)
 	s.logger.Info("get config started ", "reqID", reqID, "userID", userID)
 	s.logger.Info("trying to fetch from config cache", "reqID", reqID, "userID", userID)
 	configList := s.configCache.GetConfig(userID)

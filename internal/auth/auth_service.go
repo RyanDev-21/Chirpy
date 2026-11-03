@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"time"
 
+	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
+	"RyanDev-21.com/Chirpy/internal/platform/secure"
 	"RyanDev-21.com/Chirpy/internal/users"
-	"RyanDev-21.com/Chirpy/pkg/auth"
-	"RyanDev-21.com/Chirpy/pkg/middleware"
 	"github.com/google/uuid"
 )
 
@@ -38,15 +38,12 @@ func NewAuthService(userRepo users.UserRepo, authRepo AuthRepo, secret string, l
 }
 
 func (s *authService) Login(ctx context.Context, email, password string) (accessToken, refreshToken string, user *users.User, err error) {
-	reqID, err := middleware.GetContextKey(ctx, "request")
-	if err != nil {
-		s.logger.Warn("failed to get the reqID")
-	}
+	reqID := reqctx.RequestID(ctx)
 	dbUser, hashPassword, err := s.userRepo.GetUserByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, users.NoUserFoundErr) {
 			// same response and timing as a wrong password
-			auth.BurnPasswordCheck(password)
+			secure.BurnPasswordCheck(password)
 			s.logger.Info("login for unknown email", "reqID", reqID)
 			return "", "", nil, InvalidCredentailErr
 		}
@@ -54,7 +51,7 @@ func (s *authService) Login(ctx context.Context, email, password string) (access
 		return "", "", nil, err
 	}
 
-	valid, err := auth.CheckPassword(password, hashPassword)
+	valid, err := secure.CheckPassword(password, hashPassword)
 	if err != nil {
 		s.logger.Error("the password check funtion failed", "reqID", reqID)
 		return "", "", nil, err
@@ -83,10 +80,7 @@ func (s *authService) Revoke(ctx context.Context, token string) error {
 
 // need to add the logic to check whether the token has already revoked or not
 func (s *authService) Refresh(ctx context.Context, token string) (string, string, error) {
-	reqID, err := middleware.GetContextKey(ctx, "request")
-	if err != nil {
-		s.logger.Warn("failed to get the reqID")
-	}
+	reqID := reqctx.RequestID(ctx)
 	s.logger.Info("getting the refresh token started", "reqID", reqID)
 	response, err := s.authRepo.GetRefreshToken(ctx, token)
 	if err != nil {
@@ -119,12 +113,12 @@ func (s *authService) Refresh(ctx context.Context, token string) (string, string
 func (s *authService) generateTokens(ctx context.Context, userID uuid.UUID) (string, string, error) {
 	expireIn := 60 * time.Minute
 
-	accessToken, err := auth.MakeJWT(userID, s.secret, expireIn)
+	accessToken, err := secure.MakeJWT(userID, s.secret, expireIn)
 	if err != nil {
 		log.Printf("failed to make accessToken %s", err)
 		return "", "", err
 	}
-	refreshToken, err := auth.MakeRefreshToken()
+	refreshToken, err := secure.MakeRefreshToken()
 	if err != nil {
 		log.Printf("failed to make a refreshToken %s", err)
 		return "", "", err

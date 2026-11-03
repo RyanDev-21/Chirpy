@@ -4,46 +4,45 @@ import (
 	"errors"
 	"net/http"
 
-	"RyanDev-21.com/Chirpy/pkg/encoder"
-	"RyanDev-21.com/Chirpy/pkg/middleware"
-	"RyanDev-21.com/Chirpy/pkg/response"
+	"RyanDev-21.com/Chirpy/internal/platform/httpx"
+	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
 )
 
-type groupHandler struct {
+type GroupHandler struct {
 	groupService GroupService
 }
 
-func NewGroupHandler(groupService GroupService) *groupHandler {
-	return &groupHandler{groupService: groupService}
+func NewGroupHandler(groupService GroupService) *GroupHandler {
+	return &GroupHandler{groupService: groupService}
 }
 
 func writeGroupError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFoundGroup):
-		response.Error(w, http.StatusNotFound, err.Error())
+		httpx.Error(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrDuplicateName), errors.Is(err, ErrAlreadyMember), errors.Is(err, ErrGroupFull):
-		response.Error(w, http.StatusConflict, err.Error())
+		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrNotMember), errors.Is(err, ErrInvalidGroupReq):
-		response.Error(w, http.StatusBadRequest, err.Error())
+		httpx.Error(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrLeaderCannotLeave):
-		response.Error(w, http.StatusForbidden, err.Error())
+		httpx.Error(w, http.StatusForbidden, err.Error())
 	default:
-		response.Error(w, http.StatusInternalServerError, "something went wrong")
+		httpx.Error(w, http.StatusInternalServerError, "something went wrong")
 	}
 }
 
-func (h *groupHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 	var params createGroupRequest
-	if err := encoder.Decode(r, &params); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid parameters")
+	if err := httpx.Decode(w, r, &params); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid parameters")
 		return
 	}
-	creatorID, err := middleware.GetContextKey(r.Context(), "user")
+	creatorID, err := reqctx.User(r.Context())
 	if err != nil {
-		response.Error(w, http.StatusUnauthorized, "unauthorized")
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	res, err := h.groupService.createGroup(r.Context(), *creatorID, &createGroupStruct{
+	res, err := h.groupService.createGroup(r.Context(), creatorID, &createGroupStruct{
 		GroupName:   params.GroupName,
 		Description: params.Description,
 		MaxMems:     params.MaxMems,
@@ -52,39 +51,39 @@ func (h *groupHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		writeGroupError(w, err)
 		return
 	}
-	response.JSON(w, http.StatusCreated, res)
+	httpx.JSON(w, http.StatusCreated, res)
 }
 
-func (h *groupHandler) JoinGroup(w http.ResponseWriter, r *http.Request) {
-	groupID, err := middleware.GetPathValue("group_id", r)
+func (h *GroupHandler) JoinGroup(w http.ResponseWriter, r *http.Request) {
+	groupID, err := httpx.PathUUID(r, "group_id")
 	if err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid group id")
+		httpx.Error(w, http.StatusBadRequest, "invalid group id")
 		return
 	}
-	userID, err := middleware.GetContextKey(r.Context(), "user")
+	userID, err := reqctx.User(r.Context())
 	if err != nil {
-		response.Error(w, http.StatusUnauthorized, "unauthorized")
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	if err := h.groupService.joinGroup(r.Context(), *groupID, *userID); err != nil {
+	if err := h.groupService.joinGroup(r.Context(), groupID, userID); err != nil {
 		writeGroupError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
 }
 
-func (h *groupHandler) LeaveGroup(w http.ResponseWriter, r *http.Request) {
-	groupID, err := middleware.GetPathValue("group_id", r)
+func (h *GroupHandler) LeaveGroup(w http.ResponseWriter, r *http.Request) {
+	groupID, err := httpx.PathUUID(r, "group_id")
 	if err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid group id")
+		httpx.Error(w, http.StatusBadRequest, "invalid group id")
 		return
 	}
-	userID, err := middleware.GetContextKey(r.Context(), "user")
+	userID, err := reqctx.User(r.Context())
 	if err != nil {
-		response.Error(w, http.StatusUnauthorized, "unauthorized")
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	if err := h.groupService.leaveGroup(r.Context(), *groupID, *userID); err != nil {
+	if err := h.groupService.leaveGroup(r.Context(), groupID, userID); err != nil {
 		writeGroupError(w, err)
 		return
 	}

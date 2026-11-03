@@ -7,27 +7,26 @@ import (
 	"slices"
 	"time"
 
-	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
-	rediscache "RyanDev-21.com/Chirpy/internal/redisCache"
+	"RyanDev-21.com/Chirpy/internal/platform/redisx"
 	"github.com/google/uuid"
 )
 
 type chatCache struct {
-	rediscache rediscache.RedisCacheImpl
+	rediscache redisx.RedisCacheImpl
 	logger     *slog.Logger
 }
 
 type ChatRepoCache interface {
-	addMessage(ctx context.Context, key string, payload *chatmodel.MessageMetaData) error
+	addMessage(ctx context.Context, key string, payload *MessageMetaData) error
 	generateRedisKey(chatID string, chatType string) string
 	generateRedisKeyForSeen(chatID string, userID uuid.UUID) string
 	// getMessages returns the newest cached messages in chronological order.
 	// When since is non-zero only messages created after it are returned.
-	getMessages(ctx context.Context, key string, since time.Time) ([]chatmodel.MessageMetaDataRes, error)
+	getMessages(ctx context.Context, key string, since time.Time) ([]MessageMetaDataRes, error)
 	UpdateLastSeen(ctx context.Context, key string, val uuid.UUID) error
 }
 
-func NewChatCache(rediscache rediscache.RedisCacheImpl, logger *slog.Logger) ChatRepoCache {
+func NewChatCache(rediscache redisx.RedisCacheImpl, logger *slog.Logger) ChatRepoCache {
 	return &chatCache{
 		rediscache: rediscache,
 		logger:     logger,
@@ -49,7 +48,7 @@ func (c *chatCache) generateRedisKeyForSeen(chatID string, userID uuid.UUID) str
 	return fmt.Sprintf("seen:%v:%v", chatID, userID)
 }
 
-func (c *chatCache) addMessage(ctx context.Context, key string, payload *chatmodel.MessageMetaData) error {
+func (c *chatCache) addMessage(ctx context.Context, key string, payload *MessageMetaData) error {
 	payloadBytes, err := marshallBinary(payload.MsgInfo)
 	if err != nil {
 		c.logger.Error("failed to marshal message into binary", "err", err)
@@ -70,12 +69,12 @@ func (c *chatCache) UpdateLastSeen(ctx context.Context, key string, val uuid.UUI
 	return nil
 }
 
-func (c *chatCache) getMessages(ctx context.Context, key string, since time.Time) ([]chatmodel.MessageMetaDataRes, error) {
+func (c *chatCache) getMessages(ctx context.Context, key string, since time.Time) ([]MessageMetaDataRes, error) {
 	list, err := c.rediscache.XRevRangeN(ctx, key)
 	if err != nil {
 		return nil, err
 	}
-	messageList := make([]chatmodel.MessageMetaDataRes, 0, len(list))
+	messageList := make([]MessageMetaDataRes, 0, len(list))
 	for _, v := range list {
 		msgIDStr, ok := v.Values["message_id"].(string)
 		if !ok {
@@ -96,7 +95,7 @@ func (c *chatCache) getMessages(ctx context.Context, key string, since time.Time
 		if !since.IsZero() && !payload.CreatedAt.After(since) {
 			continue
 		}
-		messageList = append(messageList, chatmodel.MessageMetaDataRes{
+		messageList = append(messageList, MessageMetaDataRes{
 			ID:        msgID,
 			MsgInfo:   *payload,
 			CreatedAt: payload.CreatedAt,

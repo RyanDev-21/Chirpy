@@ -322,4 +322,3 @@ func (c *Cache) CleanUpUserRs(payload *CacheRsDeleteStruct) {
 		log.Print("cannot find the user in the userRscache map ")
 	}
 }
-

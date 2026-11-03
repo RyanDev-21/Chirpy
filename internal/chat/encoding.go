@@ -3,8 +3,6 @@ package chat
 import (
 	"bytes"
 	"encoding/gob"
-
-	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 )
 
 func marshallBinary(payload interface{}) ([]byte, error) {
@@ -15,8 +13,8 @@ func marshallBinary(payload interface{}) ([]byte, error) {
 	return buff.Bytes(), err
 }
 
-func unmarshalBinary(bytesArray []byte) (*chatmodel.MessageCache, error) {
-	var payload chatmodel.MessageCache
+func unmarshalBinary(bytesArray []byte) (*MessageCache, error) {
+	var payload MessageCache
 	buff := bytes.NewBuffer(bytesArray)
 	dec := gob.NewDecoder(buff)
 

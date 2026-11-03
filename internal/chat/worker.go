@@ -1,7 +1,6 @@
 package chat
 
 import (
-	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 	mq "RyanDev-21.com/Chirpy/internal/customMq"
 	"RyanDev-21.com/Chirpy/internal/database"
 	"github.com/google/uuid"
@@ -20,7 +19,7 @@ func ParentIdIdentifier(parentID string) *uuid.UUID {
 	return &id
 }
 
-func getPayLoadForAddMessagePrivate(msgMetaData chatmodel.MessageMetaData, parentID *uuid.UUID) *database.AddMessagePrivateParams {
+func getPayLoadForAddMessagePrivate(msgMetaData MessageMetaData, parentID *uuid.UUID) *database.AddMessagePrivateParams {
 	if parentID != nil {
 		return &database.AddMessagePrivateParams{
 			ID:       msgMetaData.ID,
@@ -41,7 +40,7 @@ func getPayLoadForAddMessagePrivate(msgMetaData chatmodel.MessageMetaData, paren
 	}
 }
 
-func getPayLoadForAddMessagePublic(msgMetaData chatmodel.MessageMetaData, parentID *uuid.UUID) *database.AddMessagePublicParams {
+func getPayLoadForAddMessagePublic(msgMetaData MessageMetaData, parentID *uuid.UUID) *database.AddMessagePublicParams {
 	if parentID != nil {
 		return &database.AddMessagePublicParams{
 			ID:        msgMetaData.ID,
@@ -64,7 +63,7 @@ func getPayLoadForAddMessagePublic(msgMetaData chatmodel.MessageMetaData, parent
 // this one will store the msg id and its info into db
 func (s *chatService) StartWorkerForAddPrivateMessage(channel chan *mq.Channel) {
 	for chen := range channel {
-		msg := chen.Msg.(chatmodel.MessageMetaData)
+		msg := chen.Msg.(MessageMetaData)
 		parentID := ParentIdIdentifier(msg.MsgInfo.Msg.ParendID)
 
 		// this one stores into message table
@@ -88,7 +87,7 @@ func (s *chatService) StartWorkerForAddPrivateMessage(channel chan *mq.Channel) 
 
 func (s *chatService) StartWorkerForAddPublicMessage(channel chan *mq.Channel) {
 	for chen := range channel {
-		msg := chen.Msg.(chatmodel.MessageMetaData)
+		msg := chen.Msg.(MessageMetaData)
 		parentID := ParentIdIdentifier(msg.MsgInfo.Msg.ParendID)
 		payload := getPayLoadForAddMessagePublic(msg, parentID)
 		_, err := s.chatRepo.addMessagePublic(payload)
@@ -110,7 +109,7 @@ func (s *chatService) StartWorkerForAddPublicMessage(channel chan *mq.Channel) {
 }
 func (s *chatService) StartWorkerForUpdateSeen(channel chan *mq.Channel) {
 	for chen := range channel {
-		msg := chen.Msg.(chatmodel.JobForSeen)
+		msg := chen.Msg.(JobForSeen)
 		if err := s.chatRepo.updateLastSeen(msg.ChatID, msg.SeenID, msg.MsgID); err != nil {
 			s.logger.Error("failed to update the last seen in db", "fromID", msg.SeenID, "error", err)
 			chen.RetriesCount++

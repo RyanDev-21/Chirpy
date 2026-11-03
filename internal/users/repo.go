@@ -2,9 +2,10 @@ package users
 
 import (
 	"context"
-	"github.com/jackc/pgx/v5"
 	"encoding/json"
 	"errors"
+
+	"github.com/jackc/pgx/v5"
 
 	//	"log"
 	"strings"

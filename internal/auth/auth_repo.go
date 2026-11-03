@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+
 	"github.com/jackc/pgx/v5"
 
 	"RyanDev-21.com/Chirpy/internal/database"

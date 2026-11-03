@@ -7,7 +7,6 @@ import (
 
 	"time"
 
-	chatmodel "RyanDev-21.com/Chirpy/internal/chatModel"
 	"RyanDev-21.com/Chirpy/internal/database"
 	"github.com/google/uuid"
 )
@@ -19,17 +18,17 @@ func getChatKey(firstID, secondID uuid.UUID) string {
 	return fmt.Sprintf("%v_%v", secondID, firstID)
 }
 
-// func updateChatCache(msgList *[]chatmodel.MessageMetaData)error{
+// func updateChatCache(msgList *[]MessageMetaData)error{
 // 	for
 // 	return nil
 // }
 
-func getPayload(userID, msgID uuid.UUID, msg *chatmodel.InCommingMessage) *chatmodel.MessageMetaData {
-	return &chatmodel.MessageMetaData{
+func getPayload(userID, msgID uuid.UUID, msg *InCommingMessage) *MessageMetaData {
+	return &MessageMetaData{
 		ID: msgID,
-		MsgInfo: &chatmodel.MessageCache{
+		MsgInfo: &MessageCache{
 			FromID: userID,
-			Msg: chatmodel.InCommingMessage{
+			Msg: InCommingMessage{
 				ToID:     msg.ToID,
 				Content:  msg.Content,
 				ParendID: msg.ParendID,
@@ -42,7 +41,7 @@ func getPayload(userID, msgID uuid.UUID, msg *chatmodel.InCommingMessage) *chatm
 
 // gen the unique msgID and store in cache and db
 // this one needs a parseID as the chatID need to generate and stuff
-func (s *chatService) handlePrivateMsg(ctx context.Context, userID, parseID uuid.UUID, msg *chatmodel.MessageMetaData) error {
+func (s *chatService) handlePrivateMsg(ctx context.Context, userID, parseID uuid.UUID, msg *MessageMetaData) error {
 	key := getChatKey(userID, parseID)
 	redisKey := s.rediscache.generateRedisKey(key, "private")
 	err := s.rediscache.addMessage(ctx, redisKey, msg)
@@ -55,7 +54,7 @@ func (s *chatService) handlePrivateMsg(ctx context.Context, userID, parseID uuid
 }
 
 // gen msgID and store it in cache and group db
-func (s *chatService) handlePublicMsg(ctx context.Context, userID uuid.UUID, msg *chatmodel.MessageMetaData) error {
+func (s *chatService) handlePublicMsg(ctx context.Context, userID uuid.UUID, msg *MessageMetaData) error {
 	chatID := msg.MsgInfo.Msg.ToID
 	key := s.rediscache.generateRedisKey(chatID, "public")
 	err := s.rediscache.addMessage(ctx, key, msg)
@@ -76,12 +75,12 @@ func (s *chatService) publishJobHelper(job string, payload interface{}) {
 	}
 }
 
-func convertFromMessageToMeta(msg database.Message) *chatmodel.MessageMetaData {
-	return &chatmodel.MessageMetaData{
+func convertFromMessageToMeta(msg database.Message) *MessageMetaData {
+	return &MessageMetaData{
 		ID: msg.ID,
-		MsgInfo: &chatmodel.MessageCache{
+		MsgInfo: &MessageCache{
 			FromID: uuid.UUID(msg.FromID.Bytes),
-			Msg: chatmodel.InCommingMessage{
+			Msg: InCommingMessage{
 				ToID:     msg.ToID.String(),
 				Content:  msg.Content.String,
 				ParendID: msg.Parentid.String(),
@@ -92,12 +91,12 @@ func convertFromMessageToMeta(msg database.Message) *chatmodel.MessageMetaData {
 	}
 }
 
-func convertFromGroupMessageToMeta(msg database.Groupmessage) *chatmodel.MessageMetaData {
-	return &chatmodel.MessageMetaData{
+func convertFromGroupMessageToMeta(msg database.Groupmessage) *MessageMetaData {
+	return &MessageMetaData{
 		ID: msg.ID,
-		MsgInfo: &chatmodel.MessageCache{
+		MsgInfo: &MessageCache{
 			FromID: uuid.UUID(msg.FromID.Bytes),
-			Msg: chatmodel.InCommingMessage{
+			Msg: InCommingMessage{
 				ToID:     msg.GroupID.String(),
 				Content:  msg.Content.String,
 				ParendID: msg.ParentID.String(),
@@ -108,21 +107,21 @@ func convertFromGroupMessageToMeta(msg database.Groupmessage) *chatmodel.Message
 	}
 }
 
-func convertToMsgMetaList[T any](msgList *[]T) (*chatmodel.MessageListRes, error) {
-	var msgMetaList []chatmodel.MessageMetaDataRes
+func convertToMsgMetaList[T any](msgList *[]T) (*MessageListRes, error) {
+	msgMetaList := make([]MessageMetaDataRes, 0, len(*msgList))
 	for _, v := range *msgList {
-		var payload *chatmodel.MessageMetaDataRes
+		var payload *MessageMetaDataRes
 		switch value := any(v).(type) {
 		case database.Message:
 			msgMetaData := convertFromMessageToMeta(value)
-			payload = &chatmodel.MessageMetaDataRes{
+			payload = &MessageMetaDataRes{
 				ID:        msgMetaData.ID,
 				MsgInfo:   *msgMetaData.MsgInfo,
 				CreatedAt: msgMetaData.MsgInfo.CreatedAt,
 			}
 		case database.Groupmessage:
 			msgMetaData := convertFromGroupMessageToMeta(value)
-			payload = &chatmodel.MessageMetaDataRes{
+			payload = &MessageMetaDataRes{
 				ID:        msgMetaData.ID,
 				MsgInfo:   *msgMetaData.MsgInfo,
 				CreatedAt: msgMetaData.MsgInfo.CreatedAt,
@@ -133,7 +132,7 @@ func convertToMsgMetaList[T any](msgList *[]T) (*chatmodel.MessageListRes, error
 		msgMetaList = append(msgMetaList, *payload)
 	}
 
-	return &chatmodel.MessageListRes{
+	return &MessageListRes{
 		MsgList: msgMetaList,
 	}, nil
 }
