@@ -7,14 +7,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
 	"strings"
 	"sync"
 	"testing"
+
+	"RyanDev-21.com/Chirpy/internal/config"
 )
 
 func TestHealth(t *testing.T) {
 	e := newEnv(t)
 	e.expect(e.do("GET", "/healthz", "", nil), 200)
+	e.expect(e.do("GET", "/readyz", "", nil), 200)
+	e.expect(e.do("GET", "/livez", "", nil), 204)
+}
+
+// free-tier setup: in-process queue, everything else unchanged
+func TestMemoryQueueBackend(t *testing.T) {
+	e := newEnv(t, func(c *config.Config) { c.QueueBackend = "memory" })
+	u := e.signup("memq")
+	cfg := map[string]any{"config_list": []map[string]any{{"label": "x"}}}
+	e.expect(e.do("POST", "/api/users/configs", u.Token, cfg), 201)
+	e.eventually(`SELECT pref->0->>'label' FROM eleconfig`, "x")
+	if n := e.redis.Exists(context.Background(), "jobs:user.config.save").Val(); n != 0 {
+		t.Fatal("memory backend must not create Redis job streams")
+	}
 }
 
 func TestProtectedRoutesRequireAuth(t *testing.T) {

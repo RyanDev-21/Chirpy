@@ -45,6 +45,11 @@ func (a *App) Router() http.Handler {
 	}
 	authed := httpx.Authenticate(a.cfg.JWTSecret, false)
 
+	// livez only proves the process is up and touches nothing else, so an
+	// external keep-alive ping does not keep the database awake. readyz
+	// checks dependencies (healthz is kept as an alias).
+	r.Get("/livez", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	r.Get("/readyz", a.health)
 	r.Get("/healthz", a.health)
 
 	r.Route("/api", func(r chi.Router) {

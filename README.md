@@ -47,6 +47,10 @@ crashed instance are reclaimed.
 **Rate limits** – sliding window in Redis per route policy and caller (user id,
 or IP when anonymous). See `internal/app/routes.go`.
 
+## Deploying
+
+See [DEPLOY.md](DEPLOY.md): free tier (Render + Neon + Upstash, Singapore) first, a small VPS later.
+
 ## Tests
 
 ```sh

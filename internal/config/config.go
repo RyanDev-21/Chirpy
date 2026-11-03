@@ -17,11 +17,28 @@ type Config struct {
 	Platform string // "dev" enables admin routes
 
 	DatabaseURL string
+	// DBMaxConns caps the Postgres pool. DBMaxIdleTime closes idle
+	// connections so serverless Postgres (Neon) can scale to zero.
+	DBMaxConns    int32
+	DBMaxIdleTime time.Duration
+	// MigrateOnStart applies embedded migrations at startup (needed on
+	// hosts without a shell, e.g. Render's free tier).
+	MigrateOnStart bool
 
-	RedisAddr string
-	RedisUser string
-	RedisPass string
-	RedisDB   int
+	// RedisURL (redis:// or rediss:// for TLS, e.g. Upstash) wins over
+	// the individual address fields.
+	RedisURL           string
+	RedisAddr          string
+	RedisUser          string
+	RedisPass          string
+	RedisDB            int
+	RedisPoolSize      int
+	QueueRedisPoolSize int
+
+	// QueueBackend is "redis" (durable Redis Streams) or "memory"
+	// (in-process; jobs are lost on restart). Use memory on Redis plans
+	// billed per command: the stream readers poll even when idle.
+	QueueBackend string
 
 	JWTSecret       string
 	AccessTokenTTL  time.Duration
@@ -54,10 +71,12 @@ func Load() (Config, error) {
 	loadEnvFile()
 
 	c := Config{
-		Addr:            getenv("ADDR", ":8080"),
+		Addr:            listenAddr(),
 		Platform:        getenv("PLATFORM", "prod"),
 		DatabaseURL:     os.Getenv("DB_URL"),
+		RedisURL:        os.Getenv("REDIS_URL"),
 		RedisAddr:       getenv("REDIS_ADDR", "localhost:6379"),
+		QueueBackend:    getenv("QUEUE_BACKEND", "redis"),
 		RedisUser:       os.Getenv("REDIS_USR"),
 		RedisPass:       os.Getenv("REDIS_PASS"),
 		JWTSecret:       os.Getenv("SECRET"),
@@ -72,6 +91,23 @@ func Load() (Config, error) {
 		LogFormat:       getenv("LOG_FORMAT", "json"),
 	}
 	var err error
+	if c.RedisPoolSize, err = atoi("REDIS_POOL_SIZE", 0); err != nil {
+		return c, err
+	}
+	if c.QueueRedisPoolSize, err = atoi("QUEUE_REDIS_POOL_SIZE", 16); err != nil {
+		return c, err
+	}
+	maxConns, err := atoi("DB_MAX_CONNS", 10)
+	if err != nil {
+		return c, err
+	}
+	c.DBMaxConns = int32(maxConns)
+	if c.DBMaxIdleTime, err = time.ParseDuration(getenv("DB_MAX_IDLE_TIME", "2m")); err != nil {
+		return c, fmt.Errorf("DB_MAX_IDLE_TIME: %w", err)
+	}
+	if c.MigrateOnStart, err = strconv.ParseBool(getenv("MIGRATE_ON_START", "true")); err != nil {
+		return c, fmt.Errorf("MIGRATE_ON_START: %w", err)
+	}
 	if c.TrustProxyHeaders, err = strconv.ParseBool(getenv("TRUST_PROXY_HEADERS", "false")); err != nil {
 		return c, fmt.Errorf("TRUST_PROXY_HEADERS: %w", err)
 	}
@@ -88,6 +124,9 @@ func (c Config) validate() error {
 	}
 	if len(c.JWTSecret) < 32 {
 		errs = append(errs, errors.New("SECRET must be at least 32 characters"))
+	}
+	if c.QueueBackend != "redis" && c.QueueBackend != "memory" {
+		errs = append(errs, errors.New(`QUEUE_BACKEND must be "redis" or "memory"`))
 	}
 	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
 		errs = append(errs, errors.New("TLS_CERT_FILE and TLS_KEY_FILE must be set together"))
@@ -106,6 +145,27 @@ func loadEnvFile() {
 			return
 		}
 	}
+}
+
+// listenAddr honours PORT (set by Render, Fly, Heroku-style hosts), then
+// ADDR, then :8080.
+func listenAddr() string {
+	if p := os.Getenv("PORT"); p != "" {
+		return ":" + p
+	}
+	return getenv("ADDR", ":8080")
+}
+
+func atoi(k string, def int) (int, error) {
+	v := os.Getenv(k)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer", k)
+	}
+	return n, nil
 }
 
 func getenv(k, def string) string {

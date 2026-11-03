@@ -25,11 +25,11 @@ import (
 
 	"RyanDev-21.com/Chirpy/internal/app"
 	"RyanDev-21.com/Chirpy/internal/config"
+	"RyanDev-21.com/Chirpy/internal/platform/migrate"
 	"RyanDev-21.com/Chirpy/internal/platform/secure"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -52,18 +52,10 @@ func TestMain(m *testing.M) {
 		os.Stdout.WriteString("skipping integration tests: TEST_DATABASE_URL / TEST_REDIS_ADDR not set\n")
 		os.Exit(0)
 	}
-	db, err := sql.Open("pgx", dbURL)
-	if err != nil {
+	// the same embedded migrations the server applies on start
+	if err := migrate.Up(context.Background(), dbURL, slog.New(slog.DiscardHandler)); err != nil {
 		panic(err)
 	}
-	goose.SetLogger(goose.NopLogger())
-	if err := goose.SetDialect("postgres"); err != nil {
-		panic(err)
-	}
-	if err := goose.Up(db, "../../sql/schema"); err != nil {
-		panic(err)
-	}
-	_ = db.Close()
 	os.Exit(m.Run())
 }
 
@@ -76,7 +68,8 @@ type env struct {
 }
 
 // newEnv resets Postgres and Redis and starts a fresh server with workers.
-func newEnv(t *testing.T) *env {
+// opts adjust the config before the server starts.
+func newEnv(t *testing.T, opts ...func(*config.Config)) *env {
 	t.Helper()
 	db, err := sql.Open("pgx", dbURL)
 	if err != nil {
@@ -98,6 +91,10 @@ func newEnv(t *testing.T) *env {
 		RedisAddr:       redisAddr,
 		JWTSecret:       secret,
 		ShutdownTimeout: time.Second,
+		QueueBackend:    "redis",
+	}
+	for _, o := range opts {
+		o(&cfg)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	if os.Getenv("CHIRPY_TEST_LOG") != "" {

@@ -13,6 +13,7 @@ import (
 )
 
 type Options struct {
+	URL      string // redis:// or rediss://; overrides Addr/Username/Password/DB
 	Addr     string
 	Username string
 	Password string
@@ -22,18 +23,21 @@ type Options struct {
 
 // NewClient connects and pings Redis.
 func NewClient(ctx context.Context, o Options) (*redis.Client, error) {
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     o.Addr,
-		Username: o.Username,
-		Password: o.Password,
-		DB:       o.DB,
-		PoolSize: o.PoolSize,
-	})
+	opts := &redis.Options{Addr: o.Addr, Username: o.Username, Password: o.Password, DB: o.DB}
+	if o.URL != "" {
+		parsed, err := redis.ParseURL(o.URL)
+		if err != nil {
+			return nil, fmt.Errorf("parse REDIS_URL: %w", err)
+		}
+		opts = parsed
+	}
+	opts.PoolSize = o.PoolSize
+	rdb := redis.NewClient(opts)
 	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := rdb.Ping(pingCtx).Err(); err != nil {
 		_ = rdb.Close()
-		return nil, fmt.Errorf("redis ping %s: %w", o.Addr, err)
+		return nil, fmt.Errorf("redis ping %s: %w", opts.Addr, err)
 	}
 	return rdb, nil
 }
