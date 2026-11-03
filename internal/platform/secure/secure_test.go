@@ -2,8 +2,6 @@ package secure
 
 import (
 	"errors"
-	"fmt"
-	"log"
 	"net/http"
 	"testing"
 	"time"
@@ -11,108 +9,104 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestHashPassword(t *testing.T) {
-
-	password := "REDACTED"
-	got, err := HashPassword(password)
+func TestPasswordHashing(t *testing.T) {
+	hash, err := HashPassword("correct horse!")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Run("testing with correct password", func(t *testing.T) {
-
-		valid, _ := CheckPassword(password, got)
-
-		if !valid {
-			fmt.Printf("got %s  ", got)
-			t.Fatal()
-		}
-	})
-
-	t.Run("testing with incorrect password", func(t *testing.T) {
-		password = "REDACTED"
-		valid, _ := CheckPassword(password, got)
-		if valid {
-			fmt.Printf("has to return false got %v", valid)
-			t.Fatal()
-		}
-	})
-
-}
-
-// Need to refactor the token generate thing too many resuable code
-func TestJWTauth(t *testing.T) {
-	secretKey := "verygoodpractice"
-	userID, _ := uuid.NewUUID()
-
-	expireIn := 100 * time.Second
-	t.Run("Testing with valid uuid and valid time duration", func(t *testing.T) {
-
-		token, err := MakeJWT(userID, secretKey, expireIn)
-		if err != nil {
-			t.Fatalf("failed to create the jwt token %s", err)
-		}
-		got, err := ValidateJWT(token, secretKey)
-		if err != nil {
-			t.Fatalf("failed to validate the jwt token %s", err)
-
-		}
-		if got != userID {
-			log.Fatalf("got %v want %v", got, userID)
-		}
-
-	})
-
-	t.Run("Testing with invalid time duration", func(t *testing.T) {
-		expireIn = 1 * time.Second
-		token, err := MakeJWT(userID, secretKey, expireIn)
-		log.Printf("token %s", token)
-		if err != nil {
-			t.Fatalf("failed to create the jwt token %s", err)
-		}
-		log.Printf("token is going to be epxired in %v", expireIn)
-		time.Sleep(2 * expireIn)
-		userID, err = ValidateJWT(token, secretKey)
-		if err == nil {
-			t.Fatalf("failed to get  the jwt token error ")
-
-		}
-
-		wantErr := errors.New("expired token")
-		if wantErr.Error() != err.Error() {
-			t.Fatalf("want error of %v,got error of %v", wantErr, err)
-
-		}
-	})
-
-	t.Run("Testing with the wrong secretKey", func(t *testing.T) {
-		token, err := MakeJWT(userID, secretKey, expireIn)
-		if err != nil {
-			t.Fatalf("failed to create the jwt token %s", err)
-		}
-		secretKey = "wrongone"
-		userID, err = ValidateJWT(token, secretKey)
-		if err == nil {
-			t.Fatalf("failed to get the 'Invalid token error'")
-		}
-		wantErr := errors.New("invalid token")
-		if wantErr.Error() != err.Error() {
-			t.Fatalf("want error of %v,got error of %v", wantErr, err)
-		}
-	})
-
-}
-
-func TestGetToken(t *testing.T) {
-	userID, _ := uuid.NewUUID()
-	expireIn := 30 * time.Minute
-	secretKey := "something"
-	token, _ := MakeJWT(userID, secretKey, expireIn)
-	headers := http.Header{}
-	headers.Set("Authorization", fmt.Sprintf("Bearer %v", token))
-
-	_, err := GetBearerToken(headers)
-	if err != nil {
-		t.Fatalf("failed to get the errro %s", err)
+	if ok, err := CheckPassword("correct horse!", hash); err != nil || !ok {
+		t.Fatalf("correct password rejected: ok=%v err=%v", ok, err)
 	}
+	if ok, _ := CheckPassword("wrong horse!", hash); ok {
+		t.Fatal("wrong password accepted")
+	}
+}
 
+func TestJWT(t *testing.T) {
+	const secret = "0123456789abcdef0123456789abcdef"
+	userID := uuid.New()
+
+	tests := []struct {
+		name    string
+		token   func(t *testing.T) string
+		secret  string
+		wantErr error
+	}{
+		{
+			name:   "valid",
+			token:  func(t *testing.T) string { return mustJWT(t, userID, secret, time.Minute) },
+			secret: secret,
+		},
+		{
+			name:    "expired",
+			token:   func(t *testing.T) string { return mustJWT(t, userID, secret, -time.Minute) },
+			secret:  secret,
+			wantErr: ErrExpiredToken,
+		},
+		{
+			name:    "wrong secret",
+			token:   func(t *testing.T) string { return mustJWT(t, userID, secret, time.Minute) },
+			secret:  "another-secret-another-secret-xx",
+			wantErr: ErrInvalidToken,
+		},
+		{
+			name:    "garbage",
+			token:   func(*testing.T) string { return "not.a.jwt" },
+			secret:  secret,
+			wantErr: ErrInvalidToken,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ValidateJWT(tt.token(t), tt.secret)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			}
+			if tt.wantErr == nil && got != userID {
+				t.Fatalf("user = %v, want %v", got, userID)
+			}
+		})
+	}
+}
+
+func mustJWT(t *testing.T, id uuid.UUID, secret string, ttl time.Duration) string {
+	t.Helper()
+	tok, err := MakeJWT(id, secret, ttl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tok
+}
+
+func TestGetBearerToken(t *testing.T) {
+	tests := []struct {
+		header  string
+		want    string
+		wantErr bool
+	}{
+		{"Bearer abc", "abc", false},
+		{"Bearer   abc  ", "abc", false},
+		{"bearer abc", "", true},
+		{"abc", "", true},
+		{"Bearer ", "", true},
+		{"", "", true},
+	}
+	for _, tt := range tests {
+		h := http.Header{}
+		if tt.header != "" {
+			h.Set("Authorization", tt.header)
+		}
+		got, err := GetBearerToken(h)
+		if (err != nil) != tt.wantErr || got != tt.want {
+			t.Errorf("GetBearerToken(%q) = %q, %v", tt.header, got, err)
+		}
+	}
+}
+
+func TestMakeRefreshTokenIsRandom(t *testing.T) {
+	a, _ := MakeRefreshToken()
+	b, _ := MakeRefreshToken()
+	if len(a) != 64 || a == b {
+		t.Fatalf("unexpected refresh tokens %q %q", a, b)
+	}
 }

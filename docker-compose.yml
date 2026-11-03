@@ -1,0 +1,23 @@
+# Local dependencies: `docker compose up -d`
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: chirpy
+      POSTGRES_PASSWORD: chirpy
+      POSTGRES_DB: chirpy
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "chirpy"]
+      interval: 2s
+      retries: 20
+  redis:
+    image: redis:8
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 20
+volumes:
+  pgdata:

@@ -108,11 +108,16 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	return a, nil
 }
 
+// Start runs the websocket hub and queue workers until ctx is cancelled.
+func (a *App) Start(ctx context.Context) error {
+	go a.hub.Run()
+	return a.startWorkers(ctx)
+}
+
 // Run starts the hub, workers and HTTP server, and blocks until ctx is
 // cancelled, then shuts the server down gracefully.
 func (a *App) Run(ctx context.Context) error {
-	go a.hub.Run()
-	if err := a.startWorkers(ctx); err != nil {
+	if err := a.Start(ctx); err != nil {
 		return err
 	}
 
