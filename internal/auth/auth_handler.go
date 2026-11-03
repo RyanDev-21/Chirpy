@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -33,6 +34,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	accessToken, refreshToken, user, err := h.authService.Login(r.Context(), params.Email, params.Password)
 	if err != nil {
+		if errors.Is(err, ErrEmailNotVerified) {
+			httpx.Error(w, http.StatusForbidden, "email not verified")
+			return
+		}
 		if err == ErrInvalidCredentials {
 			httpx.Error(w, 401, ErrInvalidCredentials.Error())
 			return

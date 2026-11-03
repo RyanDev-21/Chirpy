@@ -86,6 +86,7 @@ func TestRejectsBadDeploySettings(t *testing.T) {
 func TestWarnsAboutUnverifiedTLS(t *testing.T) {
 	base(t)
 	t.Setenv("PLATFORM", "prod")
+	t.Setenv("RESEND_API_KEY", "re_x")
 	t.Setenv("DB_URL", "postgres://u:p@h/db?sslmode=require")
 	t.Setenv("REDIS_URL", "redis://h:6379")
 	cfg, _ := Load()
@@ -97,5 +98,19 @@ func TestWarnsAboutUnverifiedTLS(t *testing.T) {
 	cfg, _ = Load()
 	if len(cfg.Warnings()) != 0 {
 		t.Fatalf("warnings = %v", cfg.Warnings())
+	}
+}
+
+func TestWarnsWithoutEmailProvider(t *testing.T) {
+	base(t)
+	t.Setenv("PLATFORM", "prod")
+	t.Setenv("DB_URL", "postgres://u:p@h/db?sslmode=verify-full")
+	cfg, _ := Load()
+	if w := cfg.Warnings(); len(w) != 1 || !strings.Contains(w[0], "RESEND_API_KEY") {
+		t.Fatalf("warnings = %v", w)
+	}
+	t.Setenv("GOOGLE_CLIENT_IDS", "a.apps.googleusercontent.com, b.apps.googleusercontent.com")
+	if cfg, _ = Load(); len(cfg.GoogleClientIDs) != 2 {
+		t.Fatalf("GoogleClientIDs = %v", cfg.GoogleClientIDs)
 	}
 }

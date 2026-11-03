@@ -69,6 +69,36 @@ Render service.
 | `DB_MAX_IDLE_TIME` | `2m` | Close idle connections so Neon can scale to zero. |
 | `TRUSTED_PROXIES` | `1` | Render's load balancer is one proxy; the real client IP is the last `X-Forwarded-For` entry. Without it every anonymous user shares one rate-limit budget. |
 
+## Email (Resend) and Google sign-in
+
+### Resend: sending from mail.ponypigeon.com
+1. Resend → **Domains → Add Domain** → `mail.ponypigeon.com`, region closest
+   to you (e.g. Tokyo/`ap-northeast-1`).
+2. Resend shows DNS records (an MX and TXT for SPF on a `send.mail` name, a
+   TXT `resend._domainkey.mail` for DKIM, optionally `_dmarc`). Add each one
+   in **Cloudflare → ponypigeon.com → DNS** exactly as shown, all as
+   **DNS only** (grey cloud). The domain is on Cloudflare's nameservers;
+   records added at Namecheap are ignored.
+3. Back in Resend click **Verify**; wait for every record to turn green.
+4. Resend → **API Keys → Create** with **Sending access** for that domain
+   only. Paste it into Render as `RESEND_API_KEY` (never into git or chat).
+
+Without `RESEND_API_KEY` the server logs an "insecure configuration" warning
+on start and sign-up answers `503` because codes can't be sent.
+
+### Google sign-in
+In **Google Cloud Console → APIs & Services**:
+1. **OAuth consent screen**: External, app name Chirpy, your support email,
+   scopes `openid`, `email`, `profile`. Add yourself as a test user while
+   the app is in Testing.
+2. **Credentials → Create credentials → OAuth client ID → Web application**,
+   name `Chirpy server`. No redirect URIs needed. Its **client ID** is what
+   the server checks tokens against: put it in Render as `GOOGLE_CLIENT_IDS`,
+   and give it to the Android app as `serverClientId`.
+3. **Create credentials → OAuth client ID → Android**, package name of the
+   app and the SHA-1 of its signing key (`./gradlew signingReport`). The
+   Android client ID itself is not used by the server.
+
 ## Stage 2: VPS (~$7/month)
 
 When the app is in real use, move to one always-on server (1-2 GB RAM)

@@ -35,6 +35,15 @@ type Eleconfig struct {
 	Pref   []byte
 }
 
+type EmailCode struct {
+	UserID    uuid.UUID
+	Purpose   string
+	CodeHash  string
+	Attempts  int32
+	ExpiresAt pgtype.Timestamp
+	CreatedAt pgtype.Timestamp
+}
+
 type Groupmessage struct {
 	ID        uuid.UUID
 	Content   pgtype.Text
@@ -84,13 +93,22 @@ type SeenMessage struct {
 }
 
 type User struct {
-	ID          uuid.UUID
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	Email       string
-	Password    string
-	IsChirpyRed pgtype.Bool
-	Name        string
+	ID              uuid.UUID
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	Email           string
+	Password        pgtype.Text
+	IsChirpyRed     pgtype.Bool
+	Name            string
+	EmailVerifiedAt pgtype.Timestamp
+}
+
+type UserIdentity struct {
+	Provider  string
+	Subject   string
+	UserID    uuid.UUID
+	Email     string
+	CreatedAt pgtype.Timestamp
 }
 
 type UserRelationship struct {

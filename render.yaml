@@ -22,6 +22,14 @@ services:
             sync: false
           - key: REDIS_URL
             sync: false
+          # email codes (sign-up verification, password reset)
+          - key: RESEND_API_KEY
+            sync: false
+          - key: MAIL_FROM
+            value: Chirpy <no-reply@mail.ponypigeon.com>
+          # Google sign-in: the Web client ID(s) the Android app uses as serverClientId
+          - key: GOOGLE_CLIENT_IDS
+            sync: false
           # free Upstash is billed per command; Redis Streams polling would
           # use the monthly allowance while idle
           - key: QUEUE_BACKEND

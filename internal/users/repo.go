@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type UserRepo interface {
@@ -38,6 +39,7 @@ func toUser(u database.User) *User {
 		UpdatedAt: u.UpdatedAt,
 		Email:     u.Email,
 		IsRED:     u.IsChirpyRed.Bool,
+		Verified:  u.EmailVerifiedAt.Valid,
 	}
 }
 
@@ -45,7 +47,7 @@ func (r *userRepo) Create(ctx context.Context, input CreateUserInput) (*User, er
 	u, err := r.queries.CreateUser(ctx, database.CreateUserParams{
 		Name:     input.Name,
 		Email:    input.Email,
-		Password: input.Password,
+		Password: pgtype.Text{String: input.Password, Valid: input.Password != ""},
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -69,7 +71,7 @@ func (r *userRepo) GetUserByEmail(ctx context.Context, email string) (*User, str
 		}
 		return nil, "", err
 	}
-	return toUser(u), u.Password, nil
+	return toUser(u), u.Password.String, nil
 }
 
 // GetUserByID returns the user and its password hash.
@@ -81,11 +83,11 @@ func (r *userRepo) GetUserByID(ctx context.Context, id uuid.UUID) (*User, string
 		}
 		return nil, "", err
 	}
-	return toUser(u), u.Password, nil
+	return toUser(u), u.Password.String, nil
 }
 
 func (r *userRepo) UpdateUserPassword(ctx context.Context, p UpdateUserPassword) (*User, error) {
-	if err := r.queries.UpdatePassword(ctx, database.UpdatePasswordParams{Password: p.Password, ID: p.UserID}); err != nil {
+	if err := r.queries.UpdatePassword(ctx, database.UpdatePasswordParams{Password: pgtype.Text{String: p.Password, Valid: true}, ID: p.UserID}); err != nil {
 		return nil, err
 	}
 	u, _, err := r.GetUserByID(ctx, p.UserID)

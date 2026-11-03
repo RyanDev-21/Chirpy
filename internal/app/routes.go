@@ -30,6 +30,8 @@ var (
 	// joining and previewing invites share a small budget so codes can't
 	// be brute-forced (40-bit codes at 20/min would take ~100,000 years)
 	limitGroupJoin = limitPolicy{"group_join", 20, time.Minute}
+	// verification, reset and Google sign-in; codes also die after 5 wrong tries
+	limitAccount = limitPolicy{"account", 10, time.Minute}
 )
 
 // Router builds the HTTP handler. Middleware is attached per route group so
@@ -54,7 +56,16 @@ func (a *App) Router() http.Handler {
 
 	r.Route("/api", func(r chi.Router) {
 		// public
-		r.With(limit(limitRegister)).Post("/users", a.handlers.users.Register)
+		r.With(limit(limitRegister)).Post("/users", a.handlers.account.Register)
+		r.Route("/auth", func(r chi.Router) {
+			r.Use(limit(limitAccount))
+			r.Post("/verify-email", a.handlers.account.VerifyEmail)
+			r.Post("/resend-verification", a.handlers.account.ResendVerification)
+			r.Post("/password-reset", a.handlers.account.RequestPasswordReset)
+			r.Post("/password-reset/confirm", a.handlers.account.ResetPassword)
+			r.Post("/google", a.handlers.account.Google)
+			r.Post("/google/complete", a.handlers.account.CompleteGoogle)
+		})
 		r.Group(func(r chi.Router) {
 			r.Use(limit(limitAuth))
 			r.Post("/login", a.handlers.auth.Login)
@@ -71,6 +82,7 @@ func (a *App) Router() http.Handler {
 			r.Use(authed)
 
 			r.Get("/users/me", a.handlers.users.Me)
+			r.With(limit(limitAccount)).Delete("/users/me", a.handlers.account.DeleteAccount)
 			r.Post("/users/password", a.handlers.users.UpdatePassword)
 			r.With(limit(limitSearch)).Get("/users/search", a.handlers.users.SearchUser)
 			r.Get("/users/configs", a.handlers.users.GetConfig)
