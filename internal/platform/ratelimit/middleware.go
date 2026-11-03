@@ -29,6 +29,9 @@ func ClientKey(r *http.Request) string {
 	if userID, err := reqctx.User(r.Context()); err == nil {
 		return "user:" + userID.String()
 	}
+	if ip := reqctx.ClientIP(r.Context()); ip != "" {
+		return "ip:" + ip
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr

@@ -25,6 +25,30 @@ type Client struct {
 	Conn   *websocket.Conn
 	Send   chan []byte
 	UserID uuid.UUID
+
+	// lastTyping throttles typing events per target chat. Only ReadPump's
+	// goroutine touches it, so it needs no lock.
+	lastTyping map[uuid.UUID]time.Time
+}
+
+// typingInterval is the minimum gap between two typing events a connection
+// may send to the same chat. Extra events are dropped before the policy
+// lookup, so key-mashing cannot drain Redis command quotas.
+const typingInterval = 3 * time.Second
+
+// allowTyping reports whether a typing event for chat `to` may go out now.
+func (c *Client) allowTyping(to uuid.UUID, now time.Time) bool {
+	if c.lastTyping == nil {
+		c.lastTyping = make(map[uuid.UUID]time.Time)
+	}
+	if last, ok := c.lastTyping[to]; ok && now.Sub(last) < typingInterval {
+		return false
+	}
+	if len(c.lastTyping) > 256 { // a client cannot grow this without bound
+		clear(c.lastTyping)
+	}
+	c.lastTyping[to] = now
+	return true
 }
 
 func NewClient(hub *Hub, conn *websocket.Conn, send chan []byte, userID uuid.UUID) *Client {
@@ -122,6 +146,9 @@ func (c *Client) handleEvent(ev InCommingEvent) {
 		to, err := decodeTarget(ev.Payload, &p, func() string { return p.ToID })
 		if err != nil {
 			c.Hub.logger.Debug("ignoring malformed websocket event", "user_id", c.UserID, "event", ev.Event)
+			return
+		}
+		if !c.allowTyping(to, time.Now()) {
 			return
 		}
 		group := p.Type == "public"

@@ -6,11 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"RyanDev-21.com/Chirpy/internal/config"
 	"github.com/gorilla/websocket"
 )
 
@@ -76,4 +78,32 @@ func TestTypingAndSeenOnlyBetweenFriends(t *testing.T) {
 
 	// REST read receipts must point at a message in that chat
 	e.expect(e.do("POST", "/api/chat/"+bob.ID+"/messages", mallory.Token, map[string]string{"msg_id": "00000000-0000-0000-0000-000000000001"}), 400)
+}
+
+// Behind Render (one proxy) each client gets its own budget, and entries a
+// client adds to X-Forwarded-For itself cannot move it to a fresh budget.
+func TestRateLimitUsesRealClientBehindProxy(t *testing.T) {
+	e := newEnv(t, func(c *config.Config) { c.TrustedProxies = 1 })
+	login := func(xff string) int {
+		req, _ := http.NewRequest("POST", e.srv.URL+"/api/login", strings.NewReader(`{"email":"x@example.io","password":"nope"}`))
+		req.Header.Set("X-Forwarded-For", xff)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+	for i := range 10 {
+		// a different spoofed prefix each time; the proxy-added hop stays the same
+		if c := login(fmt.Sprintf("10.9.9.%d, 203.0.113.7", i)); c != 401 {
+			t.Fatalf("attempt %d: %d", i+1, c)
+		}
+	}
+	if c := login("10.9.9.99, 203.0.113.7"); c != http.StatusTooManyRequests {
+		t.Fatalf("spoofed prefix reset the budget: got %d, want 429", c)
+	}
+	if c := login("198.51.100.20"); c != 401 {
+		t.Fatalf("another client was blocked by the first one's budget: %d", c)
+	}
 }

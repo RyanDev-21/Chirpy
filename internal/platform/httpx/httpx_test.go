@@ -89,12 +89,43 @@ func TestCORS(t *testing.T) {
 
 func TestRequestLoggerSetsRequestID(t *testing.T) {
 	var seen string
-	h := RequestLogger(discardLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := RequestLogger(discardLogger(), 0)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = reqctx.RequestID(r.Context())
 	}))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if seen == "" || rec.Header().Get("X-Request-Id") != seen {
 		t.Fatalf("request id %q not propagated (header %q)", seen, rec.Header().Get("X-Request-Id"))
+	}
+}
+
+func TestClientIP(t *testing.T) {
+	tests := []struct {
+		name    string
+		trusted int
+		xff     []string
+		want    string
+	}{
+		{"no proxy uses the peer", 0, []string{"6.6.6.6"}, "10.0.0.9"},
+		{"one proxy takes the last hop", 1, []string{"203.0.113.7"}, "203.0.113.7"},
+		{"spoofed left entries are ignored", 1, []string{"1.2.3.4, 9.9.9.9, 203.0.113.7"}, "203.0.113.7"},
+		{"multiple header lines are joined", 1, []string{"1.2.3.4", "203.0.113.7"}, "203.0.113.7"},
+		{"two proxies take the second from the right", 2, []string{"1.2.3.4, 203.0.113.7, 10.1.1.1"}, "203.0.113.7"},
+		{"missing header falls back to the peer", 1, nil, "10.0.0.9"},
+		{"garbage falls back to the peer", 1, []string{"not-an-ip"}, "10.0.0.9"},
+		{"fewer hops than proxies falls back", 2, []string{"203.0.113.7"}, "10.0.0.9"},
+		{"ipv6 is normalised", 1, []string{"2001:DB8::1"}, "2001:db8::1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			r.RemoteAddr = "10.0.0.9:5555"
+			for _, v := range tt.xff {
+				r.Header.Add("X-Forwarded-For", v)
+			}
+			if got := ClientIP(r, tt.trusted); got != tt.want {
+				t.Fatalf("ClientIP = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

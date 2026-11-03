@@ -58,10 +58,13 @@ type OutFriEvent struct {
 }
 
 type OutGoingMessage struct {
-	ID        string    `json:"id"`
-	Content   string    `json:"msg"`
-	ParentID  string    `json:"parent_id,omitempty"`
-	FromID    string    `json:"from_id"`
-	Type      string    `json:"type"`
+	ID       string `json:"id"`
+	Content  string `json:"msg"`
+	ParentID string `json:"parent_id,omitempty"`
+	FromID   string `json:"from_id"`
+	Type     string `json:"type"`
+	// GroupID is set for group ("public") messages so the client knows
+	// which group chat the message belongs to.
+	GroupID   string    `json:"group_id,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }

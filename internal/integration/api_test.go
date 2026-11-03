@@ -22,14 +22,22 @@ func TestHealth(t *testing.T) {
 	e.expect(e.do("GET", "/livez", "", nil), 204)
 }
 
-// free-tier setup: in-process queue, everything else unchanged
+// free-tier setup: in-process queue (only seen receipts are queued)
 func TestMemoryQueueBackend(t *testing.T) {
 	e := newEnv(t, func(c *config.Config) { c.QueueBackend = "memory" })
-	u := e.signup("memq")
-	cfg := map[string]any{"config_list": []map[string]any{{"label": "x"}}}
-	e.expect(e.do("POST", "/api/users/configs", u.Token, cfg), 201)
-	e.eventually(`SELECT pref->0->>'label' FROM eleconfig`, "x")
-	if n := e.redis.Exists(context.Background(), "jobs:user.config.save").Val(); n != 0 {
+	alice, bob := e.signup("alice"), e.signup("bob")
+	var r struct {
+		ReqID string `json:"req_id"`
+	}
+	e.expect(e.do("POST", "/api/friends/requests", alice.Token, map[string]string{"to_id": bob.ID}), 200).json(t, &r)
+	e.expect(e.do("PUT", "/api/friends/requests/"+r.ReqID, bob.Token, map[string]string{"status": "confirm"}), 201)
+	var m struct {
+		MsgID string `json:"msg_id"`
+	}
+	e.expect(e.do("POST", "/api/chats/message", alice.Token, map[string]string{"msg": "hi", "to_id": bob.ID, "type": "private"}), 200).json(t, &m)
+	e.expect(e.do("POST", "/api/chat/"+alice.ID+"/messages", bob.Token, map[string]string{"msg_id": m.MsgID}), 201)
+	e.eventually(`SELECT message_id::text FROM seen_messages`, m.MsgID)
+	if n := e.redis.Exists(context.Background(), "jobs:chat.seen.update").Val(); n != 0 {
 		t.Fatal("memory backend must not create Redis job streams")
 	}
 }
@@ -223,8 +231,14 @@ func TestGroups(t *testing.T) {
 	e.expect(e.do("POST", "/api/chats/message", outsider.Token, send), 403)
 	e.expect(e.do("GET", "/api/chat/groups/"+g.ChatID+"/messages", outsider.Token, nil), 403)
 	e.expect(e.do("POST", "/api/chats/message", leader.Token, send), 200)
-	if ev := readEvent(t, memberWS); ev.Event != "msg" {
-		t.Fatalf("member got %q", ev.Event)
+	ev := readEvent(t, memberWS)
+	var gm struct {
+		GroupID string `json:"group_id"`
+		Type    string `json:"type"`
+	}
+	_ = json.Unmarshal(ev.Payload, &gm)
+	if ev.Event != "msg" || gm.Type != "public" || gm.GroupID != g.ChatID {
+		t.Fatalf("member got %s %+v, want a public msg for group %s", ev.Event, gm, g.ChatID)
 	}
 	e.now(`SELECT count(*)::text FROM groupmessage WHERE group_id = $1`, "1", g.ChatID)
 
@@ -239,7 +253,7 @@ func TestUserConfigPersists(t *testing.T) {
 	u := e.signup("cfg")
 	cfg := map[string]any{"config_list": []map[string]any{{"label": "sidebar", "config": map[string]any{"color": map[string]string{"main_color": "red"}}}}}
 	e.expect(e.do("POST", "/api/users/configs", u.Token, cfg), 201)
-	e.eventually(`SELECT pref->0->>'label' FROM eleconfig`, "sidebar")
+	e.now(`SELECT pref->0->>'label' FROM eleconfig`, "sidebar")
 	_ = e.redis.FlushDB(context.Background())
 	r := e.expect(e.do("GET", "/api/users/configs", u.Token, nil), 200)
 	var got struct {
@@ -369,4 +383,68 @@ func TestSpoofedForwardedForDoesNotBypassRateLimit(t *testing.T) {
 			t.Fatalf("request %d with a spoofed IP got %d, want 429", i+1, res.StatusCode)
 		}
 	}
+}
+
+func TestMeEndpoint(t *testing.T) {
+	e := newEnv(t)
+	u := e.signup("meuser")
+	var me struct {
+		ID    string `json:"id"`
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	}
+	e.expect(e.do("GET", "/api/users/me", u.Token, nil), 200).json(t, &me)
+	if me.ID != u.ID || me.Name != "meuser" || me.Email != u.email {
+		t.Fatalf("me = %+v", me)
+	}
+	e.expect(e.do("GET", "/api/users/me", "", nil), 401)
+}
+
+func TestMyGroupsAndGroupDetail(t *testing.T) {
+	e := newEnv(t)
+	leader, member, outsider := e.signup("leader"), e.signup("member"), e.signup("outsider")
+	var g struct {
+		ChatID string `json:"chat_id"`
+	}
+	e.expect(e.do("POST", "/api/chats/groups", leader.Token, map[string]any{"group_name": "Beta", "description": "b", "max_mems": 5}), 201).json(t, &g)
+	e.expect(e.do("POST", "/api/chats/groups", leader.Token, map[string]any{"group_name": "alpha", "max_mems": 5}), 201)
+	e.expect(e.do("POST", "/api/chats/groups/"+g.ChatID+"/members", member.Token, nil), 201)
+
+	var mine struct {
+		Groups []struct {
+			ID      string `json:"id"`
+			Name    string `json:"name"`
+			Role    string `json:"role"`
+			Members int    `json:"member_count"`
+		} `json:"groups"`
+	}
+	e.expect(e.do("GET", "/api/chats/groups", leader.Token, nil), 200).json(t, &mine)
+	if len(mine.Groups) != 2 || mine.Groups[0].Name != "alpha" || mine.Groups[1].Role != "Leader" || mine.Groups[1].Members != 2 {
+		t.Fatalf("leader's groups = %+v", mine.Groups)
+	}
+	e.expect(e.do("GET", "/api/chats/groups", member.Token, nil), 200).json(t, &mine)
+	if len(mine.Groups) != 1 || mine.Groups[0].ID != g.ChatID || mine.Groups[0].Role != "member" {
+		t.Fatalf("member's groups = %+v", mine.Groups)
+	}
+
+	var d struct {
+		Name     string `json:"name"`
+		IsMember bool   `json:"is_member"`
+		Count    int    `json:"member_count"`
+		Members  []struct {
+			UserID string `json:"user_id"`
+			Role   string `json:"role"`
+		} `json:"members"`
+	}
+	e.expect(e.do("GET", "/api/chats/groups/"+g.ChatID, member.Token, nil), 200).json(t, &d)
+	if !d.IsMember || d.Count != 2 || len(d.Members) != 2 || d.Members[0].UserID != leader.ID || d.Members[0].Role != "Leader" {
+		t.Fatalf("member's view = %+v", d)
+	}
+	// non-members see the group but not who is in it
+	d.Members = nil
+	e.expect(e.do("GET", "/api/chats/groups/"+g.ChatID, outsider.Token, nil), 200).json(t, &d)
+	if d.IsMember || d.Members != nil || d.Name != "Beta" || d.Count != 2 {
+		t.Fatalf("outsider's view = %+v", d)
+	}
+	e.expect(e.do("GET", "/api/chats/groups/00000000-0000-0000-0000-000000000000", member.Token, nil), 404)
 }

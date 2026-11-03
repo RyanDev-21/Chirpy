@@ -22,6 +22,7 @@ var ErrNoUser = errors.New("no authenticated user in context")
 // the access log line can include it after the handler returns.
 type Info struct {
 	RequestID string
+	ClientIP  string
 	user      atomic.Pointer[uuid.UUID]
 }
 
@@ -67,6 +68,14 @@ func User(ctx context.Context) (uuid.UUID, error) {
 func RequestID(ctx context.Context) string {
 	if i := infoFrom(ctx); i != nil {
 		return i.RequestID
+	}
+	return ""
+}
+
+// ClientIP returns the caller's IP as resolved by the access logger, or "".
+func ClientIP(ctx context.Context) string {
+	if i := infoFrom(ctx); i != nil {
+		return i.ClientIP
 	}
 	return ""
 }

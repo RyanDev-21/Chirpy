@@ -28,6 +28,8 @@ type GroupRepo interface {
 	// group are applied one at a time and capacity cannot be exceeded.
 	Join(ctx context.Context, groupID, userID uuid.UUID) error
 	Leave(ctx context.Context, groupID, userID uuid.UUID) error
+	ListForUser(ctx context.Context, userID uuid.UUID) ([]GroupSummary, error)
+	Detail(ctx context.Context, groupID, viewer uuid.UUID) (GroupDetail, error)
 }
 
 type groupRepo struct {
@@ -130,4 +132,42 @@ func (r *groupRepo) Leave(ctx context.Context, groupID, userID uuid.UUID) error 
 		}
 		return q.SetGroupMemberCount(ctx, database.SetGroupMemberCountParams{ID: groupID, CurrentMember: max(g.CurrentMember-1, 0)})
 	})
+}
+
+func (r *groupRepo) ListForUser(ctx context.Context, userID uuid.UUID) ([]GroupSummary, error) {
+	rows, err := r.q.ListGroupsForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]GroupSummary, 0, len(rows))
+	for _, g := range rows {
+		out = append(out, GroupSummary{ID: g.ID, Name: g.Name, Description: g.Description, MaxMembers: g.MaxMember, Members: g.CurrentMember, Role: g.Role})
+	}
+	return out, nil
+}
+
+func (r *groupRepo) Detail(ctx context.Context, groupID, viewer uuid.UUID) (GroupDetail, error) {
+	g, err := r.q.GetGroupInfoByID(ctx, groupID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return GroupDetail{}, ErrNotFoundGroup
+	}
+	if err != nil {
+		return GroupDetail{}, err
+	}
+	d := GroupDetail{ID: g.ID, Name: g.Name, Description: g.Description, MaxMembers: g.MaxMember, MemberCount: g.CurrentMember}
+	rows, err := r.q.ListGroupMembers(ctx, groupID)
+	if err != nil {
+		return GroupDetail{}, err
+	}
+	members := make([]GroupMember, 0, len(rows))
+	for _, m := range rows {
+		members = append(members, GroupMember{UserID: m.MemberID, Name: m.Name, Role: m.Role})
+		if m.MemberID == viewer {
+			d.IsMember = true
+		}
+	}
+	if d.IsMember {
+		d.Members = members // the member list is only shown to members
+	}
+	return d, nil
 }

@@ -146,6 +146,84 @@ func (q *Queries) GetMemberRole(ctx context.Context, arg GetMemberRoleParams) (s
 	return role, err
 }
 
+const listGroupMembers = `-- name: ListGroupMembers :many
+SELECT m.member_id, u.name, m.role
+FROM member_table m
+JOIN users u ON u.id = m.member_id
+WHERE m.group_id = $1
+ORDER BY (m.role = 'Leader') DESC, m.joined_at
+`
+
+type ListGroupMembersRow struct {
+	MemberID uuid.UUID
+	Name     string
+	Role     string
+}
+
+func (q *Queries) ListGroupMembers(ctx context.Context, groupID uuid.UUID) ([]ListGroupMembersRow, error) {
+	rows, err := q.db.Query(ctx, listGroupMembers, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListGroupMembersRow
+	for rows.Next() {
+		var i ListGroupMembersRow
+		if err := rows.Scan(&i.MemberID, &i.Name, &i.Role); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGroupsForUser = `-- name: ListGroupsForUser :many
+SELECT g.id, g.name, g.description, g.max_member, g.current_member, m.role
+FROM member_table m
+JOIN chat_groups g ON g.id = m.group_id
+WHERE m.member_id = $1
+ORDER BY lower(g.name)
+`
+
+type ListGroupsForUserRow struct {
+	ID            uuid.UUID
+	Name          string
+	Description   string
+	MaxMember     int16
+	CurrentMember int16
+	Role          string
+}
+
+func (q *Queries) ListGroupsForUser(ctx context.Context, memberID uuid.UUID) ([]ListGroupsForUserRow, error) {
+	rows, err := q.db.Query(ctx, listGroupsForUser, memberID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListGroupsForUserRow
+	for rows.Next() {
+		var i ListGroupsForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.MaxMember,
+			&i.CurrentMember,
+			&i.Role,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockGroup = `-- name: LockGroup :one
 SELECT max_member, current_member FROM chat_groups WHERE id = $1 FOR UPDATE
 `

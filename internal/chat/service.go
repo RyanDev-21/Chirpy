@@ -145,14 +145,18 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 			s.logger.ErrorContext(ctx, "failed to invalidate chat cache", "error", err)
 		}
 	}
-	if err := s.push.WriteToUsers(targets, ws.Event{Event: ws.EventMessage, Payload: ws.OutGoingMessage{
+	out := ws.OutGoingMessage{
 		ID:        msgID.String(),
 		Content:   in.Content,
 		ParentID:  in.ParendID,
 		FromID:    from.String(),
 		Type:      in.Type,
 		CreatedAt: now,
-	}}); err != nil {
+	}
+	if in.Type == TypePublic {
+		out.GroupID = to.String()
+	}
+	if err := s.push.WriteToUsers(targets, ws.Event{Event: ws.EventMessage, Payload: out}); err != nil {
 		s.logger.WarnContext(ctx, "failed to push message", "error", err)
 	}
 	return msgID, nil

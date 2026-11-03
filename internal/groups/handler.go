@@ -85,3 +85,38 @@ func (h *GroupHandler) LeaveGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// MyGroups handles GET /api/chats/groups.
+func (h *GroupHandler) MyGroups(w http.ResponseWriter, r *http.Request) {
+	userID, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	list, err := h.groupService.MyGroups(r.Context(), userID)
+	if err != nil {
+		writeGroupError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string][]GroupSummary{"groups": list})
+}
+
+// Detail handles GET /api/chats/groups/{group_id}.
+func (h *GroupHandler) Detail(w http.ResponseWriter, r *http.Request) {
+	groupID, err := httpx.PathUUID(r, "group_id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid group id")
+		return
+	}
+	userID, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	d, err := h.groupService.GroupDetail(r.Context(), groupID, userID)
+	if err != nil {
+		writeGroupError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, d)
+}

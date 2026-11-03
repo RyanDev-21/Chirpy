@@ -110,3 +110,22 @@ func (h *UserHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, http.StatusOK, ConfigList{List: list})
 }
+
+// Me handles GET /api/users/me: the signed-in user's own profile.
+func (h *UserHandler) Me(w http.ResponseWriter, r *http.Request) {
+	userID, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	u, err := h.svc.Me(r.Context(), userID)
+	switch {
+	case err == nil:
+		httpx.JSON(w, http.StatusOK, u)
+	case errors.Is(err, ErrUserNotFound):
+		// the account was deleted while the token was still valid
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+	default:
+		httpx.ServerError(w, r, err)
+	}
+}
