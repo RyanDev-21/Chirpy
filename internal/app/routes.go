@@ -27,6 +27,9 @@ var (
 	limitSend     = limitPolicy{"send_message", 120, time.Minute}
 	limitWS       = limitPolicy{"ws_connect", 20, time.Minute}
 	limitAI       = limitPolicy{"ai", 5, time.Minute}
+	// joining and previewing invites share a small budget so codes can't
+	// be brute-forced (40-bit codes at 20/min would take ~100,000 years)
+	limitGroupJoin = limitPolicy{"group_join", 20, time.Minute}
 )
 
 // Router builds the HTTP handler. Middleware is attached per route group so
@@ -85,8 +88,12 @@ func (a *App) Router() http.Handler {
 				r.Get("/", a.handlers.groups.MyGroups)
 				r.Post("/", a.handlers.groups.CreateGroup)
 				r.Get("/{group_id}", a.handlers.groups.Detail)
-				r.Post("/{group_id}/members", a.handlers.groups.JoinGroup)
 				r.Delete("/{group_id}/members", a.handlers.groups.LeaveGroup)
+				// joining needs the invite code: groups are private
+				r.With(limit(limitGroupJoin)).Post("/join", a.handlers.groups.JoinByInvite)
+				r.With(limit(limitGroupJoin)).Get("/invites/{code}", a.handlers.groups.PreviewInvite)
+				r.Get("/{group_id}/invite", a.handlers.groups.InviteCode)
+				r.Post("/{group_id}/invite", a.handlers.groups.RegenerateInvite)
 			})
 			r.With(limit(limitSend)).Post("/chats/message", a.handlers.chat.SendMessage)
 

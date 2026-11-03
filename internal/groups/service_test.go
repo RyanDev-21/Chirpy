@@ -16,7 +16,31 @@ import (
 type fakeRepo struct {
 	mu     sync.Mutex
 	groups map[uuid.UUID]*GroupSnapshot
+	codes  map[uuid.UUID]string
 	reads  int
+}
+
+func (f *fakeRepo) ByInviteCode(_ context.Context, code string) (GroupPreview, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, c := range f.codes {
+		if c == code {
+			return GroupPreview{ID: id, Name: f.groups[id].Name}, nil
+		}
+	}
+	return GroupPreview{}, ErrNotFoundGroup
+}
+func (f *fakeRepo) InviteCode(_ context.Context, id uuid.UUID) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.codes[id], nil
+}
+func (f *fakeRepo) RegenerateInviteCode(_ context.Context, id uuid.UUID) (string, error) {
+	c, _ := NewInviteCode()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.codes[id] = c
+	return c, nil
 }
 
 func (f *fakeRepo) Create(_ context.Context, id, creator uuid.UUID, req createGroupRequest) error {
@@ -28,6 +52,7 @@ func (f *fakeRepo) Create(_ context.Context, id, creator uuid.UUID, req createGr
 		}
 	}
 	f.groups[id] = &GroupSnapshot{Name: req.GroupName, MaxMem: req.MaxMems, LeaderID: creator, Members: []uuid.UUID{creator}}
+	f.codes[id], _ = NewInviteCode()
 	return nil
 }
 
@@ -79,14 +104,20 @@ func (f *fakeRepo) Leave(_ context.Context, id, user uuid.UUID) error {
 }
 
 func (f *fakeRepo) ListForUser(context.Context, uuid.UUID) ([]GroupSummary, error) { return nil, nil }
-func (f *fakeRepo) Detail(context.Context, uuid.UUID, uuid.UUID) (GroupDetail, error) {
-	return GroupDetail{}, nil
+func (f *fakeRepo) Detail(_ context.Context, id, viewer uuid.UUID) (GroupDetail, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	g, ok := f.groups[id]
+	if !ok {
+		return GroupDetail{}, ErrNotFoundGroup
+	}
+	return GroupDetail{ID: id, Name: g.Name, IsMember: slices.Contains(g.Members, viewer)}, nil
 }
 
 func newSvc(t *testing.T) (GroupService, *fakeRepo) {
 	t.Helper()
 	rdb, _ := testutil.Redis(t)
-	repo := &fakeRepo{groups: map[uuid.UUID]*GroupSnapshot{}}
+	repo := &fakeRepo{groups: map[uuid.UUID]*GroupSnapshot{}, codes: map[uuid.UUID]string{}}
 	return NewGroupService(repo, NewStore(rdb), testutil.Logger()), repo
 }
 
@@ -163,5 +194,71 @@ func TestErrorsFromRepoArePassedThrough(t *testing.T) {
 	}
 	if _, err := svc.Members(ctx, uuid.New()); !errors.Is(err, ErrNotFoundGroup) {
 		t.Fatalf("unknown group: %v", err)
+	}
+}
+
+func TestInviteCodeFormat(t *testing.T) {
+	seen := map[string]bool{}
+	for range 200 {
+		c, err := NewInviteCode()
+		if err != nil || len(c) != inviteLen || strings.ContainsAny(c, "01IO") {
+			t.Fatalf("bad code %q: %v", c, err)
+		}
+		seen[c] = true
+	}
+	if len(seen) < 199 {
+		t.Fatalf("codes repeat: %d unique of 200", len(seen))
+	}
+	for in, want := range map[string]string{"K7M9-QX2P": "K7M9QX2P", "k7m9 qx2p": "K7M9QX2P", "K7M9QX2P": "K7M9QX2P"} {
+		if got, err := NormalizeInviteCode(in); err != nil || got != want {
+			t.Errorf("Normalize(%q) = %q, %v", in, got, err)
+		}
+	}
+	for _, bad := range []string{"", "K7M9-QX2", "K7M9-QX2PZ", "K7M0-QX2P", "K7M9_QX2P", "../../etc"} {
+		if _, err := NormalizeInviteCode(bad); !errors.Is(err, ErrInvalidInviteCode) {
+			t.Errorf("Normalize(%q) accepted", bad)
+		}
+	}
+	if FormatInviteCode("K7M9QX2P") != "K7M9-QX2P" {
+		t.Fatal("display form must be XXXX-XXXX")
+	}
+}
+
+func TestInvites(t *testing.T) {
+	svc, _ := newSvc(t)
+	ctx := context.Background()
+	leader, member, outsider := uuid.New(), uuid.New(), uuid.New()
+	g, _ := svc.CreateGroup(ctx, leader, createGroupRequest{GroupName: "devs", MaxMems: 5})
+
+	code, err := svc.InviteCode(ctx, g.ChatID, leader)
+	if err != nil || len(code) != 9 || code[4] != '-' {
+		t.Fatalf("leader's code = %q, %v", code, err)
+	}
+	if _, err := svc.InviteCode(ctx, g.ChatID, outsider); !errors.Is(err, ErrNotFoundGroup) {
+		t.Fatalf("outsider must not see the code: %v", err)
+	}
+	if _, err := svc.GroupDetail(ctx, g.ChatID, outsider); !errors.Is(err, ErrNotFoundGroup) {
+		t.Fatalf("outsider must not see a private group: %v", err)
+	}
+	// typed loosely, the code still works
+	id, err := svc.JoinByInvite(ctx, member, strings.ToLower(strings.ReplaceAll(code, "-", " ")))
+	if err != nil || id != g.ChatID {
+		t.Fatalf("join by code = %v, %v", id, err)
+	}
+	if c, err := svc.InviteCode(ctx, g.ChatID, member); err != nil || c != code {
+		t.Fatalf("member's code = %q, %v", c, err)
+	}
+	if _, err := svc.RegenerateInvite(ctx, g.ChatID, member); !errors.Is(err, ErrNotLeader) {
+		t.Fatalf("member regenerated the code: %v", err)
+	}
+	fresh, err := svc.RegenerateInvite(ctx, g.ChatID, leader)
+	if err != nil || fresh == code {
+		t.Fatalf("regenerate = %q, %v", fresh, err)
+	}
+	if _, err := svc.JoinByInvite(ctx, outsider, code); !errors.Is(err, ErrNotFoundGroup) {
+		t.Fatalf("old code still works: %v", err)
+	}
+	if _, err := svc.JoinByInvite(ctx, outsider, "nope"); !errors.Is(err, ErrInvalidInviteCode) {
+		t.Fatalf("garbage code: %v", err)
 	}
 }

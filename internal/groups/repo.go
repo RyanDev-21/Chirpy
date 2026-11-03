@@ -29,6 +29,11 @@ type GroupRepo interface {
 	Join(ctx context.Context, groupID, userID uuid.UUID) error
 	Leave(ctx context.Context, groupID, userID uuid.UUID) error
 	ListForUser(ctx context.Context, userID uuid.UUID) ([]GroupSummary, error)
+	// ByInviteCode finds the group for a normalized code (ErrNotFoundGroup).
+	ByInviteCode(ctx context.Context, code string) (GroupPreview, error)
+	InviteCode(ctx context.Context, groupID uuid.UUID) (string, error)
+	// RegenerateInviteCode replaces the code, invalidating the old one.
+	RegenerateInviteCode(ctx context.Context, groupID uuid.UUID) (string, error)
 	Detail(ctx context.Context, groupID, viewer uuid.UUID) (GroupDetail, error)
 }
 
@@ -41,25 +46,75 @@ func NewGroupRepo(pool *pgxpool.Pool) GroupRepo {
 	return &groupRepo{pool: pool, q: database.New(pool)}
 }
 
-func isCode(err error, code string) bool {
+func constraint(err error) string {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == code
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return pgErr.ConstraintName
+	}
+	return ""
 }
 
+const inviteCodeConstraint = "chat_groups_invite_code_key"
+
 func (r *groupRepo) Create(ctx context.Context, groupID, creatorID uuid.UUID, req createGroupRequest) error {
-	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
-		q := r.q.WithTx(tx)
-		if err := q.CreateGroup(ctx, database.CreateGroupParams{
-			ID: groupID, Name: req.GroupName, Description: req.Description, MaxMember: req.MaxMems,
-		}); err != nil {
+	// an invite code collision is ~1 in a trillion; retry a few times anyway
+	for range 3 {
+		code, err := NewInviteCode()
+		if err != nil {
 			return err
 		}
-		return q.CreateGroupLeaderRole(ctx, database.CreateGroupLeaderRoleParams{GroupID: groupID, MemberID: creatorID})
-	})
-	if isCode(err, "23505") {
-		return ErrDuplicateName
+		err = pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+			q := r.q.WithTx(tx)
+			if err := q.CreateGroup(ctx, database.CreateGroupParams{
+				ID: groupID, Name: req.GroupName, Description: req.Description, MaxMember: req.MaxMems, InviteCode: code,
+			}); err != nil {
+				return err
+			}
+			return q.CreateGroupLeaderRole(ctx, database.CreateGroupLeaderRoleParams{GroupID: groupID, MemberID: creatorID})
+		})
+		switch c := constraint(err); {
+		case c == inviteCodeConstraint:
+			continue
+		case c != "":
+			return ErrDuplicateName
+		}
+		return err
 	}
-	return err
+	return errors.New("could not allocate a unique invite code")
+}
+
+func (r *groupRepo) ByInviteCode(ctx context.Context, code string) (GroupPreview, error) {
+	g, err := r.q.GetGroupByInviteCode(ctx, code)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return GroupPreview{}, ErrNotFoundGroup
+	}
+	if err != nil {
+		return GroupPreview{}, err
+	}
+	return GroupPreview{ID: g.ID, Name: g.Name, Description: g.Description, MaxMembers: g.MaxMember, MemberCount: g.CurrentMember}, nil
+}
+
+func (r *groupRepo) InviteCode(ctx context.Context, groupID uuid.UUID) (string, error) {
+	code, err := r.q.GetInviteCode(ctx, groupID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFoundGroup
+	}
+	return code, err
+}
+
+func (r *groupRepo) RegenerateInviteCode(ctx context.Context, groupID uuid.UUID) (string, error) {
+	for range 3 {
+		code, err := NewInviteCode()
+		if err != nil {
+			return "", err
+		}
+		err = r.q.SetInviteCode(ctx, database.SetInviteCodeParams{ID: groupID, InviteCode: code})
+		if constraint(err) == inviteCodeConstraint {
+			continue
+		}
+		return code, err
+	}
+	return "", errors.New("could not allocate a unique invite code")
 }
 
 func (r *groupRepo) Snapshot(ctx context.Context, groupID uuid.UUID) (GroupSnapshot, error) {

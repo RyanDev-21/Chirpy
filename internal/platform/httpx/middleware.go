@@ -44,8 +44,13 @@ func RequestLogger(logger *slog.Logger, trustedProxies int) func(http.Handler) h
 				status = http.StatusOK // hijacked (websocket) or no explicit WriteHeader
 			}
 			level := slog.LevelInfo
-			if status >= 500 {
+			switch route := RoutePattern(r); {
+			case status >= 500:
 				level = slog.LevelError
+			case route == "/livez":
+				// the platform health check and keep-alive ping hit this
+				// every few seconds; keep it out of production logs
+				level = slog.LevelDebug
 			}
 			logger.LogAttrs(ctx, level, "request",
 				slog.String("method", r.Method),

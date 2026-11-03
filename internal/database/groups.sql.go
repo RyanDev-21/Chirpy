@@ -26,8 +26,8 @@ func (q *Queries) AddMember(ctx context.Context, arg AddMemberParams) error {
 }
 
 const createGroup = `-- name: CreateGroup :exec
-INSERT INTO chat_groups(id, name, description, max_member, current_member)
-VALUES ($1, $2, $3, $4, 1)
+INSERT INTO chat_groups(id, name, description, max_member, current_member, invite_code)
+VALUES ($1, $2, $3, $4, 1, $5)
 `
 
 type CreateGroupParams struct {
@@ -35,6 +35,7 @@ type CreateGroupParams struct {
 	Name        string
 	Description string
 	MaxMember   int16
+	InviteCode  string
 }
 
 func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) error {
@@ -43,6 +44,7 @@ func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) error 
 		arg.Name,
 		arg.Description,
 		arg.MaxMember,
+		arg.InviteCode,
 	)
 	return err
 }
@@ -76,8 +78,33 @@ func (q *Queries) DeleteMemFromGroup(ctx context.Context, arg DeleteMemFromGroup
 	return err
 }
 
+const getGroupByInviteCode = `-- name: GetGroupByInviteCode :one
+SELECT id, name, description, max_member, current_member FROM chat_groups WHERE invite_code = $1
+`
+
+type GetGroupByInviteCodeRow struct {
+	ID            uuid.UUID
+	Name          string
+	Description   string
+	MaxMember     int16
+	CurrentMember int16
+}
+
+func (q *Queries) GetGroupByInviteCode(ctx context.Context, inviteCode string) (GetGroupByInviteCodeRow, error) {
+	row := q.db.QueryRow(ctx, getGroupByInviteCode, inviteCode)
+	var i GetGroupByInviteCodeRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.MaxMember,
+		&i.CurrentMember,
+	)
+	return i, err
+}
+
 const getGroupInfoByID = `-- name: GetGroupInfoByID :one
-SELECT id, name, description, max_member, created_at, updated_at, current_member FROM chat_groups WHERE id = $1
+SELECT id, name, description, max_member, created_at, updated_at, current_member, invite_code FROM chat_groups WHERE id = $1
 `
 
 func (q *Queries) GetGroupInfoByID(ctx context.Context, id uuid.UUID) (ChatGroup, error) {
@@ -91,6 +118,7 @@ func (q *Queries) GetGroupInfoByID(ctx context.Context, id uuid.UUID) (ChatGroup
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CurrentMember,
+		&i.InviteCode,
 	)
 	return i, err
 }
@@ -104,6 +132,17 @@ func (q *Queries) GetGroupLeader(ctx context.Context, groupID uuid.UUID) (uuid.U
 	var member_id uuid.UUID
 	err := row.Scan(&member_id)
 	return member_id, err
+}
+
+const getInviteCode = `-- name: GetInviteCode :one
+SELECT invite_code FROM chat_groups WHERE id = $1
+`
+
+func (q *Queries) GetInviteCode(ctx context.Context, id uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getInviteCode, id)
+	var invite_code string
+	err := row.Scan(&invite_code)
+	return invite_code, err
 }
 
 const getMemberListByID = `-- name: GetMemberListByID :many
@@ -252,5 +291,19 @@ type SetGroupMemberCountParams struct {
 
 func (q *Queries) SetGroupMemberCount(ctx context.Context, arg SetGroupMemberCountParams) error {
 	_, err := q.db.Exec(ctx, setGroupMemberCount, arg.ID, arg.CurrentMember)
+	return err
+}
+
+const setInviteCode = `-- name: SetInviteCode :exec
+UPDATE chat_groups SET invite_code = $2, updated_at = NOW() WHERE id = $1
+`
+
+type SetInviteCodeParams struct {
+	ID         uuid.UUID
+	InviteCode string
+}
+
+func (q *Queries) SetInviteCode(ctx context.Context, arg SetInviteCodeParams) error {
+	_, err := q.db.Exec(ctx, setInviteCode, arg.ID, arg.InviteCode)
 	return err
 }

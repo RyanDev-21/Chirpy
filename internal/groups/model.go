@@ -14,6 +14,7 @@ var (
 	ErrDuplicateName     = errors.New("duplicate name")
 	ErrInvalidGroupReq   = errors.New("group_name must be 1-30 characters, description at most 1000, max_mems 2-1000")
 	ErrLeaderCannotLeave = errors.New("group leader cannot leave the group")
+	ErrNotLeader         = errors.New("only the group leader can do this")
 )
 
 const RoleLeader = "Leader"
@@ -32,6 +33,19 @@ type createGroupRequest struct {
 
 type GroupInfo struct {
 	ChatID uuid.UUID `json:"chat_id"`
+}
+
+// GroupPreview is what an invite code reveals before joining.
+type GroupPreview struct {
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	MaxMembers  int16     `json:"max_members"`
+	MemberCount int16     `json:"member_count"`
+}
+
+type InviteCode struct {
+	Code string `json:"code"` // display form, e.g. K7M9-QX2P
 }
 
 // GroupSummary is one entry of GET /api/chats/groups.

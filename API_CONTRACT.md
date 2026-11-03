@@ -243,16 +243,43 @@ role: `Leader` or `member`.
  "members":[{"user_id":"uuid","name":"alice","role":"Leader"}]}
 ```
 
-Any signed-in user can see a group's name, description and size (for example
-before joining). `members` (leader first) is only included for members.
-`400` invalid ID, `404` unknown group.
+Members only: groups are private, so a non-member gets `404`, the same as an
+unknown group. `members` lists the leader first. `400` invalid ID.
 
-### Join group
+### Invite codes
 
-`POST /api/chats/groups/{group_id}/members` → `201` with an empty body.
+Every group has an invite code like `K7M9-QX2P`: 8 characters from
+`A–Z` and `2–9` without the look-alikes `0 O 1 I`. Joining a group requires
+its code. Codes are case-insensitive and the dash and spaces are optional, so
+`k7m9 qx2p` also works.
 
-`400` invalid group ID, `404` group not found, `409` already a member or group
-full.
+- `GET /api/chats/groups/{group_id}/invite` → `200 {"code":"K7M9-QX2P"}`.
+  Members only (`404` otherwise).
+- `POST /api/chats/groups/{group_id}/invite` → `200 {"code":"NEW2-CODE"}`.
+  Leader only (`403` for other members): makes a new code, and the old code
+  stops working immediately.
+
+### Preview an invite
+
+`GET /api/chats/groups/invites/{code}` → `200`:
+
+```json
+{"id":"group-uuid","name":"devs","description":"Team chat","max_members":20,"member_count":3}
+```
+
+Use it to show "Join devs?" before joining. Unknown or malformed codes return
+`404 {"error":"invalid invite code"}`. Shares the 20 requests/minute join
+budget.
+
+### Join with a code
+
+`POST /api/chats/groups/join` with `{"code":"K7M9-QX2P"}` →
+`201 {"chat_id":"group-uuid"}`.
+
+`404` invalid code, `409` already a member or group full. Maximum 20
+join/preview requests per minute.
+
+There is no way to join by group ID.
 
 ### Leave group
 

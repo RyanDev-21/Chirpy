@@ -208,6 +208,22 @@ func (e *env) seedUser(name string) user {
 	return user{ID: id, Token: token, email: name + "@example.io"}
 }
 
+// invite returns a group's invite code as seen by a member.
+func (e *env) invite(token, groupID string) string {
+	e.t.Helper()
+	var c struct {
+		Code string `json:"code"`
+	}
+	e.expect(e.do("GET", "/api/chats/groups/"+groupID+"/invite", token, nil), 200).json(e.t, &c)
+	return c.Code
+}
+
+// join joins a group with an invite code.
+func (e *env) join(token, code string) resp {
+	e.t.Helper()
+	return e.do("POST", "/api/chats/groups/join", token, map[string]string{"code": code})
+}
+
 // eventually polls a SQL query until it returns want (as text).
 func (e *env) eventually(query, want string, args ...any) {
 	e.t.Helper()

@@ -1,6 +1,6 @@
 -- name: CreateGroup :exec
-INSERT INTO chat_groups(id, name, description, max_member, current_member)
-VALUES ($1, $2, $3, $4, 1);
+INSERT INTO chat_groups(id, name, description, max_member, current_member, invite_code)
+VALUES ($1, $2, $3, $4, 1, $5);
 
 -- name: CreateGroupLeaderRole :exec
 INSERT INTO member_table(group_id, member_id, role)
@@ -44,3 +44,12 @@ FROM member_table m
 JOIN users u ON u.id = m.member_id
 WHERE m.group_id = $1
 ORDER BY (m.role = 'Leader') DESC, m.joined_at;
+
+-- name: GetGroupByInviteCode :one
+SELECT id, name, description, max_member, current_member FROM chat_groups WHERE invite_code = $1;
+
+-- name: GetInviteCode :one
+SELECT invite_code FROM chat_groups WHERE id = $1;
+
+-- name: SetInviteCode :exec
+UPDATE chat_groups SET invite_code = $2, updated_at = NOW() WHERE id = $1;
