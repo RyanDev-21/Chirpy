@@ -3,11 +3,13 @@ package groups
 import (
 	"context"
 	"errors"
+	"time"
 
 	"RyanDev-21.com/Chirpy/internal/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -70,7 +72,7 @@ func (r *groupRepo) Create(ctx context.Context, groupID, creatorID uuid.UUID, re
 			}); err != nil {
 				return err
 			}
-			return q.CreateGroupLeaderRole(ctx, database.CreateGroupLeaderRoleParams{GroupID: groupID, MemberID: creatorID})
+			return q.CreateGroupLeaderRole(ctx, database.CreateGroupLeaderRoleParams{GroupID: groupID, MemberID: creatorID, JoinedAt: nowUTC()})
 		})
 		switch c := constraint(err); {
 		case c == inviteCodeConstraint:
@@ -163,7 +165,7 @@ func (r *groupRepo) Join(ctx context.Context, groupID, userID uuid.UUID) error {
 		if g.CurrentMember >= g.MaxMember {
 			return ErrGroupFull
 		}
-		if err := q.AddMember(ctx, database.AddMemberParams{GroupID: groupID, MemberID: userID}); err != nil {
+		if err := q.AddMember(ctx, database.AddMemberParams{GroupID: groupID, MemberID: userID, JoinedAt: nowUTC()}); err != nil {
 			return err
 		}
 		return q.SetGroupMemberCount(ctx, database.SetGroupMemberCountParams{ID: groupID, CurrentMember: g.CurrentMember + 1})
@@ -226,3 +228,7 @@ func (r *groupRepo) Detail(ctx context.Context, groupID, viewer uuid.UUID) (Grou
 	}
 	return d, nil
 }
+
+// nowUTC is the server clock, which also stamps every message: comparing
+// join times with message times must not mix in the database's clock.
+func nowUTC() pgtype.Timestamp { return pgtype.Timestamp{Time: time.Now().UTC(), Valid: true} }

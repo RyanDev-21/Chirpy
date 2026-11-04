@@ -294,10 +294,10 @@ func (q *Queries) SetPasswordHash(ctx context.Context, arg SetPasswordHashParams
 }
 
 const upsertEmailCode = `-- name: UpsertEmailCode :exec
-INSERT INTO email_codes (user_id, purpose, code_hash, expires_at)
-VALUES ($1, $2, $3, $4)
+INSERT INTO email_codes (user_id, purpose, code_hash, expires_at, created_at)
+VALUES ($1, $2, $3, $4, $5::timestamp)
 ON CONFLICT (user_id, purpose)
-DO UPDATE SET code_hash = EXCLUDED.code_hash, attempts = 0, expires_at = EXCLUDED.expires_at, created_at = NOW()
+DO UPDATE SET code_hash = EXCLUDED.code_hash, attempts = 0, expires_at = EXCLUDED.expires_at, created_at = EXCLUDED.created_at
 `
 
 type UpsertEmailCodeParams struct {
@@ -305,14 +305,17 @@ type UpsertEmailCodeParams struct {
 	Purpose   string
 	CodeHash  string
 	ExpiresAt pgtype.Timestamp
+	CreatedAt pgtype.Timestamp
 }
 
+// created_at is the server clock (compared with it for the resend gap)
 func (q *Queries) UpsertEmailCode(ctx context.Context, arg UpsertEmailCodeParams) error {
 	_, err := q.db.Exec(ctx, upsertEmailCode,
 		arg.UserID,
 		arg.Purpose,
 		arg.CodeHash,
 		arg.ExpiresAt,
+		arg.CreatedAt,
 	)
 	return err
 }

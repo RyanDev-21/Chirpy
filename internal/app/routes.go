@@ -32,6 +32,7 @@ var (
 	limitGroupJoin = limitPolicy{"group_join", 20, time.Minute}
 	// verification, reset and Google sign-in; codes also die after 5 wrong tries
 	limitAccount = limitPolicy{"account", 10, time.Minute}
+	limitReact   = limitPolicy{"react", 60, time.Minute}
 )
 
 // Router builds the HTTP handler. Middleware is attached per route group so
@@ -116,6 +117,9 @@ func (a *App) Router() http.Handler {
 				r.Post("/{otherUser_id}/messages", a.handlers.chat.UpdateSeen)
 				r.Get("/groups/{group_id}/messages", a.handlers.chat.GetMessagesForPublicID)
 				r.Post("/groups/{group_id}/messages", a.handlers.chat.MarkGroupRead)
+				r.With(limit(limitReact)).Put("/messages/{msg_id}/reaction", a.handlers.chat.React)
+				r.With(limit(limitReact)).Delete("/messages/{msg_id}/reaction", a.handlers.chat.Unreact)
+				r.Get("/messages/{msg_id}/reactions", a.handlers.chat.Reactors)
 			})
 
 			if a.handlers.ai != nil {

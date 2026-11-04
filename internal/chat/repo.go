@@ -31,6 +31,15 @@ type ChatRepo interface {
 	GroupBefore(ctx context.Context, groupID, before uuid.UUID, n int) ([]MessageMetaDataRes, error)
 	MarkGroupRead(ctx context.Context, groupID, userID, msgID uuid.UUID) error
 	Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error)
+
+	// LocateMessage finds which chat a message belongs to (ErrMessageNotFound).
+	LocateMessage(ctx context.Context, msgID uuid.UUID) (messageRef, error)
+	SetReaction(ctx context.Context, kind string, msgID, userID uuid.UUID, emoji string) error
+	// DeleteReaction reports whether there was a reaction to remove.
+	DeleteReaction(ctx context.Context, kind string, msgID, userID uuid.UUID) (bool, error)
+	// ReactionCounts returns per-message counts for a page of messages.
+	ReactionCounts(ctx context.Context, kind string, me uuid.UUID, ids []uuid.UUID) (map[uuid.UUID][]ReactionCount, error)
+	Reactors(ctx context.Context, kind string, msgID uuid.UUID) ([]Reactor, error)
 }
 
 type chatRepo struct {
@@ -251,5 +260,91 @@ func (r *chatRepo) Conversations(ctx context.Context, me uuid.UUID) ([]Conversat
 		}
 		return b.LastMessage.CreatedAt.Compare(a.LastMessage.CreatedAt)
 	})
+	return out, nil
+}
+
+func (r *chatRepo) LocateMessage(ctx context.Context, msgID uuid.UUID) (messageRef, error) {
+	p, err := r.q.PrivateMessageParticipants(ctx, msgID)
+	if err == nil {
+		return messageRef{Kind: TypePrivate, From: uuid.UUID(p.FromID.Bytes), To: uuid.UUID(p.ToID.Bytes)}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return messageRef{}, err
+	}
+	g, err := r.q.GroupMessageGroup(ctx, msgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return messageRef{}, ErrMessageNotFound
+	}
+	if err != nil {
+		return messageRef{}, err
+	}
+	return messageRef{Kind: TypePublic, Group: uuid.UUID(g.Bytes)}, nil
+}
+
+func (r *chatRepo) SetReaction(ctx context.Context, kind string, msgID, userID uuid.UUID, emoji string) error {
+	if kind == TypePrivate {
+		return r.q.SetPrivateReaction(ctx, database.SetPrivateReactionParams{MessageID: msgID, UserID: userID, Emoji: emoji})
+	}
+	return r.q.SetGroupReaction(ctx, database.SetGroupReactionParams{MessageID: msgID, UserID: userID, Emoji: emoji})
+}
+
+func (r *chatRepo) DeleteReaction(ctx context.Context, kind string, msgID, userID uuid.UUID) (bool, error) {
+	var n int64
+	var err error
+	if kind == TypePrivate {
+		n, err = r.q.DeletePrivateReaction(ctx, database.DeletePrivateReactionParams{MessageID: msgID, UserID: userID})
+	} else {
+		n, err = r.q.DeleteGroupReaction(ctx, database.DeleteGroupReactionParams{MessageID: msgID, UserID: userID})
+	}
+	return n > 0, err
+}
+
+func (r *chatRepo) ReactionCounts(ctx context.Context, kind string, me uuid.UUID, ids []uuid.UUID) (map[uuid.UUID][]ReactionCount, error) {
+	out := make(map[uuid.UUID][]ReactionCount)
+	if len(ids) == 0 {
+		return out, nil
+	}
+	add := func(id uuid.UUID, emoji string, n int32, mine bool) {
+		out[id] = append(out[id], ReactionCount{Emoji: emoji, Count: int(n), Me: mine})
+	}
+	if kind == TypePrivate {
+		rows, err := r.q.PrivateReactionSummary(ctx, database.PrivateReactionSummaryParams{Me: me, Ids: ids})
+		if err != nil {
+			return nil, err
+		}
+		for _, x := range rows {
+			add(x.MessageID, x.Emoji, x.N, x.Mine)
+		}
+		return out, nil
+	}
+	rows, err := r.q.GroupReactionSummary(ctx, database.GroupReactionSummaryParams{Me: me, Ids: ids})
+	if err != nil {
+		return nil, err
+	}
+	for _, x := range rows {
+		add(x.MessageID, x.Emoji, x.N, x.Mine)
+	}
+	return out, nil
+}
+
+func (r *chatRepo) Reactors(ctx context.Context, kind string, msgID uuid.UUID) ([]Reactor, error) {
+	out := []Reactor{}
+	if kind == TypePrivate {
+		rows, err := r.q.PrivateReactors(ctx, msgID)
+		if err != nil {
+			return nil, err
+		}
+		for _, x := range rows {
+			out = append(out, Reactor{UserID: x.UserID, Name: x.Name, Emoji: x.Emoji, CreatedAt: x.CreatedAt.Time.UTC()})
+		}
+		return out, nil
+	}
+	rows, err := r.q.GroupReactors(ctx, msgID)
+	if err != nil {
+		return nil, err
+	}
+	for _, x := range rows {
+		out = append(out, Reactor{UserID: x.UserID, Name: x.Name, Emoji: x.Emoji, CreatedAt: x.CreatedAt.Time.UTC()})
+	}
 	return out, nil
 }

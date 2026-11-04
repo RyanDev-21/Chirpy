@@ -31,6 +31,7 @@ var (
 	ErrBadCursor           = errors.New("before must be the id of a message in this chat")
 	ErrSinceAndBefore      = errors.New("use either since or before, not both")
 	ErrSinceNotSupported   = errors.New("since is not supported for group history")
+	ErrMessageNotFound     = errors.New("message not found")
 )
 
 const maxMessageLen = 500 // matches message.content VARCHAR(500)
@@ -59,6 +60,33 @@ type MessageMetaDataRes struct {
 	ID        uuid.UUID    `json:"message_id"`
 	MsgInfo   MessageCache `json:"message_info"`
 	CreatedAt time.Time    `json:"created_at"`
+	// Reactions are filled in when history is read (never cached with the
+	// message, since they change afterwards).
+	Reactions []ReactionCount `json:"reactions"`
+}
+
+// ReactionCount is one emoji on a message: how many people used it and
+// whether the caller is one of them.
+type ReactionCount struct {
+	Emoji string `json:"emoji"`
+	Count int    `json:"count"`
+	Me    bool   `json:"me"`
+}
+
+// Reactor is one person's reaction, for GET .../reactions.
+type Reactor struct {
+	UserID    uuid.UUID `json:"user_id"`
+	Name      string    `json:"name"`
+	Emoji     string    `json:"emoji"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// messageRef locates a message: a private one (between From and To) or a
+// group one (in Group).
+type messageRef struct {
+	Kind     string // TypePrivate or TypePublic
+	From, To uuid.UUID
+	Group    uuid.UUID
 }
 
 type MessageListRes struct {

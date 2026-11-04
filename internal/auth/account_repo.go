@@ -22,7 +22,7 @@ type storedCode struct {
 
 type AccountRepo interface {
 	GetCode(ctx context.Context, userID uuid.UUID, purpose string) (storedCode, error)
-	PutCode(ctx context.Context, userID uuid.UUID, purpose, hash string, expires time.Time) error
+	PutCode(ctx context.Context, userID uuid.UUID, purpose, hash string, created, expires time.Time) error
 	BumpAttempts(ctx context.Context, userID uuid.UUID, purpose string) (int32, error)
 	DeleteCode(ctx context.Context, userID uuid.UUID, purpose string) error
 	MarkVerified(ctx context.Context, userID uuid.UUID) error
@@ -55,8 +55,8 @@ func (r *accountRepo) GetCode(ctx context.Context, userID uuid.UUID, purpose str
 	return storedCode{Hash: c.CodeHash, ExpiresAt: c.ExpiresAt.Time, CreatedAt: c.CreatedAt.Time}, nil
 }
 
-func (r *accountRepo) PutCode(ctx context.Context, userID uuid.UUID, purpose, hash string, expires time.Time) error {
-	return r.q.UpsertEmailCode(ctx, database.UpsertEmailCodeParams{UserID: userID, Purpose: purpose, CodeHash: hash, ExpiresAt: ts(expires)})
+func (r *accountRepo) PutCode(ctx context.Context, userID uuid.UUID, purpose, hash string, created, expires time.Time) error {
+	return r.q.UpsertEmailCode(ctx, database.UpsertEmailCodeParams{UserID: userID, Purpose: purpose, CodeHash: hash, ExpiresAt: ts(expires), CreatedAt: ts(created)})
 }
 
 func (r *accountRepo) BumpAttempts(ctx context.Context, userID uuid.UUID, purpose string) (int32, error) {

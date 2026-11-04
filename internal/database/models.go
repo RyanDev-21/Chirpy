@@ -44,6 +44,13 @@ type EmailCode struct {
 	CreatedAt pgtype.Timestamp
 }
 
+type GroupMessageReaction struct {
+	MessageID uuid.UUID
+	UserID    uuid.UUID
+	Emoji     string
+	CreatedAt pgtype.Timestamp
+}
+
 type GroupRead struct {
 	GroupID   uuid.UUID
 	UserID    uuid.UUID
@@ -79,6 +86,13 @@ type Message struct {
 	DeletedAt pgtype.Timestamp
 	CreatedAt pgtype.Timestamp
 	UpdatedAt pgtype.Timestamp
+}
+
+type MessageReaction struct {
+	MessageID uuid.UUID
+	UserID    uuid.UUID
+	Emoji     string
+	CreatedAt pgtype.Timestamp
 }
 
 type RefreshToken struct {

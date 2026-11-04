@@ -3,8 +3,10 @@ INSERT INTO chat_groups(id, name, description, max_member, current_member, invit
 VALUES ($1, $2, $3, $4, 1, $5);
 
 -- name: CreateGroupLeaderRole :exec
-INSERT INTO member_table(group_id, member_id, role)
-VALUES ($1, $2, 'Leader');
+-- joined_at comes from the server clock, like message times, so "messages
+-- since I joined" never depends on clock skew between app and database
+INSERT INTO member_table(group_id, member_id, role, joined_at)
+VALUES ($1, $2, 'Leader', @joined_at::timestamp);
 
 -- name: LockGroup :one
 -- serialises membership changes for one group inside a transaction
@@ -23,7 +25,7 @@ SELECT member_id FROM member_table WHERE group_id = $1 AND role = 'Leader' LIMIT
 SELECT role FROM member_table WHERE group_id = $1 AND member_id = $2;
 
 -- name: AddMember :exec
-INSERT INTO member_table(group_id, member_id) VALUES ($1, $2);
+INSERT INTO member_table(group_id, member_id, joined_at) VALUES ($1, $2, @joined_at::timestamp);
 
 -- name: DeleteMemFromGroup :exec
 DELETE FROM member_table WHERE group_id = $1 AND member_id = $2;
