@@ -24,7 +24,7 @@ const passwordSpecials = "@$!%*?&"
 type UserService interface {
 	Register(ctx context.Context, name, email, password string) (*User, error)
 	UpdatePassword(ctx context.Context, userID uuid.UUID, oldPass, newPass string) (*User, error)
-	SearchUser(ctx context.Context, q string) ([]PublicUser, error)
+	SearchUser(ctx context.Context, me uuid.UUID, q string) ([]PublicUser, error)
 	// Me returns the caller's own profile.
 	Me(ctx context.Context, userID uuid.UUID) (*User, error)
 	// GetName returns a user's display name (cached).
@@ -126,12 +126,12 @@ func (s *userService) UpdatePassword(ctx context.Context, userID uuid.UUID, oldP
 	return user, nil
 }
 
-func (s *userService) SearchUser(ctx context.Context, q string) ([]PublicUser, error) {
+func (s *userService) SearchUser(ctx context.Context, me uuid.UUID, q string) ([]PublicUser, error) {
 	q = strings.TrimSpace(q)
 	if q == "" || utf8.RuneCountInString(q) > maxNameLen {
 		return nil, ErrInvalidInput
 	}
-	list, err := s.repo.SearchByName(ctx, q)
+	list, err := s.repo.SearchByName(ctx, me, q)
 	if err != nil {
 		return nil, err
 	}

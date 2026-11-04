@@ -7,7 +7,6 @@ package database
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -91,25 +90,32 @@ func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, erro
 }
 
 const searchNameSiml = `-- name: SearchNameSiml :many
-SELECT u.email, u.name, u.created_at, u.updated_at, u.id, u.is_chirpy_red, similarity(name, $1) AS similarity
+SELECT u.id, u.name, similarity(u.name, $1::text) AS similarity
 FROM users u
-WHERE name % $1
-ORDER BY similarity DESC, name
+WHERE u.name % $1::text
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks b
+      WHERE (b.blocker_id = u.id AND b.blocked_id = $2::uuid)
+         OR (b.blocker_id = $2::uuid AND b.blocked_id = u.id)
+  )
+ORDER BY similarity DESC, u.name
 LIMIT 20
 `
 
-type SearchNameSimlRow struct {
-	Email       string
-	Name        string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	ID          uuid.UUID
-	IsChirpyRed pgtype.Bool
-	Similarity  float32
+type SearchNameSimlParams struct {
+	Q  string
+	Me uuid.UUID
 }
 
-func (q *Queries) SearchNameSiml(ctx context.Context, similarity string) ([]SearchNameSimlRow, error) {
-	rows, err := q.db.Query(ctx, searchNameSiml, similarity)
+type SearchNameSimlRow struct {
+	ID         uuid.UUID
+	Name       string
+	Similarity float32
+}
+
+// people who blocked the caller, or whom the caller blocked, are left out
+func (q *Queries) SearchNameSiml(ctx context.Context, arg SearchNameSimlParams) ([]SearchNameSimlRow, error) {
+	rows, err := q.db.Query(ctx, searchNameSiml, arg.Q, arg.Me)
 	if err != nil {
 		return nil, err
 	}
@@ -117,15 +123,7 @@ func (q *Queries) SearchNameSiml(ctx context.Context, similarity string) ([]Sear
 	var items []SearchNameSimlRow
 	for rows.Next() {
 		var i SearchNameSimlRow
-		if err := rows.Scan(
-			&i.Email,
-			&i.Name,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ID,
-			&i.IsChirpyRed,
-			&i.Similarity,
-		); err != nil {
+		if err := rows.Scan(&i.ID, &i.Name, &i.Similarity); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -217,7 +217,27 @@ offer this.
 ```
 
 The key is intentionally `UserList` (capital U/L), and search results never
-include email addresses.
+include email addresses. People you blocked, and people who blocked you, are
+left out.
+
+### Block users
+
+Blocking someone removes your friendship and any pending request between
+you. Afterwards neither of you can send the other a friend request (so no
+private messages either, which need a friendship), and neither appears in
+the other's search. Private chat history is kept, and shared groups work as
+before. They are not told about the block: if you were friends they get the
+same `RemoveFri` event as for an unfriend, and their friend requests to you
+fail as if your account didn't exist (`404`).
+
+- `POST /api/users/blocks` with `{"user_id":"uuid"}` → `204` (also if
+  already blocked). `400` yourself, `404` unknown user. Maximum 30
+  block/unblock requests per minute.
+- `DELETE /api/users/blocks/{user_id}` → `204` (also if not blocked).
+  Unblocking doesn't restore the friendship; send a new request.
+- `GET /api/users/blocks` →
+  `200 {"blocked":[{"user_id":"uuid","name":"bob","created_at":"…"}]}`,
+  newest first.
 
 ## Friends
 
@@ -251,8 +271,9 @@ All friend endpoints require authentication.
 Request: `{"to_id":"user-uuid"}`
 
 Success: `200 {"req_id":"request-uuid"}`. `400` self-request or malformed
-input; `404` unknown user; `409` pending request already exists or users are
-already friends.
+input; `404` unknown user (or one who blocked you); `409` pending request
+already exists, users are already friends, or you blocked them (unblock
+first).
 
 ### Accept or deny an incoming request
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"RyanDev-21.com/Chirpy/internal/testutil"
 	"RyanDev-21.com/Chirpy/internal/users"
@@ -96,6 +97,16 @@ func (f *fakeRepo) Cancel(_ context.Context, id, me uuid.UUID) (uuid.UUID, error
 	return f.resolve(id, me, false, true)
 }
 
+func (f *fakeRepo) Block(context.Context, uuid.UUID, uuid.UUID, time.Time) (bool, error) {
+	return false, nil
+}
+func (f *fakeRepo) Unblock(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+func (f *fakeRepo) Blocked(context.Context, uuid.UUID) ([]BlockedUser, error) {
+	return nil, nil
+}
+func (f *fakeRepo) BlockBetween(context.Context, uuid.UUID, uuid.UUID) (bool, bool, error) {
+	return false, false, nil
+}
 func (f *fakeRepo) Unfriend(_ context.Context, a, b uuid.UUID) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

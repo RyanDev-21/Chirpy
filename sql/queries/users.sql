@@ -16,8 +16,14 @@ DELETE FROM users;
 UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2;
 
 -- name: SearchNameSiml :many
-SELECT u.email, u.name, u.created_at, u.updated_at, u.id, u.is_chirpy_red, similarity(name, $1) AS similarity
+-- people who blocked the caller, or whom the caller blocked, are left out
+SELECT u.id, u.name, similarity(u.name, @q::text) AS similarity
 FROM users u
-WHERE name % $1
-ORDER BY similarity DESC, name
+WHERE u.name % @q::text
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks b
+      WHERE (b.blocker_id = u.id AND b.blocked_id = @me::uuid)
+         OR (b.blocker_id = @me::uuid AND b.blocked_id = u.id)
+  )
+ORDER BY similarity DESC, u.name
 LIMIT 20;

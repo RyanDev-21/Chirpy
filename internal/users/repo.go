@@ -17,7 +17,8 @@ type UserRepo interface {
 	GetUserByID(ctx context.Context, id uuid.UUID) (*User, string, error)
 	UpdateUserPassword(ctx context.Context, payload UpdateUserPassword) (*User, error)
 	RevokeAllRefreshTokens(ctx context.Context, userID uuid.UUID) error
-	SearchByName(ctx context.Context, q string) ([]PublicUser, error)
+	// SearchByName leaves out users with a block either way with me.
+	SearchByName(ctx context.Context, me uuid.UUID, q string) ([]PublicUser, error)
 }
 
 type userRepo struct {
@@ -95,8 +96,8 @@ func (r *userRepo) RevokeAllRefreshTokens(ctx context.Context, userID uuid.UUID)
 	return r.queries.RevokeAllUserRefreshTokens(ctx, userID)
 }
 
-func (r *userRepo) SearchByName(ctx context.Context, q string) ([]PublicUser, error) {
-	rows, err := r.queries.SearchNameSiml(ctx, q)
+func (r *userRepo) SearchByName(ctx context.Context, me uuid.UUID, q string) ([]PublicUser, error) {
+	rows, err := r.queries.SearchNameSiml(ctx, database.SearchNameSimlParams{Q: q, Me: me})
 	if err != nil {
 		return nil, err
 	}

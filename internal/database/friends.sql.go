@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const acceptFriendRequest = `-- name: AcceptFriendRequest :one
@@ -28,6 +29,58 @@ func (q *Queries) AcceptFriendRequest(ctx context.Context, arg AcceptFriendReque
 	var user_id uuid.UUID
 	err := row.Scan(&user_id)
 	return user_id, err
+}
+
+const blockBetween = `-- name: BlockBetween :one
+SELECT
+    EXISTS (SELECT 1 FROM user_blocks WHERE blocker_id = $1::uuid AND blocked_id = $2::uuid) AS a_blocked,
+    EXISTS (SELECT 1 FROM user_blocks WHERE blocker_id = $2::uuid AND blocked_id = $1::uuid) AS b_blocked
+`
+
+type BlockBetweenParams struct {
+	A uuid.UUID
+	B uuid.UUID
+}
+
+type BlockBetweenRow struct {
+	ABlocked bool
+	BBlocked bool
+}
+
+// whether a blocked b (a_blocked) and whether b blocked a (b_blocked)
+func (q *Queries) BlockBetween(ctx context.Context, arg BlockBetweenParams) (BlockBetweenRow, error) {
+	row := q.db.QueryRow(ctx, blockBetween, arg.A, arg.B)
+	var i BlockBetweenRow
+	err := row.Scan(&i.ABlocked, &i.BBlocked)
+	return i, err
+}
+
+const blockUser = `-- name: BlockUser :one
+WITH b AS (
+    INSERT INTO user_blocks (blocker_id, blocked_id, created_at) VALUES ($1::uuid, $2::uuid, $3::timestamp)
+    ON CONFLICT DO NOTHING
+), d AS (
+    DELETE FROM user_relationships
+    WHERE LEAST(user_id, otherUser_id) = LEAST($1::uuid, $2::uuid)
+      AND GREATEST(user_id, otherUser_id) = GREATEST($1::uuid, $2::uuid)
+    RETURNING status
+)
+SELECT COALESCE(bool_or(status = 'confirm'), false)::bool AS were_friends FROM d
+`
+
+type BlockUserParams struct {
+	Blocker uuid.UUID
+	Blocked uuid.UUID
+	At      pgtype.Timestamp
+}
+
+// records the block and removes any friendship or request between the
+// two; returns whether they were friends
+func (q *Queries) BlockUser(ctx context.Context, arg BlockUserParams) (bool, error) {
+	row := q.db.QueryRow(ctx, blockUser, arg.Blocker, arg.Blocked, arg.At)
+	var were_friends bool
+	err := row.Scan(&were_friends)
+	return were_friends, err
 }
 
 const cancelFriendRequest = `-- name: CancelFriendRequest :one
@@ -80,6 +133,39 @@ func (q *Queries) DenyFriendRequest(ctx context.Context, arg DenyFriendRequestPa
 	var user_id uuid.UUID
 	err := row.Scan(&user_id)
 	return user_id, err
+}
+
+const listBlocked = `-- name: ListBlocked :many
+SELECT b.blocked_id, u.name, b.created_at FROM user_blocks b
+JOIN users u ON u.id = b.blocked_id
+WHERE b.blocker_id = $1
+ORDER BY b.created_at DESC
+`
+
+type ListBlockedRow struct {
+	BlockedID uuid.UUID
+	Name      string
+	CreatedAt pgtype.Timestamp
+}
+
+func (q *Queries) ListBlocked(ctx context.Context, blockerID uuid.UUID) ([]ListBlockedRow, error) {
+	rows, err := q.db.Query(ctx, listBlocked, blockerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBlockedRow
+	for rows.Next() {
+		var i ListBlockedRow
+		if err := rows.Scan(&i.BlockedID, &i.Name, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listFriends = `-- name: ListFriends :many
@@ -202,6 +288,20 @@ func (q *Queries) PairStatus(ctx context.Context, arg PairStatusParams) (string,
 	var status string
 	err := row.Scan(&status)
 	return status, err
+}
+
+const unblockUser = `-- name: UnblockUser :exec
+DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2
+`
+
+type UnblockUserParams struct {
+	BlockerID uuid.UUID
+	BlockedID uuid.UUID
+}
+
+func (q *Queries) UnblockUser(ctx context.Context, arg UnblockUserParams) error {
+	_, err := q.db.Exec(ctx, unblockUser, arg.BlockerID, arg.BlockedID)
+	return err
 }
 
 const unfriend = `-- name: Unfriend :one

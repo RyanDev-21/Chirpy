@@ -121,6 +121,12 @@ type User struct {
 	EmailVerifiedAt pgtype.Timestamp
 }
 
+type UserBlock struct {
+	BlockerID uuid.UUID
+	BlockedID uuid.UUID
+	CreatedAt pgtype.Timestamp
+}
+
 type UserIdentity struct {
 	Provider  string
 	Subject   string

@@ -3,6 +3,7 @@ package friends
 
 import (
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -14,7 +15,16 @@ var (
 	ErrNotFound       = errors.New("friend request not found")
 	ErrUnknownUser    = errors.New("user does not exist")
 	ErrNotFriends     = errors.New("you are not friends with this user")
+	ErrSelfBlock      = errors.New("cannot block yourself")
+	ErrYouBlocked     = errors.New("you blocked this user; unblock them first")
 )
+
+// BlockedUser is one entry of the caller's block list.
+type BlockedUser struct {
+	UserID    uuid.UUID `json:"user_id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
 
 type FriendMetaData struct {
 	UserID uuid.UUID `json:"user_id"`
