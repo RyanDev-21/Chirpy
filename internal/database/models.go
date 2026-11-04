@@ -102,6 +102,10 @@ type Medium struct {
 	DeliveredAt  pgtype.Timestamp
 	LastAccessAt pgtype.Timestamp
 	DeletedAt    pgtype.Timestamp
+	DurationMs   pgtype.Int4
+	Width        pgtype.Int4
+	Height       pgtype.Int4
+	HasThumbnail bool
 }
 
 type MemberTable struct {
