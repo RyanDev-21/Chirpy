@@ -53,3 +53,32 @@ WHERE status = 'confirm'
   AND LEAST(user_id, otherUser_id) = LEAST(@a::uuid, @b::uuid)
   AND GREATEST(user_id, otherUser_id) = GREATEST(@a::uuid, @b::uuid)
 RETURNING id;
+
+-- name: BlockUser :one
+-- records the block and removes any friendship or request between the
+-- two; returns whether they were friends
+WITH b AS (
+    INSERT INTO user_blocks (blocker_id, blocked_id, created_at) VALUES (@blocker::uuid, @blocked::uuid, @at::timestamp)
+    ON CONFLICT DO NOTHING
+), d AS (
+    DELETE FROM user_relationships
+    WHERE LEAST(user_id, otherUser_id) = LEAST(@blocker::uuid, @blocked::uuid)
+      AND GREATEST(user_id, otherUser_id) = GREATEST(@blocker::uuid, @blocked::uuid)
+    RETURNING status
+)
+SELECT COALESCE(bool_or(status = 'confirm'), false)::bool AS were_friends FROM d;
+
+-- name: UnblockUser :exec
+DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2;
+
+-- name: ListBlocked :many
+SELECT b.blocked_id, u.name, b.created_at FROM user_blocks b
+JOIN users u ON u.id = b.blocked_id
+WHERE b.blocker_id = $1
+ORDER BY b.created_at DESC;
+
+-- name: BlockBetween :one
+-- whether a blocked b (a_blocked) and whether b blocked a (b_blocked)
+SELECT
+    EXISTS (SELECT 1 FROM user_blocks WHERE blocker_id = @a::uuid AND blocked_id = @b::uuid) AS a_blocked,
+    EXISTS (SELECT 1 FROM user_blocks WHERE blocker_id = @b::uuid AND blocked_id = @a::uuid) AS b_blocked;

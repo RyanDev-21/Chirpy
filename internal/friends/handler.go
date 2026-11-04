@@ -17,11 +17,11 @@ func NewHandler(svc Service) *Handler { return &Handler{svc: svc} }
 
 func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, ErrSelfRequest):
+	case errors.Is(err, ErrSelfRequest), errors.Is(err, ErrSelfBlock):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrUnknownUser), errors.Is(err, ErrNotFound), errors.Is(err, ErrNotFriends):
 		httpx.Error(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, ErrRequestExists), errors.Is(err, ErrAlreadyFriends):
+	case errors.Is(err, ErrRequestExists), errors.Is(err, ErrAlreadyFriends), errors.Is(err, ErrYouBlocked):
 		httpx.Error(w, http.StatusConflict, err.Error())
 	default:
 		httpx.ServerError(w, r, err)
@@ -149,4 +149,59 @@ func (h *Handler) Unfriend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Block handles POST /api/users/blocks {"user_id": "..."}.
+func (h *Handler) Block(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var p struct {
+		UserID uuid.UUID `json:"user_id"`
+	}
+	if err := httpx.Decode(w, r, &p); err != nil || p.UserID == uuid.Nil {
+		httpx.Error(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	if err := h.svc.Block(r.Context(), me, p.UserID); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Unblock handles DELETE /api/users/blocks/{user_id}.
+func (h *Handler) Unblock(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	other, err := httpx.PathUUID(r, "user_id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	if err := h.svc.Unblock(r.Context(), me, other); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Blocked handles GET /api/users/blocks.
+func (h *Handler) Blocked(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	list, err := h.svc.Blocked(r.Context(), me)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string][]BlockedUser{"blocked": list})
 }

@@ -46,7 +46,12 @@ func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) SearchUser(w http.ResponseWriter, r *http.Request) {
-	list, err := h.svc.SearchUser(r.Context(), r.URL.Query().Get("q"))
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	list, err := h.svc.SearchUser(r.Context(), me, r.URL.Query().Get("q"))
 	switch {
 	case err == nil:
 		httpx.JSON(w, http.StatusOK, FoundUserListRes{UserList: list})

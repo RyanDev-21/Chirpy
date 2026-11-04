@@ -51,7 +51,7 @@ func (f *fakeRepo) UpdateUserPassword(_ context.Context, p UpdateUserPassword) (
 	return f.users[p.UserID], nil
 }
 func (f *fakeRepo) RevokeAllRefreshTokens(context.Context, uuid.UUID) error { f.revoked++; return nil }
-func (f *fakeRepo) SearchByName(context.Context, string) ([]PublicUser, error) {
+func (f *fakeRepo) SearchByName(context.Context, uuid.UUID, string) ([]PublicUser, error) {
 	return []PublicUser{}, nil
 }
 

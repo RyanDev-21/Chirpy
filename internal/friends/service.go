@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	"time"
 
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/internal/ws"
@@ -29,6 +30,11 @@ type Service interface {
 	Relationships(ctx context.Context, me uuid.UUID) (Snapshot, error)
 	AreFriends(ctx context.Context, a, b uuid.UUID) (bool, error)
 	Unfriend(ctx context.Context, me, other uuid.UUID) error
+	// Block ends any friendship or request with other and stops new ones
+	// (and search) both ways. other is not told about the block.
+	Block(ctx context.Context, me, other uuid.UUID) error
+	Unblock(ctx context.Context, me, other uuid.UUID) error
+	Blocked(ctx context.Context, me uuid.UUID) ([]BlockedUser, error)
 }
 
 type service struct {
@@ -55,6 +61,16 @@ func (s *service) Send(ctx context.Context, fromID, toID uuid.UUID) (uuid.UUID, 
 			return uuid.Nil, ErrUnknownUser
 		}
 		return uuid.Nil, err
+	}
+	iBlocked, theyBlocked, err := s.repo.BlockBetween(ctx, fromID, toID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if iBlocked {
+		return uuid.Nil, ErrYouBlocked
+	}
+	if theyBlocked {
+		return uuid.Nil, ErrUnknownUser // same answer as a user that doesn't exist
 	}
 	reqID, err := uuid.NewV7()
 	if err != nil {
@@ -111,6 +127,32 @@ func (s *service) Unfriend(ctx context.Context, me, other uuid.UUID) error {
 		s.logger.WarnContext(ctx, "failed to push unfriend event", "error", err)
 	}
 	return nil
+}
+
+func (s *service) Block(ctx context.Context, me, other uuid.UUID) error {
+	if me == other {
+		return ErrSelfBlock
+	}
+	wereFriends, err := s.repo.Block(ctx, me, other, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	s.invalidate(ctx, me, other)
+	// they see the friendship end, as with an unfriend, but not the block
+	if wereFriends {
+		if err := s.notify.WriteIntoConnection(other, ws.Event{Event: ws.EventUnfriend, Payload: ws.OutUnfriendEvent{FromID: me.String()}}); err != nil {
+			s.logger.WarnContext(ctx, "failed to push unfriend event", "error", err)
+		}
+	}
+	return nil
+}
+
+func (s *service) Unblock(ctx context.Context, me, other uuid.UUID) error {
+	return s.repo.Unblock(ctx, me, other)
+}
+
+func (s *service) Blocked(ctx context.Context, me uuid.UUID) ([]BlockedUser, error) {
+	return s.repo.Blocked(ctx, me)
 }
 
 func (s *service) Relationships(ctx context.Context, me uuid.UUID) (Snapshot, error) {
