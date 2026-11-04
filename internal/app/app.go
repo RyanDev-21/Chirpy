@@ -164,6 +164,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	google := o.google
 	if google == nil {
 		google = authsvc.NewGoogleVerifier(cfg.GoogleClientIDs)
+		if google == nil {
+			logger.Warn("GOOGLE_CLIENT_IDS not set: Google sign-in answers 503")
+		}
 	}
 	friendStore, groupStore, userStore := friends.NewStore(rdb), groups.NewStore(rdb), users.NewStore(rdb)
 	accounts := authsvc.NewAccountService(a.users, users.NewUserRepo(queries), authsvc.NewAccountRepo(db), sender,

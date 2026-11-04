@@ -40,7 +40,7 @@ func (h *AccountHandler) writeErr(w http.ResponseWriter, r *http.Request, err er
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrInvalidGoogle), errors.Is(err, ErrReauthRequired):
 		httpx.Error(w, http.StatusUnauthorized, err.Error())
-	case errors.Is(err, ErrMailUnavailable):
+	case errors.Is(err, ErrMailUnavailable), errors.Is(err, ErrGoogleUnavailable):
 		httpx.Error(w, http.StatusServiceUnavailable, err.Error())
 	default:
 		httpx.ServerError(w, r, err)

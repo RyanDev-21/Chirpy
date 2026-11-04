@@ -127,15 +127,6 @@ LEFT JOIN LATERAL (
 WHERE m.member_id = @me::uuid
 ORDER BY lm.created_at DESC NULLS LAST, lower(g.name);
 
--- name: PrivateMessageChanges :many
--- edit/delete state for a page of messages (overlaid on cached copies)
-SELECT id, content, edited_at, deleted_at FROM message
-WHERE id = ANY(@ids::uuid[]) AND (edited_at IS NOT NULL OR deleted_at IS NOT NULL);
-
--- name: GroupMessageChanges :many
-SELECT id, content, edited_at, deleted_at FROM GroupMessage
-WHERE id = ANY(@ids::uuid[]) AND (edited_at IS NOT NULL OR deleted_at IS NOT NULL);
-
 -- name: EditPrivateMessage :execrows
 UPDATE message SET content = @content, edited_at = @at::timestamp, updated_at = @at::timestamp
 WHERE id = @id AND deleted_at IS NULL;
