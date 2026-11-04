@@ -840,8 +840,13 @@ Every WebSocket message is an envelope:
 {"event":"<event-name>","payload":{}}
 ```
 
-Only one live connection is retained per user; a newer connection replaces the
-older one. Clients should handle reconnects and reload missed history using the
+A user can be connected from up to **5 devices** at once (phone, tablet…);
+a 6th connection closes their oldest. **Every device receives every event**,
+including your own actions from another device: `msg`, `MsgEdited`,
+`MsgDeleted` and `Reaction` come back to the sender's devices too (the device
+that acted can ignore events it already has, by id). Private `msg` events
+carry `to_id`, so your other devices know which chat a message you sent
+belongs to. Clients should handle reconnects and reload missed history using the
 REST endpoints. The server sends WebSocket text messages and periodic ping
 frames, and closes connections that stop answering pings for 60 seconds.
 A client message larger than 4096 bytes **closes the connection**. A failed

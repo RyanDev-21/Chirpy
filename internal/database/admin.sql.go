@@ -248,6 +248,31 @@ func (q *Queries) AdminUserStats(ctx context.Context, id uuid.UUID) (AdminUserSt
 	return i, err
 }
 
+const allBannedUsers = `-- name: AllBannedUsers :many
+SELECT id FROM users WHERE banned_at IS NOT NULL
+`
+
+// the (normally short) list of banned accounts, cached by each server
+func (q *Queries) AllBannedUsers(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, allBannedUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const banUser = `-- name: BanUser :execrows
 UPDATE users SET banned_at = $1::timestamp, banned_until = $2, ban_reason = $3, updated_at = $1::timestamp
 WHERE id = $4 AND NOT is_admin
@@ -272,30 +297,6 @@ func (q *Queries) BanUser(ctx context.Context, arg BanUserParams) (int64, error)
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const bannedAmong = `-- name: BannedAmong :many
-SELECT id FROM users WHERE id = ANY($1::uuid[]) AND banned_at IS NOT NULL
-`
-
-func (q *Queries) BannedAmong(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, bannedAmong, ids)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const expiredBans = `-- name: ExpiredBans :many
