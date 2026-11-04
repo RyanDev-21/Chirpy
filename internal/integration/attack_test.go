@@ -16,11 +16,14 @@ import (
 
 // public routes: everything else must refuse unauthenticated callers
 var publicRoutes = map[string]bool{
-	"GET /livez": true, "GET /readyz": true, "GET /healthz": true,
+	"GET /": true, "GET /api/app/version": true, "GET /livez": true, "GET /readyz": true, "GET /healthz": true,
 	"POST /api/users": true, "POST /api/login": true, "POST /api/refresh": true, "POST /api/revoke": true,
 	"POST /api/auth/verify-email": true, "POST /api/auth/resend-verification": true,
 	"POST /api/auth/password-reset": true, "POST /api/auth/password-reset/confirm": true,
 	"POST /api/auth/google": true, "POST /api/auth/google/complete": true,
+	// the admin page (static files) and its two sign-in steps; the admin
+	// API itself needs an admin-page token and is checked below
+	"GET /admin": true, "POST /api/admin/login": true, "POST /api/admin/verify": true,
 }
 
 var pathParam = regexp.MustCompile(`\{[^}]+\}`)
@@ -57,7 +60,7 @@ func TestEveryPrivateRouteRefusesBadTokens(t *testing.T) {
 	tokens := forgedTokens(t, alice)
 	checked := 0
 	err := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		if publicRoutes[method+" "+route] || method == "OPTIONS" || method == "HEAD" {
+		if publicRoutes[method+" "+route] || route == "/admin/*" || method == "OPTIONS" || method == "HEAD" {
 			return nil
 		}
 		path := pathParam.ReplaceAllString(route, "00000000-0000-0000-0000-000000000000")

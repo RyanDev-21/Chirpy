@@ -101,8 +101,8 @@ func (h *UserHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 		httpx.JSON(w, http.StatusOK, u)
 	case errors.Is(err, ErrInvalidInput):
-		httpx.Error(w, http.StatusBadRequest, "send at least one field; name is 3-25 characters without spaces")
-	case errors.Is(err, ErrBioTooLong), errors.Is(err, ErrBadPlace), errors.Is(err, ErrBadInterests):
+		httpx.Error(w, http.StatusBadRequest, "send at least one field; username is 3-25 characters: a-z, 0-9, _ and .")
+	case errors.Is(err, ErrBioTooLong), errors.Is(err, ErrBadPlace), errors.Is(err, ErrBadInterests), errors.Is(err, ErrBadDisplayName):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrDuplicateName):
 		httpx.Error(w, http.StatusConflict, "username taken")
@@ -217,4 +217,19 @@ func (h *UserHandler) Avatar(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", strconv.Itoa(len(img)))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(img)
+}
+
+// LogoutAll handles POST /api/users/me/logout-all: signs the user out on
+// every device.
+func (h *UserHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := h.svc.LogoutAll(r.Context(), me); err != nil {
+		httpx.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

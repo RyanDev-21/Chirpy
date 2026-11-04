@@ -110,16 +110,17 @@ func (q *Queries) GroupReactionSummary(ctx context.Context, arg GroupReactionSum
 }
 
 const groupReactors = `-- name: GroupReactors :many
-SELECT r.user_id, u.name, r.emoji, r.created_at FROM group_message_reactions r
+SELECT r.user_id, u.name, u.display_name, r.emoji, r.created_at FROM group_message_reactions r
 JOIN users u ON u.id = r.user_id
 WHERE r.message_id = $1 ORDER BY r.created_at
 `
 
 type GroupReactorsRow struct {
-	UserID    uuid.UUID
-	Name      string
-	Emoji     string
-	CreatedAt pgtype.Timestamp
+	UserID      uuid.UUID
+	Name        string
+	DisplayName string
+	Emoji       string
+	CreatedAt   pgtype.Timestamp
 }
 
 func (q *Queries) GroupReactors(ctx context.Context, messageID uuid.UUID) ([]GroupReactorsRow, error) {
@@ -134,6 +135,7 @@ func (q *Queries) GroupReactors(ctx context.Context, messageID uuid.UUID) ([]Gro
 		if err := rows.Scan(
 			&i.UserID,
 			&i.Name,
+			&i.DisplayName,
 			&i.Emoji,
 			&i.CreatedAt,
 		); err != nil {
@@ -212,16 +214,17 @@ func (q *Queries) PrivateReactionSummary(ctx context.Context, arg PrivateReactio
 }
 
 const privateReactors = `-- name: PrivateReactors :many
-SELECT r.user_id, u.name, r.emoji, r.created_at FROM message_reactions r
+SELECT r.user_id, u.name, u.display_name, r.emoji, r.created_at FROM message_reactions r
 JOIN users u ON u.id = r.user_id
 WHERE r.message_id = $1 ORDER BY r.created_at
 `
 
 type PrivateReactorsRow struct {
-	UserID    uuid.UUID
-	Name      string
-	Emoji     string
-	CreatedAt pgtype.Timestamp
+	UserID      uuid.UUID
+	Name        string
+	DisplayName string
+	Emoji       string
+	CreatedAt   pgtype.Timestamp
 }
 
 func (q *Queries) PrivateReactors(ctx context.Context, messageID uuid.UUID) ([]PrivateReactorsRow, error) {
@@ -236,6 +239,7 @@ func (q *Queries) PrivateReactors(ctx context.Context, messageID uuid.UUID) ([]P
 		if err := rows.Scan(
 			&i.UserID,
 			&i.Name,
+			&i.DisplayName,
 			&i.Emoji,
 			&i.CreatedAt,
 		); err != nil {

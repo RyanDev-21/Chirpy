@@ -43,7 +43,7 @@ func (m *Memory) Allow(_ context.Context, key string) (Result, error) {
 		m.windows[key] = w
 	}
 	if w.count >= m.limit {
-		return Result{Allowed: false, Remaining: 0, Limit: m.limit}, nil
+		return Result{Allowed: false, Remaining: 0, Limit: m.limit, RetryAfter: m.period - now.Sub(w.start)}, nil
 	}
 	w.count++
 	return Result{Allowed: true, Remaining: m.limit - w.count, Limit: m.limit}, nil

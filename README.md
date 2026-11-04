@@ -61,3 +61,15 @@ make test-integration   # full server against real postgres + redis
 Integration tests truncate tables and flush Redis, so they use the separate
 `chirpy_test` database. CI runs lint, unit, integration and build on every
 pull request to `main`.
+
+## Admin ("god mode")
+
+Admins are granted only from the command line, against the database:
+
+```
+DB_URL=postgres://… go run ./cmd/admin grant you@example.com   # or: revoke, list
+```
+
+Then sign in at `https://api.ponypigeon.com/admin` with your password and the
+code emailed to you. The page shows metadata only (never message content or
+media) and logs every search and action in an audit log.

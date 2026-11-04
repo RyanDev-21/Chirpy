@@ -318,7 +318,26 @@ func (s *chatService) MarkGroupRead(ctx context.Context, me, groupID uuid.UUID, 
 }
 
 func (s *chatService) Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error) {
-	return s.repo.Conversations(ctx, me)
+	list, err := s.repo.Conversations(ctx, me)
+	if err != nil {
+		return nil, err
+	}
+	var senders []uuid.UUID
+	for _, c := range list {
+		if c.LastMessage != nil {
+			senders = append(senders, c.LastMessage.FromID)
+		}
+	}
+	banned, err := s.repo.Suspended(ctx, senders)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		if lm := list[i].LastMessage; lm != nil && banned[lm.FromID] {
+			lm.SenderSuspended, lm.Msg = true, ""
+		}
+	}
+	return list, nil
 }
 
 func (s *chatService) MarkSeen(ctx context.Context, me, other uuid.UUID, msgIDStr string) error {
@@ -374,6 +393,16 @@ func (s *chatService) withState(ctx context.Context, kind string, me uuid.UUID, 
 			return nil, err
 		}
 	}
+	senders := make([]uuid.UUID, 0, len(msgs))
+	for _, m := range msgs {
+		if m.MsgInfo.FromID != uuid.Nil && !slices.Contains(senders, m.MsgInfo.FromID) {
+			senders = append(senders, m.MsgInfo.FromID)
+		}
+	}
+	banned, err := s.repo.Suspended(ctx, senders)
+	if err != nil {
+		return nil, err
+	}
 	for i := range msgs {
 		m := &msgs[i]
 		if m.Deleted {
@@ -386,6 +415,12 @@ func (s *chatService) withState(ctx context.Context, kind string, me uuid.UUID, 
 		m.Media = att[m.ID]
 		if m.Media == nil || m.Deleted {
 			m.Media = []media.Attachment{}
+		}
+		if banned[m.MsgInfo.FromID] {
+			m.SenderSuspended = true
+			m.MsgInfo.Msg.Content = ""
+			m.Media = []media.Attachment{}
+			m.Reactions = []ReactionCount{}
 		}
 	}
 	return msgs, nil

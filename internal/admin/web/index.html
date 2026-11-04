@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Chirpy Admin</title>
+<link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+<header><h1>Chirpy Admin</h1><button id="logout" hidden>Sign out</button></header>
+<main>
+  <section id="login">
+    <form id="login-form">
+      <h2>Sign in</h2>
+      <label>Email <input id="email" type="email" autocomplete="username" required></label>
+      <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Send code</button>
+    </form>
+    <form id="code-form" hidden>
+      <h2>Check your email</h2>
+      <p>Enter the 6-digit code we sent (valid 2 minutes).</p>
+      <label>Code <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>
+      <button type="submit">Sign in</button>
+    </form>
+    <p id="login-error" class="error" role="alert"></p>
+  </section>
+
+  <section id="app" hidden>
+    <nav>
+      <button data-tab="overview" class="active">Overview</button>
+      <button data-tab="reports">Reports</button>
+      <button data-tab="users">Users</button>
+      <button data-tab="groups">Groups</button>
+      <button data-tab="audit">Audit log</button>
+    </nav>
+    <p class="note">Metadata only: message content and media are never shown here. Every search and action is logged.</p>
+    <div id="tab-overview" class="tab"><dl id="stats"></dl></div>
+    <div id="tab-reports" class="tab" hidden>
+      <form id="report-filter">
+        <label>Status
+          <select id="report-status"><option value="open" selected>Open</option><option value="resolved">Resolved</option><option value="dismissed">Dismissed</option><option value="">All</option></select>
+        </label>
+      </form>
+      <table><thead><tr><th>When</th><th>Reported</th><th>Reason</th><th>By</th><th>Evidence</th><th>Total reports</th></tr></thead><tbody id="reports"></tbody></table>
+      <div id="report-detail" hidden>
+        <h3 id="r-title"></h3>
+        <dl id="r-fields"></dl>
+        <h4>Messages the reporter attached</h4>
+        <ol id="r-messages" class="evidence"></ol>
+        <form id="resolve-form">
+          <label>Note <input id="r-note" maxlength="1000"></label>
+          <button type="submit" data-status="resolved">Mark resolved</button>
+          <button type="submit" data-status="dismissed">Dismiss</button>
+          <button type="button" id="r-open-user">Open user (ban)</button>
+        </form>
+        <p id="report-msg" role="status"></p>
+      </div>
+    </div>
+    <div id="tab-users" class="tab" hidden>
+      <form id="user-search"><input id="user-q" placeholder="Name or email"><button>Search</button></form>
+      <table><thead><tr><th>Name</th><th>Email</th><th>Joined</th><th>Last active</th><th>Status</th></tr></thead><tbody id="users"></tbody></table>
+      <div id="user-detail" hidden>
+        <h3 id="d-name"></h3>
+        <dl id="d-fields"></dl>
+        <form id="ban-form">
+          <h4>Ban</h4>
+          <label>Reason <input id="ban-reason" maxlength="500" required></label>
+          <label>Duration
+            <select id="ban-duration">
+              <option value="1">1 day</option><option value="7" selected>7 days</option>
+              <option value="30">30 days</option><option value="0">Permanent</option>
+            </select>
+          </label>
+          <button type="submit" class="danger">Ban user</button>
+        </form>
+        <button id="unban" hidden>Lift ban</button>
+        <p id="detail-msg" role="status"></p>
+      </div>
+    </div>
+    <div id="tab-groups" class="tab" hidden>
+      <form id="group-search"><input id="group-q" placeholder="Group name"><button>Search</button></form>
+      <table><thead><tr><th>Name</th><th>Members</th><th>Leader</th><th>Messages (7 d)</th><th>Created</th></tr></thead><tbody id="groups"></tbody></table>
+    </div>
+    <div id="tab-audit" class="tab" hidden>
+      <table><thead><tr><th>When</th><th>Admin</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead><tbody id="audit"></tbody></table>
+    </div>
+  </section>
+</main>
+<script src="/admin/app.js"></script>
+</body>
+</html>

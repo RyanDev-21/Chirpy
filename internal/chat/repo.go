@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"RyanDev-21.com/Chirpy/internal/users"
 	"context"
 	"errors"
 	"slices"
@@ -45,6 +46,8 @@ type ChatRepo interface {
 	// deleted. Deleting also removes its reactions.
 	EditMessage(ctx context.Context, kind string, msgID uuid.UUID, content string, at time.Time) (bool, error)
 	DeleteMessage(ctx context.Context, kind string, msgID uuid.UUID, at time.Time) (bool, error)
+	// Suspended returns which of these users are banned.
+	Suspended(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]bool, error)
 }
 
 type chatRepo struct {
@@ -259,11 +262,11 @@ func (r *chatRepo) Conversations(ctx context.Context, me uuid.UUID) ([]Conversat
 	}
 	out := make([]Conversation, 0, len(priv)+len(grp))
 	for _, p := range priv {
-		out = append(out, Conversation{Type: TypePrivate, ID: p.OtherID, Name: p.OtherName,
+		out = append(out, Conversation{Type: TypePrivate, ID: p.OtherID, Name: p.OtherName, DisplayName: users.ShownName(p.OtherName, p.OtherDisplay), AvatarURL: users.AvatarURLFrom(p.OtherID, p.OtherAvatarAt),
 			LastMessage: lastMessage(p.LastID, p.LastContent, p.LastFrom, p.LastAt, p.LastDeleted), Unread: int(p.Unread)})
 	}
 	for _, g := range grp {
-		out = append(out, Conversation{Type: TypePublic, ID: g.GroupID, Name: g.GroupName,
+		out = append(out, Conversation{Type: TypePublic, ID: g.GroupID, Name: g.GroupName, DisplayName: g.GroupName,
 			LastMessage: lastMessage(g.LastID, g.LastContent, g.LastFrom, g.LastAt, g.LastDeleted), Unread: int(g.Unread)})
 	}
 	slices.SortStableFunc(out, func(a, b Conversation) int {
@@ -352,7 +355,7 @@ func (r *chatRepo) Reactors(ctx context.Context, kind string, msgID uuid.UUID) (
 			return nil, err
 		}
 		for _, x := range rows {
-			out = append(out, Reactor{UserID: x.UserID, Name: x.Name, Emoji: x.Emoji, CreatedAt: x.CreatedAt.Time.UTC()})
+			out = append(out, Reactor{UserID: x.UserID, Name: x.Name, DisplayName: users.ShownName(x.Name, x.DisplayName), Emoji: x.Emoji, CreatedAt: x.CreatedAt.Time.UTC()})
 		}
 		return out, nil
 	}
@@ -361,7 +364,7 @@ func (r *chatRepo) Reactors(ctx context.Context, kind string, msgID uuid.UUID) (
 		return nil, err
 	}
 	for _, x := range rows {
-		out = append(out, Reactor{UserID: x.UserID, Name: x.Name, Emoji: x.Emoji, CreatedAt: x.CreatedAt.Time.UTC()})
+		out = append(out, Reactor{UserID: x.UserID, Name: x.Name, DisplayName: users.ShownName(x.Name, x.DisplayName), Emoji: x.Emoji, CreatedAt: x.CreatedAt.Time.UTC()})
 	}
 	return out, nil
 }
@@ -386,4 +389,16 @@ func (r *chatRepo) DeleteMessage(ctx context.Context, kind string, msgID uuid.UU
 		n, err = r.q.DeleteGroupMessage(ctx, database.DeleteGroupMessageParams{ID: msgID, At: pgTime(at)})
 	}
 	return n > 0, err
+}
+
+func (r *chatRepo) Suspended(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]bool, error) {
+	out := map[uuid.UUID]bool{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.q.BannedAmong(ctx, ids)
+	for _, id := range rows {
+		out[id] = true
+	}
+	return out, err
 }

@@ -2,6 +2,7 @@ package users
 
 import (
 	"errors"
+	"github.com/jackc/pgx/v5/pgtype"
 	"strconv"
 	"time"
 
@@ -34,12 +35,13 @@ func (e *RenameTooSoonError) Error() string {
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-	IsRED     bool      `json:"is_chirpy_red"`
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"display_name"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Email       string    `json:"email"`
+	IsRED       bool      `json:"is_chirpy_red"`
 	// Verified is true once the email address has been confirmed.
 	Verified bool   `json:"email_verified"`
 	Bio      string `json:"bio"`
@@ -55,21 +57,32 @@ type User struct {
 	Interests *[]string `json:"interests,omitempty"`
 	// Discoverable: shown to others in "people you may know".
 	Discoverable bool `json:"discoverable"`
+	// IsAdmin is never sent to clients; it gates the admin page.
+	IsAdmin bool `json:"-"`
 }
 
 // Profile is another user's public profile. Location and interests are
 // shown only to friends, or to everyone if the user is discoverable.
 type Profile struct {
-	ID        uuid.UUID      `json:"id"`
-	Name      string         `json:"name"`
-	Bio       string         `json:"bio"`
-	AvatarURL *string        `json:"avatar_url"`
-	Location  *catalog.Place `json:"location"`
-	Interests []string       `json:"interests"`
+	ID          uuid.UUID      `json:"id"`
+	Name        string         `json:"name"`
+	DisplayName string         `json:"display_name"`
+	Bio         string         `json:"bio"`
+	AvatarURL   *string        `json:"avatar_url"`
+	Location    *catalog.Place `json:"location"`
+	Interests   []string       `json:"interests"`
 }
 
 // AvatarURL is where a user's picture is served (see avatarURL).
 func AvatarURL(id uuid.UUID, at time.Time) *string { return avatarURL(id, at) }
+
+// AvatarURLFrom is AvatarURL for a nullable database column (nil: no picture).
+func AvatarURLFrom(id uuid.UUID, at pgtype.Timestamp) *string {
+	if !at.Valid {
+		return nil
+	}
+	return avatarURL(id, at.Time)
+}
 
 // PlaceOf resolves a stored location id (nil if unset or no longer listed).
 func PlaceOf(id string) *catalog.Place {
@@ -89,6 +102,7 @@ func avatarURL(id uuid.UUID, at time.Time) *string {
 // Location "" clears it; Interests replaces the whole list.
 type UpdateProfileRequest struct {
 	Name         *string   `json:"name"`
+	DisplayName  *string   `json:"display_name"`
 	Bio          *string   `json:"bio"`
 	Location     *string   `json:"location"`
 	Interests    *[]string `json:"interests"`
@@ -97,14 +111,17 @@ type UpdateProfileRequest struct {
 
 // PublicUser is what other users may see (no email).
 type PublicUser struct {
-	ID   uuid.UUID `json:"id"`
-	Name string    `json:"name"`
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`         // username (unique handle)
+	DisplayName string    `json:"display_name"` // what to show
+	AvatarURL   *string   `json:"avatar_url"`
 }
 
 type CreateUserInput struct {
-	Name     string
-	Email    string
-	Password string
+	Name        string
+	DisplayName string
+	Email       string
+	Password    string
 }
 
 type UpdateUserPassword struct {
@@ -125,4 +142,12 @@ type PasswordUpdateStruct struct {
 
 type FoundUserListRes struct {
 	UserList []PublicUser
+}
+
+// ShownName is the display name, or the username when none is set.
+func ShownName(username, display string) string {
+	if display == "" {
+		return username
+	}
+	return display
 }

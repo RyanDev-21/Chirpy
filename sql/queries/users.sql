@@ -1,6 +1,6 @@
 -- name: CreateUser :one
-INSERT INTO users(id, name, created_at, updated_at, email, password)
-VALUES (gen_random_uuid(), $1, NOW(), NOW(), $2, $3)
+INSERT INTO users(id, name, display_name, created_at, updated_at, email, password)
+VALUES (gen_random_uuid(), $1, $4, NOW(), NOW(), $2, $3)
 RETURNING *;
 
 -- name: GetUserInfoByEmail :one
@@ -17,9 +17,11 @@ UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2;
 
 -- name: SearchNameSiml :many
 -- people who blocked the caller, or whom the caller blocked, are left out
-SELECT u.id, u.name, similarity(u.name, @q::text) AS similarity
+SELECT u.id, u.name, u.display_name, u.avatar_at,
+       greatest(similarity(u.name, @q::text), similarity(u.display_name, @q::text))::real AS similarity
 FROM users u
-WHERE u.name % @q::text
+WHERE (u.name % @q::text OR u.display_name % @q::text)
+  AND u.banned_at IS NULL
   AND NOT EXISTS (
       SELECT 1 FROM user_blocks b
       WHERE (b.blocker_id = u.id AND b.blocked_id = @me::uuid)
@@ -40,8 +42,9 @@ UPDATE users SET bio = @bio, updated_at = NOW() WHERE id = @id RETURNING *;
 
 -- name: GetPublicProfile :one
 -- hidden (no row) when either user blocked the other
-SELECT u.id, u.name, u.bio, u.avatar_at, u.location_id, u.discoverable FROM users u
+SELECT u.id, u.name, u.display_name, u.bio, u.avatar_at, u.location_id, u.discoverable FROM users u
 WHERE u.id = @id
+  AND u.banned_at IS NULL
   AND NOT EXISTS (
       SELECT 1 FROM user_blocks b
       WHERE (b.blocker_id = u.id AND b.blocked_id = @viewer::uuid)
@@ -93,3 +96,9 @@ SELECT EXISTS (
       AND LEAST(user_id, otherUser_id) = LEAST(@a::uuid, @b::uuid)
       AND GREATEST(user_id, otherUser_id) = GREATEST(@a::uuid, @b::uuid)
 );
+
+-- name: SetDisplayName :exec
+UPDATE users SET display_name = @display_name, updated_at = NOW() WHERE id = @id;
+
+-- name: GetDisplayName :one
+SELECT CASE WHEN display_name = '' THEN name ELSE display_name END::text FROM users WHERE id = $1;

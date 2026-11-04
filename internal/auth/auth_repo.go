@@ -5,6 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -22,7 +25,13 @@ type AuthRepo interface {
 	RevokeToken(ctx context.Context, token string) error
 	GetRefreshToken(ctx context.Context, token string) (*RefreshToken, error)
 	CreateRefreshToken(ctx context.Context, payload PayloadForRefresh) error
+	// Suspension reports an active ban (zero until: permanent).
+	Suspension(ctx context.Context, userID uuid.UUID) (banned bool, until time.Time, err error)
+	TouchLastSeen(ctx context.Context, userID uuid.UUID, now time.Time) error
 }
+
+// ErrSuspended: the account is banned; no new sessions.
+var ErrSuspended = errors.New("account suspended")
 
 // hashToken is what the database stores instead of the refresh token, so a
 // leaked table cannot be used to sign in. Refresh tokens are 32 random
@@ -69,4 +78,19 @@ func (r *authRepo) CreateRefreshToken(ctx context.Context, payload PayloadForRef
 		ExpireAt: payload.expiresAt,
 	})
 	return err
+}
+
+func (r *authRepo) Suspension(ctx context.Context, userID uuid.UUID) (bool, time.Time, error) {
+	b, err := r.queries.UserBan(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, time.Time{}, ErrNotAuthorized
+	}
+	if err != nil || !b.BannedAt.Valid {
+		return false, time.Time{}, err
+	}
+	return true, b.BannedUntil.Time, nil
+}
+
+func (r *authRepo) TouchLastSeen(ctx context.Context, userID uuid.UUID, now time.Time) error {
+	return r.queries.TouchLastSeen(ctx, database.TouchLastSeenParams{ID: userID, Now: pgtype.Timestamp{Time: now, Valid: true}})
 }

@@ -4,9 +4,11 @@ import (
 	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"strconv"
+	"time"
 
 	"RyanDev-21.com/Chirpy/internal/platform/httpx"
 	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
@@ -22,6 +24,8 @@ type Result struct {
 	Allowed   bool
 	Remaining int
 	Limit     int
+	// RetryAfter is how long until the current window ends (when denied).
+	RetryAfter time.Duration
 }
 
 // ClientKey identifies the caller: the authenticated user when available,
@@ -67,6 +71,9 @@ func Middleware(l Limiter, name string, logger *slog.Logger) func(http.Handler) 
 			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(res.Limit))
 			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(max(res.Remaining, 0)))
 			if !res.Allowed {
+				if secs := int(math.Ceil(res.RetryAfter.Seconds())); secs > 0 {
+					w.Header().Set("Retry-After", strconv.Itoa(secs))
+				}
 				telemetry.RateLimited(r.Context(), name)
 				logger.WarnContext(r.Context(), "rate limit exceeded", "policy", name, "route", httpx.RoutePattern(r))
 				httpx.Error(w, http.StatusTooManyRequests, "too many requests, please try again later")

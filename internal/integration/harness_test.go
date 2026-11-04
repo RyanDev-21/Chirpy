@@ -344,3 +344,5 @@ func readEvent(t *testing.T, conn *websocket.Conn) wsEvent {
 	}
 	return ev
 }
+
+func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

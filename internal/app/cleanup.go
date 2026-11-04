@@ -86,8 +86,9 @@ type pushNames struct {
 	groups groups.GroupService
 }
 
+// GetName is the sender as recipients know them: the display name.
 func (p pushNames) GetName(ctx context.Context, id uuid.UUID) (string, error) {
-	return p.users.GetName(ctx, id)
+	return p.users.DisplayName(ctx, id)
 }
 
 func (p pushNames) GroupName(ctx context.Context, id uuid.UUID) (string, error) {

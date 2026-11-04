@@ -11,6 +11,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AdminAction struct {
+	ID          uuid.UUID
+	AdminID     pgtype.UUID
+	Action      string
+	TargetUser  pgtype.UUID
+	TargetGroup pgtype.UUID
+	Detail      string
+	At          pgtype.Timestamp
+}
+
 type ChatGroup struct {
 	ID            uuid.UUID
 	Name          string
@@ -139,6 +149,29 @@ type RefreshToken struct {
 	RevokedAt pgtype.Timestamp
 }
 
+type Report struct {
+	ID         uuid.UUID
+	ReporterID pgtype.UUID
+	ReportedID uuid.UUID
+	Reason     string
+	Note       string
+	Status     string
+	ResolvedBy pgtype.UUID
+	ResolvedAt pgtype.Timestamp
+	Resolution string
+	CreatedAt  pgtype.Timestamp
+}
+
+type ReportMessage struct {
+	ReportID  uuid.UUID
+	MessageID uuid.UUID
+	ChatType  string
+	GroupID   pgtype.UUID
+	SenderID  pgtype.UUID
+	Content   string
+	SentAt    pgtype.Timestamp
+}
+
 type SeenMessage struct {
 	ID          uuid.UUID
 	ChatID      string
@@ -162,6 +195,12 @@ type User struct {
 	LocationID      pgtype.Text
 	LocationCountry string
 	Discoverable    bool
+	IsAdmin         bool
+	BannedAt        pgtype.Timestamp
+	BannedUntil     pgtype.Timestamp
+	BanReason       pgtype.Text
+	LastSeenAt      pgtype.Timestamp
+	DisplayName     string
 }
 
 type UserAvatar struct {

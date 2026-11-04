@@ -50,6 +50,16 @@ func (a *App) Cleanup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if n, err := a.admin.PurgeOldReports(ctx); err != nil {
+		a.logger.WarnContext(ctx, "failed to purge old reports", "error", err)
+	} else if n > 0 {
+		a.logger.InfoContext(ctx, "old closed reports deleted", "reports", n)
+	}
+	if lifted, err := a.admin.LiftExpired(ctx); err != nil {
+		a.logger.WarnContext(ctx, "failed to lift expired bans", "error", err)
+	} else if lifted > 0 {
+		a.logger.InfoContext(ctx, "temporary bans lifted", "users", lifted)
+	}
 	files, err := a.media.Cleanup(ctx)
 	if err != nil {
 		return err

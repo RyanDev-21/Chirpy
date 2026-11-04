@@ -1,6 +1,7 @@
 package friends
 
 import (
+	"RyanDev-21.com/Chirpy/internal/users"
 	"context"
 	"errors"
 	"time"
@@ -53,21 +54,21 @@ func (r *repo) Snapshot(ctx context.Context, userID uuid.UUID) (Snapshot, error)
 		return snap, err
 	}
 	for _, f := range friends {
-		snap.Friends = append(snap.Friends, FriendMetaData{UserID: f.FriendID, Name: f.FriendName})
+		snap.Friends = append(snap.Friends, FriendMetaData{UserID: f.FriendID, Name: f.FriendName, DisplayName: users.ShownName(f.FriendName, f.FriendDisplay), AvatarURL: users.AvatarURLFrom(f.FriendID, f.FriendAvatarAt)})
 	}
 	in, err := r.q.ListIncomingFriendRequests(ctx, userID)
 	if err != nil {
 		return snap, err
 	}
 	for _, v := range in {
-		snap.Incoming[v.ID] = FriendMetaData{UserID: v.FromID, Name: v.FromName}
+		snap.Incoming[v.ID] = FriendMetaData{UserID: v.FromID, Name: v.FromName, DisplayName: users.ShownName(v.FromName, v.FromDisplay), AvatarURL: users.AvatarURLFrom(v.FromID, v.FromAvatarAt)}
 	}
 	out, err := r.q.ListOutgoingFriendRequests(ctx, userID)
 	if err != nil {
 		return snap, err
 	}
 	for _, v := range out {
-		snap.Outgoing[v.ID] = FriendMetaData{UserID: v.ToID, Name: v.ToName}
+		snap.Outgoing[v.ID] = FriendMetaData{UserID: v.ToID, Name: v.ToName, DisplayName: users.ShownName(v.ToName, v.ToDisplay), AvatarURL: users.AvatarURLFrom(v.ToID, v.ToAvatarAt)}
 	}
 	return snap, nil
 }

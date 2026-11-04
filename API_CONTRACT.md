@@ -5,6 +5,13 @@ backend. It is intended for a frontend client (web or native).
 
 ## Environments and conventions
 
+**People have two names.** `name` is the **username**: a unique handle
+(`a-z 0-9 _ .`), shown as `@name`, used to find and add people.
+`display_name` is what to show in chats, lists and notifications; it isn't
+unique, so profiles should show `@name` too. Every object describing a person
+(friends, requests, search, group members, conversation list, reactions,
+discovery, profiles, `/users/me`) has both. Search matches either one.
+
 - Production base URL: `https://api.ponypigeon.com`.
 - Render fallback host: `https://chirpy-api.onrender.com`.
 - Local default: `http://localhost:8080`.
@@ -49,10 +56,20 @@ shared budget of **300 requests/minute per user**, on top of any route limit
 listed below. `/readyz` and `/healthz` allow 30 requests/minute per IP;
 `/livez` is not limited.
 
+## App updates
+
+`GET /api/app/version` (public) →
+`200 {"latest":"1.2.0","minimum":"1.0.0","download_url":"https://…","sha256":"…","notes":"…"}`.
+The APK is downloaded from the website, so the app checks this at start:
+below `minimum`, block with "please update"; below `latest`, offer the
+update. Verify the downloaded file's SHA-256 against `sha256` before
+installing. `latest` is `""` before the first release. Cached for 5 minutes.
+
 ## Health endpoints
 
 | Method | Path | Auth | Success |
 |---|---|---|---|
+| GET | `/` | No | `200 {"name":"Chirpy API"}` |
 | GET | `/livez` | No | `204 No Content`; process liveness only |
 | GET | `/readyz` | No | `200` or `503`; `{"postgres":"ok","redis":"ok"}` |
 | GET | `/healthz` | No | Alias of `/readyz` |
@@ -69,9 +86,9 @@ Request:
 {"name":"alice","email":"alice@example.com","password":"Pw-example!"}
 ```
 
-Rules: name is 3–25 characters with no whitespace, control or invisible
-characters (zero-width spaces, direction overrides and the like); email must be valid and is
-normalized to lowercase; password is 8–128 characters and must contain at
+Rules: `name` is the **username**: 3–25 characters of `a-z`, `0-9`, `_` and
+`.`, stored lowercase (`Alice` becomes `alice`) and unique ignoring case; email
+must be valid and is normalized to lowercase; password is 8–128 characters and must contain at
 least one of `@$!%*?&`.
 
 Success: `202 {"status":"check_your_email"}`. A 6-digit code is emailed;
@@ -118,6 +135,12 @@ Invalid email or password returns the same `401 {"error":"invalid credentials"}`
 response. This is intentional and must not be used to distinguish an unknown
 account. Accounts created with Google have no password and also get this `401`
 here; they sign in with Google (or set a password with **Reset password**).
+
+**Suspended accounts:** an account banned by an admin gets
+`403 {"error":"account suspended"}` from login, refresh, Google sign-in and
+email verification, and its existing tokens stop working (`401`). Show
+"Your account is suspended" and stop retrying. Bans can be temporary; they
+lift by themselves.
 
 A correct password on an account whose email isn't verified yet returns
 `403 {"error":"email not verified"}`: show the code screen and offer
@@ -168,6 +191,13 @@ Success: `200`:
 {"access_token":"<new-access-token>","refresh_token":"<new-refresh-token>"}
 ```
 
+### Log out all devices
+
+`POST /api/users/me/logout-all` (authenticated) → `204`. Ends every session
+of the account: all refresh and access tokens stop working, open WebSockets
+close and registered phones are removed (no more push until they sign in
+again). Maximum 10 requests/minute.
+
 ### Revoke
 
 `POST /api/revoke` (log out) — send the **refresh token** (not the access
@@ -200,7 +230,12 @@ when it can be changed now).
 `200` with the same shape as **Current user**. A missing field stays as it
 is. Maximum 10 requests/minute.
 
-- `name`: same rules as sign-up (3–25 characters, no spaces; `400`), unique
+- `display_name`: what people see (1–50 characters; spaces and emoji are
+  fine; no line breaks or invisible characters, `400`). Not unique, change it
+  any time. New accounts start with their username as display name; ask for
+  one right after sign-up.
+- `name`: the username, same rules as sign-up (`a-z 0-9 _ .`, 3–25, stored
+  lowercase; `400`), unique
   (`409 username taken`). It can be changed **once every 30 days**: earlier is
   `403` with the date in the message (also in `name_change_available_at`).
   Sending your current name changes nothing. Signing in is by email, so a new
@@ -216,6 +251,11 @@ is. Maximum 10 requests/minute.
   default).
 
 Everything is validated first: if one field is invalid, nothing changes.
+
+Everywhere a person is listed (friends, friend requests, search, group
+members, conversation list, discovery) they come with `avatar_url`, `null`
+without a picture. It changes when the picture changes, so cache images by
+URL.
 
 ### View a profile
 
@@ -235,7 +275,7 @@ unknown users, and when either of you blocked the other.
   removed. Shrink large photos on the phone first (e.g. to 1024 px): uploads
   must finish within 15 seconds. Maximum 10 uploads/deletes per minute.
 - `DELETE /api/users/me/avatar` → `204`; `avatar_url` becomes `null`.
-- `GET <avatar_url>` (authenticated, prefix the API host) → the JPEG.
+- `GET /api/users/{user_id}/avatar?v=…`, i.e. `GET <avatar_url>` (authenticated, prefix the API host) → the JPEG.
   `avatar_url` changes with every upload, so cache it forever (the response
   says `Cache-Control: private, max-age=31536000, immutable`); `ETag` /
   `If-None-Match` → `304` also works. `404` without a picture or across a
@@ -277,7 +317,7 @@ offer this.
 `q` is trimmed and must be 1–25 characters. Success: `200`:
 
 ```json
-{"UserList":[{"id":"uuid","name":"alice"}]}
+{"UserList":[{"id":"uuid","name":"alice","display_name":"Alice Wong","avatar_url":"/api/users/uuid/avatar?v=…"}]}
 ```
 
 The key is intentionally `UserList` (capital U/L), and search results never
@@ -302,6 +342,22 @@ fail as if your account didn't exist (`404`).
 - `GET /api/users/blocks` →
   `200 {"blocked":[{"user_id":"uuid","name":"bob","created_at":"…"}]}`,
   newest first.
+
+## Reporting a user
+
+`POST /api/reports` with
+`{"user_id":"…","reason":"harassment","note":"…","messages":["msg-id", …]}`
+→ `201 {"report_id":"…"}`.
+
+- `reason`: `spam`, `harassment`, `hate`, `violence`, `sexual`,
+  `impersonation`, `scam` or `other`. `note` up to 1000 characters (optional).
+- `messages` (optional, up to 20): messages **the user chooses** as evidence,
+  from their private chat with that person or from a group they're in
+  (`400` otherwise). They're copied when reported; admins see only these.
+- Reporting the same person again while the report is open updates it.
+  `400` for yourself or bad input, `404` unknown user. Maximum 10 reports
+  per hour.
+- Offer **Block** next to **Report** in the app; reporting doesn't block.
 
 ## Discovery ("people you may know")
 
@@ -349,7 +405,7 @@ All friend endpoints require authentication.
 `GET /api/friends` → `200`:
 
 ```json
-{"id_list":[{"user_id":"uuid","name":"bob"}]}
+{"id_list":[{"user_id":"uuid","name":"bob","display_name":"Bob","avatar_url":null}]}
 ```
 
 ### List pending requests
@@ -358,8 +414,8 @@ All friend endpoints require authentication.
 
 ```json
 {
-  "pending_ids":{"request-uuid":{"user_id":"sender-uuid","name":"alice"}},
-  "request_ids":{"request-uuid":{"user_id":"receiver-uuid","name":"bob"}}
+  "pending_ids":{"request-uuid":{"user_id":"sender-uuid","name":"alice","avatar_url":null}},
+  "request_ids":{"request-uuid":{"user_id":"receiver-uuid","name":"bob","avatar_url":null}}
 }
 ```
 
@@ -435,7 +491,7 @@ role: `Leader` or `member`.
 ```json
 {"id":"group-uuid","name":"devs","description":"Team chat","max_members":20,
  "member_count":3,"is_member":true,
- "members":[{"user_id":"uuid","name":"alice","role":"Leader"}]}
+ "members":[{"user_id":"uuid","name":"alice","role":"Leader","avatar_url":null}]}
 ```
 
 Members only: groups are private, so a non-member gets `404`, the same as an
@@ -552,6 +608,7 @@ Returns `200`:
       },
       "created_at":"2026-01-01T00:00:00Z",
       "edited_at":null,
+      "sender_suspended":false,
       "deleted":false,
       "reactions":[]
     }
@@ -565,7 +622,10 @@ part of the current wire format. Every message also has
 are none), ordered by which emoji was used first. `msgList` is always oldest-first; an empty
 conversation returns `"msgList":[]`.
 
-`edited_at` is the time of the last edit (`null` if never edited; show
+`sender_suspended` is `true` when the sender's account is suspended: `msg`
+is `""` and media and reactions are empty; show "Message from a suspended
+user". (Lifting the ban shows the message again.) `edited_at` is the time of
+the last edit (`null` if never edited; show
 "edited"). A message deleted for everyone stays in the list as a placeholder
 with `"deleted":true`, an empty `msg` and no reactions: show "message
 deleted", and keep replies pointing at it working.
@@ -646,7 +706,7 @@ is `400`.
   {"type":"public","id":"group-uuid","name":"devs",
    "last_message":{"id":"msg-uuid","msg":"standup?","from_id":"uuid","created_at":"…"},
    "unread":2},
-  {"type":"private","id":"other-user-uuid","name":"alice",
+  {"type":"private","id":"other-user-uuid","name":"alice","avatar_url":"/api/users/uuid/avatar?v=…",
    "last_message":{"id":"…","msg":"hi","from_id":"…","created_at":"…","deleted":false},
    "unread":0},
   {"type":"public","id":"group-uuid","name":"quiet","last_message":null,"unread":0}
@@ -660,7 +720,8 @@ your read marker: for private chats that's the last message you marked
 **seen**, for groups the last one you marked **read**. Group messages from
 before you joined don't count. `from_id` is the zero UUID when the sender
 deleted their account. If the last message was deleted for everyone,
-`last_message.deleted` is `true` and `msg` is `""`.
+`last_message.deleted` is `true` and `msg` is `""`. If its sender is
+suspended, `last_message.sender_suspended` is `true` and `msg` is `""`.
 
 ### Mark a private message seen
 
@@ -828,6 +889,34 @@ Typing and seen events from strangers or unauthorized group members are
 silently dropped. REST message sending and REST seen updates remain the
 authoritative operations.
 
+## Admin API (admin page only)
+
+Used by the built-in page at `https://api.ponypigeon.com/admin`; the app
+doesn't need it. Admin rights are granted only with the `cmd/admin` CLI.
+Admins see **metadata only, never message content or media**, and every
+search, view and action is written to an audit log.
+
+- `POST /api/admin/login` `{"email","password"}` → `202` and a 6-digit code
+  is emailed (`401` for a wrong password or a non-admin, alike).
+- `POST /api/admin/verify` `{"email","code"}` →
+  `200 {"token":"…","expires_in":1800}`: an admin token (30 minutes) for the
+  routes below. App tokens don't work here, and admin tokens don't work on
+  the app API.
+- `GET /api/admin/reports?status=open|resolved|dismissed`,
+  `GET /api/admin/reports/{report_id}` (with the attached messages; logged),
+  `POST /api/admin/reports/{report_id}/resolve` `{"status":"resolved"|"dismissed","note":"…"}`.
+  Closed reports and their evidence are deleted after 180 days.
+- `GET /api/admin/overview`, `GET /api/admin/users?q=&limit=&offset=`,
+  `GET /api/admin/users/{user_id}`, `GET /api/admin/groups?q=`,
+  `GET /api/admin/audit?limit=`.
+- `POST /api/admin/users/{user_id}/ban` `{"reason":"…","until":"<RFC3339>"|null}`
+  → `204` (`null`: permanent). Admins and yourself can't be banned (`400`).
+  A ban signs the user out everywhere and blocks new sessions, hides them
+  from search, discovery and profiles, removes them from groups with other
+  members (a leader hands over to the earliest member) and hides their past
+  messages (`sender_suspended`). `DELETE` the same path to lift it (messages
+  come back; groups don't).
+
 ## Frontend implementation notes
 
 - On `401`, attempt one refresh using the current refresh token, atomically
@@ -836,7 +925,7 @@ authoritative operations.
 - Treat `204` and `201` responses with no body as success; do not JSON-decode
   them.
 - Handle `429` with backoff; read `X-RateLimit-Remaining` to slow down early.
-  The backend does not currently send `Retry-After`.
+  Every `429` carries `Retry-After` (seconds) for when to try again.
 - Refresh proactively shortly before the access token's `exp` claim instead of
   only after a `401`: refreshes share the 10/minute auth budget with logins.
 - Open the WebSocket after authentication, but do not put credentials in the

@@ -80,6 +80,9 @@ type MessageMetaDataRes struct {
 	Reactions []ReactionCount `json:"reactions"`
 	// Media is the message's photos and videos (empty list if none).
 	Media []media.Attachment `json:"media"`
+	// SenderSuspended: the sender is banned; text and media are hidden
+	// (kept on the server, shown again if the ban is lifted).
+	SenderSuspended bool `json:"sender_suspended"`
 }
 
 // ReactionCount is one emoji on a message: how many people used it and
@@ -92,10 +95,11 @@ type ReactionCount struct {
 
 // Reactor is one person's reaction, for GET .../reactions.
 type Reactor struct {
-	UserID    uuid.UUID `json:"user_id"`
-	Name      string    `json:"name"`
-	Emoji     string    `json:"emoji"`
-	CreatedAt time.Time `json:"created_at"`
+	UserID      uuid.UUID `json:"user_id"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"display_name"`
+	Emoji       string    `json:"emoji"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // messageRef locates a message: a private one (between From and To) or a
@@ -125,9 +129,11 @@ type ResponseMessageID struct {
 
 // Conversation is one row of the chat list (GET /api/chats).
 type Conversation struct {
-	Type        string       `json:"type"` // "private" or "public"
-	ID          uuid.UUID    `json:"id"`   // the other user, or the group
-	Name        string       `json:"name"`
+	Type        string       `json:"type"`         // "private" or "public"
+	ID          uuid.UUID    `json:"id"`           // the other user, or the group
+	Name        string       `json:"name"`         // the other user's username, or the group name
+	DisplayName string       `json:"display_name"` // what to show: display name, or the group name
+	AvatarURL   *string      `json:"avatar_url"`   // the other user's picture (private chats only)
 	LastMessage *LastMessage `json:"last_message"` // null for a group with no messages
 	Unread      int          `json:"unread"`
 }
@@ -138,6 +144,8 @@ type LastMessage struct {
 	FromID    uuid.UUID `json:"from_id"` // zero uuid if the sender deleted their account
 	CreatedAt time.Time `json:"created_at"`
 	Deleted   bool      `json:"deleted"` // msg is "" then
+	// SenderSuspended: the sender is banned, msg is "" then.
+	SenderSuspended bool `json:"sender_suspended"`
 }
 
 // JobSeen is the payload of TopicSeen.

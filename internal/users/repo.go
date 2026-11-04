@@ -24,6 +24,8 @@ type UserRepo interface {
 	// (RenameTooSoonError); ErrDuplicateName if taken.
 	Rename(ctx context.Context, id uuid.UUID, name string, now, cutoff time.Time) (*User, error)
 	SetBio(ctx context.Context, id uuid.UUID, bio string) (*User, error)
+	SetDisplayName(ctx context.Context, id uuid.UUID, name string) error
+	DisplayName(ctx context.Context, id uuid.UUID) (string, error)
 	// PublicProfile is ErrUserNotFound if either user blocked the other.
 	PublicProfile(ctx context.Context, id, viewer uuid.UUID) (Profile, error)
 	SetAvatar(ctx context.Context, id uuid.UUID, image []byte, at time.Time) error
@@ -47,14 +49,16 @@ func NewUserRepo(queries *database.Queries) UserRepo {
 
 func toUser(u database.User) *User {
 	out := &User{
-		ID:        u.ID,
-		Name:      u.Name,
-		CreatedAt: u.CreatedAt,
-		UpdatedAt: u.UpdatedAt,
-		Email:     u.Email,
-		IsRED:     u.IsChirpyRed.Bool,
-		Verified:  u.EmailVerifiedAt.Valid,
-		Bio:       u.Bio,
+		ID:          u.ID,
+		Name:        u.Name,
+		CreatedAt:   u.CreatedAt,
+		UpdatedAt:   u.UpdatedAt,
+		Email:       u.Email,
+		IsRED:       u.IsChirpyRed.Bool,
+		Verified:    u.EmailVerifiedAt.Valid,
+		DisplayName: ShownName(u.Name, u.DisplayName),
+		IsAdmin:     u.IsAdmin,
+		Bio:         u.Bio,
 	}
 	if u.AvatarAt.Valid {
 		out.AvatarURL = avatarURL(u.ID, u.AvatarAt.Time)
@@ -71,9 +75,10 @@ func toUser(u database.User) *User {
 
 func (r *userRepo) Create(ctx context.Context, input CreateUserInput) (*User, error) {
 	u, err := r.queries.CreateUser(ctx, database.CreateUserParams{
-		Name:     input.Name,
-		Email:    input.Email,
-		Password: pgtype.Text{String: input.Password, Valid: input.Password != ""},
+		Name:        input.Name,
+		DisplayName: input.DisplayName,
+		Email:       input.Email,
+		Password:    pgtype.Text{String: input.Password, Valid: input.Password != ""},
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -131,7 +136,7 @@ func (r *userRepo) SearchByName(ctx context.Context, me uuid.UUID, q string) ([]
 	}
 	out := make([]PublicUser, 0, len(rows))
 	for _, v := range rows {
-		out = append(out, PublicUser{ID: v.ID, Name: v.Name})
+		out = append(out, PublicUser{ID: v.ID, Name: v.Name, DisplayName: ShownName(v.Name, v.DisplayName), AvatarURL: AvatarURLFrom(v.ID, v.AvatarAt)})
 	}
 	return out, nil
 }
@@ -179,7 +184,7 @@ func (r *userRepo) PublicProfile(ctx context.Context, id, viewer uuid.UUID) (Pro
 	if err != nil {
 		return Profile{}, err
 	}
-	out := Profile{ID: p.ID, Name: p.Name, Bio: p.Bio, Interests: []string{}}
+	out := Profile{ID: p.ID, Name: p.Name, DisplayName: ShownName(p.Name, p.DisplayName), Bio: p.Bio, Interests: []string{}}
 	if p.AvatarAt.Valid {
 		out.AvatarURL = avatarURL(p.ID, p.AvatarAt.Time)
 	}
@@ -243,4 +248,16 @@ func (r *userRepo) Interests(ctx context.Context, id uuid.UUID) ([]string, error
 		ids = []string{}
 	}
 	return ids, err
+}
+
+func (r *userRepo) SetDisplayName(ctx context.Context, id uuid.UUID, name string) error {
+	return r.queries.SetDisplayName(ctx, database.SetDisplayNameParams{ID: id, DisplayName: name})
+}
+
+func (r *userRepo) DisplayName(ctx context.Context, id uuid.UUID) (string, error) {
+	n, err := r.queries.GetDisplayName(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrUserNotFound
+	}
+	return n, err
 }

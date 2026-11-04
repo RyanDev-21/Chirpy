@@ -41,7 +41,7 @@ WHERE m.member_id = $1
 ORDER BY lower(g.name);
 
 -- name: ListGroupMembers :many
-SELECT m.member_id, u.name, m.role
+SELECT m.member_id, u.name, u.display_name, u.avatar_at, m.role
 FROM member_table m
 JOIN users u ON u.id = m.member_id
 WHERE m.group_id = $1
