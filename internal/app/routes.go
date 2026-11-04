@@ -56,12 +56,13 @@ func (a *App) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(httpx.RequestLogger(a.logger, a.cfg.TrustedProxies))
 	r.Use(chimw.Recoverer)
+	r.Use(httpx.SecurityHeaders)
 	r.Use(httpx.CORS(a.cfg.CORSOrigins))
 
 	limit := func(p limitPolicy) func(http.Handler) http.Handler {
 		return ratelimit.Middleware(a.limiter(p), p.name, a.logger)
 	}
-	authed := httpx.Authenticate(a.cfg.JWTSecret)
+	authed := httpx.Authenticate(a.cfg.JWTSecret, a.revoked, a.logger)
 
 	// livez only proves the process is up and touches nothing else, so an
 	// external keep-alive ping does not keep the database awake. readyz

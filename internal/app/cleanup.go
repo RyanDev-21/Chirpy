@@ -6,6 +6,7 @@ import (
 
 	"RyanDev-21.com/Chirpy/internal/friends"
 	"RyanDev-21.com/Chirpy/internal/groups"
+	"RyanDev-21.com/Chirpy/internal/platform/revoke"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/internal/ws"
 	"github.com/google/uuid"
@@ -19,10 +20,34 @@ type cacheCleaner struct {
 	groups  groups.Store
 	users   users.Store
 	hub     *ws.Hub
+	revoked *revoke.Store
 	logger  *slog.Logger
 }
 
+// sessionEnder makes "revoke all refresh tokens" also end the user's
+// access tokens, which otherwise stay valid until they expire.
+type sessionEnder struct {
+	users.UserRepo
+	revoked *revoke.Store
+	hub     *ws.Hub
+}
+
+func (s sessionEnder) RevokeAllRefreshTokens(ctx context.Context, userID uuid.UUID) error {
+	if err := s.UserRepo.RevokeAllRefreshTokens(ctx, userID); err != nil {
+		return err
+	}
+	if err := s.revoked.RevokeAll(ctx, userID); err != nil {
+		return err
+	}
+	s.hub.Disconnect(userID) // the socket was opened with an old token
+	return nil
+}
+
 func (c *cacheCleaner) AccountDeleted(ctx context.Context, userID uuid.UUID, friendIDs, groupIDs []uuid.UUID) {
+	// the account's access tokens must stop working now, not in 15 minutes
+	if err := c.revoked.RevokeAll(ctx, userID); err != nil {
+		c.logger.ErrorContext(ctx, "failed to revoke tokens of deleted account", "error", err)
+	}
 	ids := make([]string, 0, len(friendIDs)+1)
 	ids = append(ids, userID.String())
 	for _, f := range friendIDs {

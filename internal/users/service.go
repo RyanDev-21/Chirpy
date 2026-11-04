@@ -7,6 +7,7 @@ import (
 	"net/mail"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"RyanDev-21.com/Chirpy/internal/platform/secure"
@@ -68,8 +69,17 @@ func ValidatePassword(p string) error {
 func ValidateName(name string) error {
 	name = strings.TrimSpace(name)
 	n := utf8.RuneCountInString(name)
-	if n < minNameLen || n > maxNameLen || strings.ContainsAny(name, " \t\n") {
+	if n < minNameLen || n > maxNameLen {
 		return ErrInvalidInput
+	}
+	for _, r := range name {
+		// spaces, control and invisible formatting characters (zero-width
+		// space, soft hyphen, right-to-left override, ...) would let one
+		// name look like another
+		if unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) ||
+			unicode.In(r, unicode.Zl, unicode.Zp) || r == utf8.RuneError {
+			return ErrInvalidInput
+		}
 	}
 	return nil
 }
