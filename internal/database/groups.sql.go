@@ -312,3 +312,46 @@ func (q *Queries) SetInviteCode(ctx context.Context, arg SetInviteCodeParams) er
 	_, err := q.db.Exec(ctx, setInviteCode, arg.ID, arg.InviteCode)
 	return err
 }
+
+const setMemberRole = `-- name: SetMemberRole :exec
+UPDATE member_table SET role = $1 WHERE group_id = $2 AND member_id = $3
+`
+
+type SetMemberRoleParams struct {
+	Role     string
+	GroupID  uuid.UUID
+	MemberID uuid.UUID
+}
+
+func (q *Queries) SetMemberRole(ctx context.Context, arg SetMemberRoleParams) error {
+	_, err := q.db.Exec(ctx, setMemberRole, arg.Role, arg.GroupID, arg.MemberID)
+	return err
+}
+
+const updateGroupInfo = `-- name: UpdateGroupInfo :one
+UPDATE chat_groups
+SET name = COALESCE($1, name),
+    description = COALESCE($2, description),
+    updated_at = NOW()
+WHERE id = $3
+RETURNING name, description
+`
+
+type UpdateGroupInfoParams struct {
+	Name        pgtype.Text
+	Description pgtype.Text
+	ID          uuid.UUID
+}
+
+type UpdateGroupInfoRow struct {
+	Name        string
+	Description string
+}
+
+// NULL leaves a field unchanged
+func (q *Queries) UpdateGroupInfo(ctx context.Context, arg UpdateGroupInfoParams) (UpdateGroupInfoRow, error) {
+	row := q.db.QueryRow(ctx, updateGroupInfo, arg.Name, arg.Description, arg.ID)
+	var i UpdateGroupInfoRow
+	err := row.Scan(&i.Name, &i.Description)
+	return i, err
+}

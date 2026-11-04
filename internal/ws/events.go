@@ -26,6 +26,8 @@ const (
 	EventReaction  = "Reaction"
 	EventEdited    = "MsgEdited"
 	EventDeleted   = "MsgDeleted"
+	EventGroupUpd  = "GroupUpdated"
+	EventGroupGone = "GroupRemoved"
 )
 
 // InCommingEvent is the envelope clients send over the socket.
@@ -87,6 +89,22 @@ type OutDeletedEvent struct {
 	FromID  string `json:"from_id"`
 	Type    string `json:"type"`
 	GroupID string `json:"group_id,omitempty"`
+}
+
+// OutGroupUpdated tells members that a group changed; change is "info"
+// (name/description), "leader" (user_id is the new leader) or "members"
+// (user_id was removed). Clients refetch the group for details.
+type OutGroupUpdated struct {
+	GroupID string `json:"group_id"`
+	Change  string `json:"change"`
+	UserID  string `json:"user_id,omitempty"`
+}
+
+// OutGroupRemoved tells a user they are no longer in a group: reason is
+// "kicked" or "deleted".
+type OutGroupRemoved struct {
+	GroupID string `json:"group_id"`
+	Reason  string `json:"reason"`
 }
 
 // OutUnfriendEvent tells a user that from_id removed them as a friend.

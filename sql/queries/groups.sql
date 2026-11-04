@@ -55,3 +55,15 @@ SELECT invite_code FROM chat_groups WHERE id = $1;
 
 -- name: SetInviteCode :exec
 UPDATE chat_groups SET invite_code = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: UpdateGroupInfo :one
+-- NULL leaves a field unchanged
+UPDATE chat_groups
+SET name = COALESCE(sqlc.narg(name), name),
+    description = COALESCE(sqlc.narg(description), description),
+    updated_at = NOW()
+WHERE id = @id
+RETURNING name, description;
+
+-- name: SetMemberRole :exec
+UPDATE member_table SET role = @role WHERE group_id = @group_id AND member_id = @member_id;

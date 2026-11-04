@@ -40,6 +40,7 @@ var (
 	limitPassword    = limitPolicy{"password", 5, time.Minute}
 	limitGroupCreate = limitPolicy{"group_create", 10, time.Minute}
 	limitInviteReset = limitPolicy{"invite_reset", 10, time.Minute}
+	limitGroupAdmin  = limitPolicy{"group_admin", 30, time.Minute}
 	// readyz pings Postgres and Redis; per IP so it can't be used to keep
 	// the free-tier database awake or burn Redis commands
 	limitHealth = limitPolicy{"health", 30, time.Minute}
@@ -115,6 +116,11 @@ func (a *App) Router() http.Handler {
 				r.With(limit(limitGroupCreate)).Post("/", a.handlers.groups.CreateGroup)
 				r.Get("/{group_id}", a.handlers.groups.Detail)
 				r.Delete("/{group_id}/members", a.handlers.groups.LeaveGroup)
+				// leader only
+				r.With(limit(limitGroupAdmin)).Patch("/{group_id}", a.handlers.groups.UpdateGroup)
+				r.With(limit(limitGroupAdmin)).Delete("/{group_id}", a.handlers.groups.DeleteGroup)
+				r.With(limit(limitGroupAdmin)).Delete("/{group_id}/members/{user_id}", a.handlers.groups.KickMember)
+				r.With(limit(limitGroupAdmin)).Put("/{group_id}/leader", a.handlers.groups.TransferLeader)
 				// joining needs the invite code: groups are private
 				r.With(limit(limitGroupJoin)).Post("/join", a.handlers.groups.JoinByInvite)
 				r.With(limit(limitGroupJoin)).Get("/invites/{code}", a.handlers.groups.PreviewInvite)
