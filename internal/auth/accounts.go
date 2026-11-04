@@ -139,7 +139,8 @@ func (s *accountService) sendCode(ctx context.Context, u *users.User, purpose st
 	if err != nil {
 		return err
 	}
-	if err := s.repo.PutCode(ctx, u.ID, purpose, s.hashCode(u.ID, purpose, code), s.now().Add(codeTTL)); err != nil {
+	now := s.now()
+	if err := s.repo.PutCode(ctx, u.ID, purpose, s.hashCode(u.ID, purpose, code), now, now.Add(codeTTL)); err != nil {
 		return err
 	}
 	return s.send(ctx, codeEmail(u, purpose, code))

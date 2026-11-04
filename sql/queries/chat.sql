@@ -42,3 +42,88 @@ SELECT EXISTS (
 
 -- name: GroupMessageInGroup :one
 SELECT EXISTS (SELECT 1 FROM GroupMessage WHERE id = @id AND group_id = @group_id);
+
+-- name: GetPrivateMessagesBefore :many
+-- the page of messages just older than the cursor message (newest first)
+SELECT * FROM message
+WHERE ((from_id = @user_a AND to_id = @user_b) OR (from_id = @user_b AND to_id = @user_a))
+  AND deleted_at IS NULL
+  AND (created_at, id) < (@before_time::timestamp, @before_id::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT @lim;
+
+-- name: GetGroupMessagesBefore :many
+SELECT * FROM GroupMessage
+WHERE group_id = @group_id AND deleted_at IS NULL
+  AND (created_at, id) < (@before_time::timestamp, @before_id::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT @lim;
+
+-- name: PrivateMessageCursor :one
+-- created_at of a message, only if it belongs to the conversation
+SELECT created_at FROM message
+WHERE id = @id AND ((from_id = @user_a AND to_id = @user_b) OR (from_id = @user_b AND to_id = @user_a));
+
+-- name: GroupMessageCursor :one
+SELECT created_at FROM GroupMessage WHERE id = @id AND group_id = @group_id;
+
+-- name: MarkGroupRead :exec
+-- only moves forward: an older message never replaces a newer marker
+INSERT INTO group_reads (group_id, user_id, message_id)
+VALUES (@group_id, @user_id, @message_id)
+ON CONFLICT (group_id, user_id) DO UPDATE SET message_id = EXCLUDED.message_id, updated_at = NOW()
+WHERE (SELECT created_at FROM GroupMessage WHERE id = EXCLUDED.message_id)
+   >= (SELECT created_at FROM GroupMessage WHERE id = group_reads.message_id);
+
+-- name: ListPrivateConversations :many
+-- one row per person the caller has exchanged messages with: the latest
+-- message and how many of theirs arrived after the caller's read marker
+WITH mine AS (
+    SELECT m.id, m.content, m.from_id, m.created_at,
+           CASE WHEN m.from_id = @me::uuid THEN m.to_id ELSE m.from_id END AS other_id,
+           -- same as chat.PrivateChatID: the two ids sorted bytewise, joined by _
+           LEAST(m.from_id::text COLLATE "C", m.to_id::text COLLATE "C") || '_' ||
+               GREATEST(m.from_id::text COLLATE "C", m.to_id::text COLLATE "C") AS chat_key
+    FROM message m
+    WHERE (m.from_id = @me::uuid OR m.to_id = @me::uuid) AND m.deleted_at IS NULL
+), latest AS (
+    SELECT DISTINCT ON (other_id) * FROM mine
+    WHERE other_id IS NOT NULL
+    ORDER BY other_id, created_at DESC, id DESC
+)
+SELECT l.other_id::uuid AS other_id, u.name AS other_name,
+       l.id AS last_id, l.content AS last_content, l.from_id AS last_from, l.created_at AS last_at,
+       (SELECT count(*) FROM message x
+        WHERE x.from_id = l.other_id AND x.to_id = @me::uuid AND x.deleted_at IS NULL
+          AND x.created_at > COALESCE((
+              SELECT sm.created_at FROM seen_messages s JOIN message sm ON sm.id = s.message_id
+              WHERE s.seen_id = @me::uuid AND s.chat_id = l.chat_key
+          ), '-infinity'::timestamp)
+       )::int AS unread
+FROM latest l
+JOIN users u ON u.id = l.other_id
+ORDER BY l.created_at DESC, l.id DESC;
+
+-- name: ListGroupConversations :many
+-- every group the caller is in, with its latest message (if any) and how
+-- many messages from others arrived after the caller's read marker
+SELECT g.id AS group_id, g.name AS group_name,
+       -- zero uuid when the group has no messages yet (last_at is then NULL)
+       COALESCE(lm.id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS last_id, lm.content AS last_content, lm.from_id AS last_from, lm.created_at AS last_at,
+       (SELECT count(*) FROM GroupMessage x
+        WHERE x.group_id = g.id AND x.deleted_at IS NULL
+          AND (x.from_id IS NULL OR x.from_id <> @me::uuid)
+          AND x.created_at > COALESCE((
+              SELECT rm.created_at FROM group_reads r JOIN GroupMessage rm ON rm.id = r.message_id
+              WHERE r.group_id = g.id AND r.user_id = @me::uuid
+          ), m.joined_at)
+       )::int AS unread
+FROM member_table m
+JOIN chat_groups g ON g.id = m.group_id
+LEFT JOIN LATERAL (
+    SELECT gm.id, gm.content, gm.from_id, gm.created_at FROM GroupMessage gm
+    WHERE gm.group_id = g.id AND gm.deleted_at IS NULL
+    ORDER BY gm.created_at DESC, gm.id DESC LIMIT 1
+) lm ON true
+WHERE m.member_id = @me::uuid
+ORDER BY lm.created_at DESC NULLS LAST, lower(g.name);

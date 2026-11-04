@@ -9,19 +9,21 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const addMember = `-- name: AddMember :exec
-INSERT INTO member_table(group_id, member_id) VALUES ($1, $2)
+INSERT INTO member_table(group_id, member_id, joined_at) VALUES ($1, $2, $3::timestamp)
 `
 
 type AddMemberParams struct {
 	GroupID  uuid.UUID
 	MemberID uuid.UUID
+	JoinedAt pgtype.Timestamp
 }
 
 func (q *Queries) AddMember(ctx context.Context, arg AddMemberParams) error {
-	_, err := q.db.Exec(ctx, addMember, arg.GroupID, arg.MemberID)
+	_, err := q.db.Exec(ctx, addMember, arg.GroupID, arg.MemberID, arg.JoinedAt)
 	return err
 }
 
@@ -50,17 +52,20 @@ func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) error 
 }
 
 const createGroupLeaderRole = `-- name: CreateGroupLeaderRole :exec
-INSERT INTO member_table(group_id, member_id, role)
-VALUES ($1, $2, 'Leader')
+INSERT INTO member_table(group_id, member_id, role, joined_at)
+VALUES ($1, $2, 'Leader', $3::timestamp)
 `
 
 type CreateGroupLeaderRoleParams struct {
 	GroupID  uuid.UUID
 	MemberID uuid.UUID
+	JoinedAt pgtype.Timestamp
 }
 
+// joined_at comes from the server clock, like message times, so "messages
+// since I joined" never depends on clock skew between app and database
 func (q *Queries) CreateGroupLeaderRole(ctx context.Context, arg CreateGroupLeaderRoleParams) error {
-	_, err := q.db.Exec(ctx, createGroupLeaderRole, arg.GroupID, arg.MemberID)
+	_, err := q.db.Exec(ctx, createGroupLeaderRole, arg.GroupID, arg.MemberID, arg.JoinedAt)
 	return err
 }
 

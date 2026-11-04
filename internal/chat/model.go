@@ -28,6 +28,10 @@ var (
 	ErrNotSupportedTypeMsg = errors.New(`type must be "private" or "public"`)
 	ErrEmptyMessage        = errors.New("msg must be 1-500 characters")
 	ErrMessageNotInChat    = errors.New("msg_id is not a message in this chat")
+	ErrBadCursor           = errors.New("before must be the id of a message in this chat")
+	ErrSinceAndBefore      = errors.New("use either since or before, not both")
+	ErrSinceNotSupported   = errors.New("since is not supported for group history")
+	ErrMessageNotFound     = errors.New("message not found")
 )
 
 const maxMessageLen = 500 // matches message.content VARCHAR(500)
@@ -56,6 +60,33 @@ type MessageMetaDataRes struct {
 	ID        uuid.UUID    `json:"message_id"`
 	MsgInfo   MessageCache `json:"message_info"`
 	CreatedAt time.Time    `json:"created_at"`
+	// Reactions are filled in when history is read (never cached with the
+	// message, since they change afterwards).
+	Reactions []ReactionCount `json:"reactions"`
+}
+
+// ReactionCount is one emoji on a message: how many people used it and
+// whether the caller is one of them.
+type ReactionCount struct {
+	Emoji string `json:"emoji"`
+	Count int    `json:"count"`
+	Me    bool   `json:"me"`
+}
+
+// Reactor is one person's reaction, for GET .../reactions.
+type Reactor struct {
+	UserID    uuid.UUID `json:"user_id"`
+	Name      string    `json:"name"`
+	Emoji     string    `json:"emoji"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// messageRef locates a message: a private one (between From and To) or a
+// group one (in Group).
+type messageRef struct {
+	Kind     string // TypePrivate or TypePublic
+	From, To uuid.UUID
+	Group    uuid.UUID
 }
 
 type MessageListRes struct {
@@ -65,6 +96,22 @@ type MessageListRes struct {
 
 type ResponseMessageID struct {
 	MsgID uuid.UUID `json:"msg_id"`
+}
+
+// Conversation is one row of the chat list (GET /api/chats).
+type Conversation struct {
+	Type        string       `json:"type"` // "private" or "public"
+	ID          uuid.UUID    `json:"id"`   // the other user, or the group
+	Name        string       `json:"name"`
+	LastMessage *LastMessage `json:"last_message"` // null for a group with no messages
+	Unread      int          `json:"unread"`
+}
+
+type LastMessage struct {
+	ID        uuid.UUID `json:"id"`
+	Msg       string    `json:"msg"`
+	FromID    uuid.UUID `json:"from_id"` // zero uuid if the sender deleted their account
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // JobSeen is the payload of TopicSeen.

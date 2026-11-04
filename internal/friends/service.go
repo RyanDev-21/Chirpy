@@ -28,6 +28,7 @@ type Service interface {
 	Cancel(ctx context.Context, me, reqID uuid.UUID) error
 	Relationships(ctx context.Context, me uuid.UUID) (Snapshot, error)
 	AreFriends(ctx context.Context, a, b uuid.UUID) (bool, error)
+	Unfriend(ctx context.Context, me, other uuid.UUID) error
 }
 
 type service struct {
@@ -96,6 +97,19 @@ func (s *service) Cancel(ctx context.Context, me, reqID uuid.UUID) error {
 		return err
 	}
 	s.invalidate(ctx, me, receiverID)
+	return nil
+}
+
+// Unfriend removes the friendship for both users. The other user is told
+// over the socket; chat history stays, but new messages need a new request.
+func (s *service) Unfriend(ctx context.Context, me, other uuid.UUID) error {
+	if err := s.repo.Unfriend(ctx, me, other); err != nil {
+		return err
+	}
+	s.invalidate(ctx, me, other)
+	if err := s.notify.WriteIntoConnection(other, ws.Event{Event: ws.EventUnfriend, Payload: ws.OutUnfriendEvent{FromID: me.String()}}); err != nil {
+		s.logger.WarnContext(ctx, "failed to push unfriend event", "error", err)
+	}
 	return nil
 }
 

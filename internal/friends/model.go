@@ -13,6 +13,7 @@ var (
 	ErrAlreadyFriends = errors.New("already friends")
 	ErrNotFound       = errors.New("friend request not found")
 	ErrUnknownUser    = errors.New("user does not exist")
+	ErrNotFriends     = errors.New("you are not friends with this user")
 )
 
 type FriendMetaData struct {

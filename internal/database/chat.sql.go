@@ -82,6 +82,108 @@ func (q *Queries) AddMessagePublic(ctx context.Context, arg AddMessagePublicPara
 	return err
 }
 
+const getGroupMessagesBefore = `-- name: GetGroupMessagesBefore :many
+SELECT id, content, group_id, from_id, parent_id, created_at, updated_at, deleted_at FROM GroupMessage
+WHERE group_id = $1 AND deleted_at IS NULL
+  AND (created_at, id) < ($2::timestamp, $3::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT $4
+`
+
+type GetGroupMessagesBeforeParams struct {
+	GroupID    pgtype.UUID
+	BeforeTime pgtype.Timestamp
+	BeforeID   uuid.UUID
+	Lim        int32
+}
+
+func (q *Queries) GetGroupMessagesBefore(ctx context.Context, arg GetGroupMessagesBeforeParams) ([]Groupmessage, error) {
+	rows, err := q.db.Query(ctx, getGroupMessagesBefore,
+		arg.GroupID,
+		arg.BeforeTime,
+		arg.BeforeID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Groupmessage
+	for rows.Next() {
+		var i Groupmessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.GroupID,
+			&i.FromID,
+			&i.ParentID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getPrivateMessagesBefore = `-- name: GetPrivateMessagesBefore :many
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at FROM message
+WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
+  AND deleted_at IS NULL
+  AND (created_at, id) < ($3::timestamp, $4::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT $5
+`
+
+type GetPrivateMessagesBeforeParams struct {
+	UserA      pgtype.UUID
+	UserB      pgtype.UUID
+	BeforeTime pgtype.Timestamp
+	BeforeID   uuid.UUID
+	Lim        int32
+}
+
+// the page of messages just older than the cursor message (newest first)
+func (q *Queries) GetPrivateMessagesBefore(ctx context.Context, arg GetPrivateMessagesBeforeParams) ([]Message, error) {
+	rows, err := q.db.Query(ctx, getPrivateMessagesBefore,
+		arg.UserA,
+		arg.UserB,
+		arg.BeforeTime,
+		arg.BeforeID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.Parentid,
+			&i.FromID,
+			&i.ToID,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getPrivateMessagesSince = `-- name: GetPrivateMessagesSince :many
 SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at FROM message
 WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
@@ -216,6 +318,22 @@ func (q *Queries) GetRecentPrivateMessages(ctx context.Context, arg GetRecentPri
 	return items, nil
 }
 
+const groupMessageCursor = `-- name: GroupMessageCursor :one
+SELECT created_at FROM GroupMessage WHERE id = $1 AND group_id = $2
+`
+
+type GroupMessageCursorParams struct {
+	ID      uuid.UUID
+	GroupID pgtype.UUID
+}
+
+func (q *Queries) GroupMessageCursor(ctx context.Context, arg GroupMessageCursorParams) (pgtype.Timestamp, error) {
+	row := q.db.QueryRow(ctx, groupMessageCursor, arg.ID, arg.GroupID)
+	var created_at pgtype.Timestamp
+	err := row.Scan(&created_at)
+	return created_at, err
+}
+
 const groupMessageInGroup = `-- name: GroupMessageInGroup :one
 SELECT EXISTS (SELECT 1 FROM GroupMessage WHERE id = $1 AND group_id = $2)
 `
@@ -230,6 +348,176 @@ func (q *Queries) GroupMessageInGroup(ctx context.Context, arg GroupMessageInGro
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const listGroupConversations = `-- name: ListGroupConversations :many
+SELECT g.id AS group_id, g.name AS group_name,
+       -- zero uuid when the group has no messages yet (last_at is then NULL)
+       COALESCE(lm.id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS last_id, lm.content AS last_content, lm.from_id AS last_from, lm.created_at AS last_at,
+       (SELECT count(*) FROM GroupMessage x
+        WHERE x.group_id = g.id AND x.deleted_at IS NULL
+          AND (x.from_id IS NULL OR x.from_id <> $1::uuid)
+          AND x.created_at > COALESCE((
+              SELECT rm.created_at FROM group_reads r JOIN GroupMessage rm ON rm.id = r.message_id
+              WHERE r.group_id = g.id AND r.user_id = $1::uuid
+          ), m.joined_at)
+       )::int AS unread
+FROM member_table m
+JOIN chat_groups g ON g.id = m.group_id
+LEFT JOIN LATERAL (
+    SELECT gm.id, gm.content, gm.from_id, gm.created_at FROM GroupMessage gm
+    WHERE gm.group_id = g.id AND gm.deleted_at IS NULL
+    ORDER BY gm.created_at DESC, gm.id DESC LIMIT 1
+) lm ON true
+WHERE m.member_id = $1::uuid
+ORDER BY lm.created_at DESC NULLS LAST, lower(g.name)
+`
+
+type ListGroupConversationsRow struct {
+	GroupID     uuid.UUID
+	GroupName   string
+	LastID      uuid.UUID
+	LastContent pgtype.Text
+	LastFrom    pgtype.UUID
+	LastAt      pgtype.Timestamp
+	Unread      int32
+}
+
+// every group the caller is in, with its latest message (if any) and how
+// many messages from others arrived after the caller's read marker
+func (q *Queries) ListGroupConversations(ctx context.Context, me uuid.UUID) ([]ListGroupConversationsRow, error) {
+	rows, err := q.db.Query(ctx, listGroupConversations, me)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListGroupConversationsRow
+	for rows.Next() {
+		var i ListGroupConversationsRow
+		if err := rows.Scan(
+			&i.GroupID,
+			&i.GroupName,
+			&i.LastID,
+			&i.LastContent,
+			&i.LastFrom,
+			&i.LastAt,
+			&i.Unread,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPrivateConversations = `-- name: ListPrivateConversations :many
+WITH mine AS (
+    SELECT m.id, m.content, m.from_id, m.created_at,
+           CASE WHEN m.from_id = $1::uuid THEN m.to_id ELSE m.from_id END AS other_id,
+           -- same as chat.PrivateChatID: the two ids sorted bytewise, joined by _
+           LEAST(m.from_id::text COLLATE "C", m.to_id::text COLLATE "C") || '_' ||
+               GREATEST(m.from_id::text COLLATE "C", m.to_id::text COLLATE "C") AS chat_key
+    FROM message m
+    WHERE (m.from_id = $1::uuid OR m.to_id = $1::uuid) AND m.deleted_at IS NULL
+), latest AS (
+    SELECT DISTINCT ON (other_id) id, content, from_id, created_at, other_id, chat_key FROM mine
+    WHERE other_id IS NOT NULL
+    ORDER BY other_id, created_at DESC, id DESC
+)
+SELECT l.other_id::uuid AS other_id, u.name AS other_name,
+       l.id AS last_id, l.content AS last_content, l.from_id AS last_from, l.created_at AS last_at,
+       (SELECT count(*) FROM message x
+        WHERE x.from_id = l.other_id AND x.to_id = $1::uuid AND x.deleted_at IS NULL
+          AND x.created_at > COALESCE((
+              SELECT sm.created_at FROM seen_messages s JOIN message sm ON sm.id = s.message_id
+              WHERE s.seen_id = $1::uuid AND s.chat_id = l.chat_key
+          ), '-infinity'::timestamp)
+       )::int AS unread
+FROM latest l
+JOIN users u ON u.id = l.other_id
+ORDER BY l.created_at DESC, l.id DESC
+`
+
+type ListPrivateConversationsRow struct {
+	OtherID     uuid.UUID
+	OtherName   string
+	LastID      uuid.UUID
+	LastContent pgtype.Text
+	LastFrom    pgtype.UUID
+	LastAt      pgtype.Timestamp
+	Unread      int32
+}
+
+// one row per person the caller has exchanged messages with: the latest
+// message and how many of theirs arrived after the caller's read marker
+func (q *Queries) ListPrivateConversations(ctx context.Context, me uuid.UUID) ([]ListPrivateConversationsRow, error) {
+	rows, err := q.db.Query(ctx, listPrivateConversations, me)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPrivateConversationsRow
+	for rows.Next() {
+		var i ListPrivateConversationsRow
+		if err := rows.Scan(
+			&i.OtherID,
+			&i.OtherName,
+			&i.LastID,
+			&i.LastContent,
+			&i.LastFrom,
+			&i.LastAt,
+			&i.Unread,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markGroupRead = `-- name: MarkGroupRead :exec
+INSERT INTO group_reads (group_id, user_id, message_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (group_id, user_id) DO UPDATE SET message_id = EXCLUDED.message_id, updated_at = NOW()
+WHERE (SELECT created_at FROM GroupMessage WHERE id = EXCLUDED.message_id)
+   >= (SELECT created_at FROM GroupMessage WHERE id = group_reads.message_id)
+`
+
+type MarkGroupReadParams struct {
+	GroupID   uuid.UUID
+	UserID    uuid.UUID
+	MessageID uuid.UUID
+}
+
+// only moves forward: an older message never replaces a newer marker
+func (q *Queries) MarkGroupRead(ctx context.Context, arg MarkGroupReadParams) error {
+	_, err := q.db.Exec(ctx, markGroupRead, arg.GroupID, arg.UserID, arg.MessageID)
+	return err
+}
+
+const privateMessageCursor = `-- name: PrivateMessageCursor :one
+SELECT created_at FROM message
+WHERE id = $1 AND ((from_id = $2 AND to_id = $3) OR (from_id = $3 AND to_id = $2))
+`
+
+type PrivateMessageCursorParams struct {
+	ID    uuid.UUID
+	UserA pgtype.UUID
+	UserB pgtype.UUID
+}
+
+// created_at of a message, only if it belongs to the conversation
+func (q *Queries) PrivateMessageCursor(ctx context.Context, arg PrivateMessageCursorParams) (pgtype.Timestamp, error) {
+	row := q.db.QueryRow(ctx, privateMessageCursor, arg.ID, arg.UserA, arg.UserB)
+	var created_at pgtype.Timestamp
+	err := row.Scan(&created_at)
+	return created_at, err
 }
 
 const privateMessageInChat = `-- name: PrivateMessageInChat :one

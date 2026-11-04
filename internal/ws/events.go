@@ -22,6 +22,8 @@ const (
 	EventAddFriend = "AddFri"
 	EventAccept    = "AcceptFri"
 	EventDeny      = "DenyFri"
+	EventUnfriend  = "RemoveFri"
+	EventReaction  = "Reaction"
 )
 
 // InCommingEvent is the envelope clients send over the socket.
@@ -54,6 +56,21 @@ type OutGoingEventForTyping struct {
 
 type OutFriEvent struct {
 	ReqID  string `json:"req_id"`
+	FromID string `json:"from_id"`
+}
+
+// OutReactionEvent: from_id set (or, with an empty emoji, removed) their
+// reaction on msg_id. group_id is present for group messages.
+type OutReactionEvent struct {
+	MsgID   string `json:"msg_id"`
+	FromID  string `json:"from_id"`
+	Type    string `json:"type"`
+	GroupID string `json:"group_id,omitempty"`
+	Emoji   string `json:"emoji"`
+}
+
+// OutUnfriendEvent tells a user that from_id removed them as a friend.
+type OutUnfriendEvent struct {
 	FromID string `json:"from_id"`
 }
 

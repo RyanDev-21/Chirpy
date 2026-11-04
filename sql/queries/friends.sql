@@ -46,3 +46,10 @@ WHERE u.id IN (
     SELECT r2.user_id FROM user_relationships r2 WHERE r2.otherUser_id = $1 AND r2.status = 'confirm'
 )
 ORDER BY u.name;
+
+-- name: Unfriend :one
+DELETE FROM user_relationships
+WHERE status = 'confirm'
+  AND LEAST(user_id, otherUser_id) = LEAST(@a::uuid, @b::uuid)
+  AND GREATEST(user_id, otherUser_id) = GREATEST(@a::uuid, @b::uuid)
+RETURNING id;

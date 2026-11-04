@@ -96,6 +96,18 @@ func (f *fakeRepo) Cancel(_ context.Context, id, me uuid.UUID) (uuid.UUID, error
 	return f.resolve(id, me, false, true)
 }
 
+func (f *fakeRepo) Unfriend(_ context.Context, a, b uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, r := range f.rows {
+		if r.status == "confirm" && ((r.from == a && r.to == b) || (r.from == b && r.to == a)) {
+			delete(f.rows, id)
+			return nil
+		}
+	}
+	return ErrNotFriends
+}
+
 type fakeNames map[uuid.UUID]string
 
 func (n fakeNames) GetName(_ context.Context, id uuid.UUID) (string, error) {
@@ -244,5 +256,33 @@ func TestStaleReadIsNotCached(t *testing.T) {
 	_ = f.store.Put(ctx, id, v, stale)
 	if _, found, _ := f.store.Get(ctx, id); !found {
 		t.Fatal("an up-to-date snapshot should be cached")
+	}
+}
+
+func TestUnfriend(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	if err := f.svc.Unfriend(ctx, f.alice, f.bob); !errors.Is(err, ErrNotFriends) {
+		t.Fatalf("not friends yet: %v", err)
+	}
+	reqID, _ := f.svc.Send(ctx, f.alice, f.bob)
+	_ = f.svc.Accept(ctx, f.bob, reqID)
+	_, _ = f.svc.AreFriends(ctx, f.alice, f.bob) // warm both caches
+	_, _ = f.svc.AreFriends(ctx, f.bob, f.alice)
+	if err := f.svc.Unfriend(ctx, f.bob, f.alice); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range [][2]uuid.UUID{{f.alice, f.bob}, {f.bob, f.alice}} {
+		if ok, _ := f.svc.AreFriends(ctx, p[0], p[1]); ok {
+			t.Fatalf("still friends after unfriend: %v", p)
+		}
+	}
+	last := f.hub.sent[len(f.hub.sent)-1]
+	if last.to != f.alice || last.ev.Event != ws.EventUnfriend {
+		t.Fatalf("last push = %+v", last)
+	}
+	// they can become friends again
+	if _, err := f.svc.Send(ctx, f.alice, f.bob); err != nil {
+		t.Fatalf("re-request after unfriend: %v", err)
 	}
 }

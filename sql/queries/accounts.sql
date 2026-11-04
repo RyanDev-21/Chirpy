@@ -5,10 +5,11 @@ UPDATE users SET email_verified_at = COALESCE(email_verified_at, NOW()), updated
 UPDATE users SET password = $2, updated_at = NOW() WHERE id = $1;
 
 -- name: UpsertEmailCode :exec
-INSERT INTO email_codes (user_id, purpose, code_hash, expires_at)
-VALUES ($1, $2, $3, $4)
+-- created_at is the server clock (compared with it for the resend gap)
+INSERT INTO email_codes (user_id, purpose, code_hash, expires_at, created_at)
+VALUES ($1, $2, $3, $4, @created_at::timestamp)
 ON CONFLICT (user_id, purpose)
-DO UPDATE SET code_hash = EXCLUDED.code_hash, attempts = 0, expires_at = EXCLUDED.expires_at, created_at = NOW();
+DO UPDATE SET code_hash = EXCLUDED.code_hash, attempts = 0, expires_at = EXCLUDED.expires_at, created_at = EXCLUDED.created_at;
 
 -- name: GetEmailCode :one
 SELECT * FROM email_codes WHERE user_id = $1 AND purpose = $2;

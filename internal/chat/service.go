@@ -34,8 +34,15 @@ type Pusher interface {
 
 type ChatService interface {
 	SendMessage(ctx context.Context, from uuid.UUID, in InCommingMessage) (uuid.UUID, error)
-	PrivateMessages(ctx context.Context, me, other uuid.UUID, since string) ([]MessageMetaDataRes, error)
-	GroupMessages(ctx context.Context, me, groupID uuid.UUID) ([]MessageMetaDataRes, error)
+	PrivateMessages(ctx context.Context, me, other uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error)
+	GroupMessages(ctx context.Context, me, groupID uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error)
+	MarkGroupRead(ctx context.Context, me, groupID uuid.UUID, msgID string) error
+	Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error)
+	// React sets the caller's single reaction on a message (replacing any
+	// earlier one); Unreact removes it.
+	React(ctx context.Context, me, msgID uuid.UUID, emoji string) error
+	Unreact(ctx context.Context, me, msgID uuid.UUID) error
+	Reactors(ctx context.Context, me, msgID uuid.UUID) ([]Reactor, error)
 	MarkSeen(ctx context.Context, me, other uuid.UUID, msgID string) error
 
 	HandleSeen(ctx context.Context, j JobSeen) error
@@ -198,8 +205,50 @@ func parseSince(since string) (time.Time, error) {
 	return t, nil
 }
 
-func (s *chatService) PrivateMessages(ctx context.Context, me, other uuid.UUID, since string) ([]MessageMetaDataRes, error) {
-	sinceT, err := parseSince(since)
+// HistoryQuery selects a page of history: the latest page by default,
+// newer messages with Since, or older ones with Before (a message id).
+type HistoryQuery struct {
+	Since  string
+	Before string
+	Limit  int
+}
+
+const maxPage = 100
+
+func (q HistoryQuery) parse() (before uuid.UUID, limit int, err error) {
+	if q.Since != "" && q.Before != "" {
+		return uuid.Nil, 0, ErrSinceAndBefore
+	}
+	limit = pageSize
+	if q.Limit > 0 {
+		limit = min(q.Limit, maxPage)
+	}
+	if q.Before != "" {
+		if before, err = uuid.Parse(q.Before); err != nil {
+			return uuid.Nil, 0, ErrBadCursor
+		}
+	}
+	return before, limit, nil
+}
+
+func (s *chatService) PrivateMessages(ctx context.Context, me, other uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error) {
+	msgs, err := s.privateHistory(ctx, me, other, q)
+	if err != nil {
+		return nil, err
+	}
+	return s.withReactions(ctx, TypePrivate, me, msgs)
+}
+
+func (s *chatService) privateHistory(ctx context.Context, me, other uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error) {
+	before, limit, err := q.parse()
+	if err != nil {
+		return nil, err
+	}
+	if before != uuid.Nil {
+		// older history is read from postgres; the cache only holds the tail
+		return s.repo.PrivateBefore(ctx, me, other, before, limit)
+	}
+	sinceT, err := parseSince(q.Since)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +257,7 @@ func (s *chatService) PrivateMessages(ctx context.Context, me, other uuid.UUID, 
 		return nil, err
 	}
 	if sinceT.IsZero() {
-		return s.cache.Recent(ctx, key, pageSize)
+		return s.cache.Recent(ctx, key, limit)
 	}
 	cached, err := s.cache.Recent(ctx, key, streamCap)
 	if err != nil {
@@ -221,7 +270,22 @@ func (s *chatService) PrivateMessages(ctx context.Context, me, other uuid.UUID, 
 	return s.repo.PrivateSince(ctx, me, other, sinceT, streamCap)
 }
 
-func (s *chatService) GroupMessages(ctx context.Context, me, groupID uuid.UUID) ([]MessageMetaDataRes, error) {
+func (s *chatService) GroupMessages(ctx context.Context, me, groupID uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error) {
+	msgs, err := s.groupHistory(ctx, me, groupID, q)
+	if err != nil {
+		return nil, err
+	}
+	return s.withReactions(ctx, TypePublic, me, msgs)
+}
+
+func (s *chatService) groupHistory(ctx context.Context, me, groupID uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error) {
+	if q.Since != "" {
+		return nil, ErrSinceNotSupported
+	}
+	before, limit, err := q.parse()
+	if err != nil {
+		return nil, err
+	}
 	ok, err := s.groups.IsMember(ctx, groupID, me)
 	if err != nil {
 		return nil, err
@@ -229,11 +293,35 @@ func (s *chatService) GroupMessages(ctx context.Context, me, groupID uuid.UUID) 
 	if !ok {
 		return nil, ErrNotAuthorized
 	}
+	if before != uuid.Nil {
+		return s.repo.GroupBefore(ctx, groupID, before, limit)
+	}
 	key := groupKey(groupID)
 	if err := s.ensureSeeded(ctx, key, me, groupID, TypePublic); err != nil {
 		return nil, err
 	}
-	return s.cache.Recent(ctx, key, pageSize)
+	return s.cache.Recent(ctx, key, limit)
+}
+
+// MarkGroupRead records the last group message the caller has read.
+// Markers only move forward.
+func (s *chatService) MarkGroupRead(ctx context.Context, me, groupID uuid.UUID, msgIDStr string) error {
+	msgID, err := uuid.Parse(msgIDStr)
+	if err != nil {
+		return ErrNotValidUUID
+	}
+	ok, err := s.groups.IsMember(ctx, groupID, me)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotAuthorized
+	}
+	return s.repo.MarkGroupRead(ctx, groupID, me, msgID)
+}
+
+func (s *chatService) Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error) {
+	return s.repo.Conversations(ctx, me)
 }
 
 func (s *chatService) MarkSeen(ctx context.Context, me, other uuid.UUID, msgIDStr string) error {
@@ -268,6 +356,116 @@ func (s *chatService) MarkSeen(ctx context.Context, me, other uuid.UUID, msgIDSt
 		}
 	}
 	return nil
+}
+
+// --- reactions ---
+
+// withReactions attaches reaction counts to a page of messages, read from
+// postgres in one query (cached messages never carry reactions).
+func (s *chatService) withReactions(ctx context.Context, kind string, me uuid.UUID, msgs []MessageMetaDataRes) ([]MessageMetaDataRes, error) {
+	ids := make([]uuid.UUID, len(msgs))
+	for i, m := range msgs {
+		ids[i] = m.ID
+	}
+	counts, err := s.repo.ReactionCounts(ctx, kind, me, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range msgs {
+		msgs[i].Reactions = counts[msgs[i].ID]
+		if msgs[i].Reactions == nil {
+			msgs[i].Reactions = []ReactionCount{}
+		}
+	}
+	return msgs, nil
+}
+
+// authorizeMessage returns where msgID lives and who else should hear
+// about changes to it, if me may read it. requireFriends applies the
+// "friends only" rule of private messaging (needed to add, not to remove).
+func (s *chatService) authorizeMessage(ctx context.Context, me, msgID uuid.UUID, requireFriends bool) (messageRef, []uuid.UUID, error) {
+	ref, err := s.repo.LocateMessage(ctx, msgID)
+	if err != nil {
+		return ref, nil, err
+	}
+	if ref.Kind == TypePrivate {
+		var other uuid.UUID
+		switch me {
+		case ref.From:
+			other = ref.To
+		case ref.To:
+			other = ref.From
+		default:
+			return ref, nil, ErrMessageNotFound // not your conversation: don't reveal it
+		}
+		if requireFriends {
+			ok, err := s.friends.AreFriends(ctx, me, other)
+			if err != nil {
+				return ref, nil, err
+			}
+			if !ok {
+				return ref, nil, ErrNotFriends
+			}
+		}
+		return ref, []uuid.UUID{other}, nil
+	}
+	members, err := s.groups.Members(ctx, ref.Group)
+	if err != nil {
+		return ref, nil, err
+	}
+	if !slices.Contains(members, me) {
+		return ref, nil, ErrMessageNotFound
+	}
+	return ref, slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == me }), nil
+}
+
+func (s *chatService) React(ctx context.Context, me, msgID uuid.UUID, emoji string) error {
+	if err := ValidateEmoji(emoji); err != nil {
+		return err
+	}
+	ref, others, err := s.authorizeMessage(ctx, me, msgID, true)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.SetReaction(ctx, ref.Kind, msgID, me, emoji); err != nil {
+		return err
+	}
+	s.pushReaction(ctx, ref, others, me, msgID, emoji)
+	return nil
+}
+
+func (s *chatService) Unreact(ctx context.Context, me, msgID uuid.UUID) error {
+	ref, others, err := s.authorizeMessage(ctx, me, msgID, false)
+	if err != nil {
+		return err
+	}
+	removed, err := s.repo.DeleteReaction(ctx, ref.Kind, msgID, me)
+	if err != nil {
+		return err
+	}
+	if removed {
+		s.pushReaction(ctx, ref, others, me, msgID, "")
+	}
+	return nil
+}
+
+func (s *chatService) Reactors(ctx context.Context, me, msgID uuid.UUID) ([]Reactor, error) {
+	ref, _, err := s.authorizeMessage(ctx, me, msgID, false)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.Reactors(ctx, ref.Kind, msgID)
+}
+
+// pushReaction tells the rest of the chat; emoji "" means removed.
+func (s *chatService) pushReaction(ctx context.Context, ref messageRef, to []uuid.UUID, from, msgID uuid.UUID, emoji string) {
+	ev := ws.OutReactionEvent{MsgID: msgID.String(), FromID: from.String(), Type: ref.Kind, Emoji: emoji}
+	if ref.Kind == TypePublic {
+		ev.GroupID = ref.Group.String()
+	}
+	if err := s.push.WriteToUsers(to, ws.Event{Event: ws.EventReaction, Payload: ev}); err != nil {
+		s.logger.WarnContext(ctx, "failed to push reaction", "error", err)
+	}
 }
 
 // --- realtime event policy (ws.EventPolicy) ---

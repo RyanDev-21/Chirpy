@@ -15,11 +15,13 @@ import (
 )
 
 type fakeRepo struct {
-	history []MessageMetaDataRes
-	since   int
-	saved   []MessageMetaDataRes
-	parents map[uuid.UUID]bool // parent ids that belong to the chat
-	failAdd error
+	history     []MessageMetaDataRes
+	since       int
+	saved       []MessageMetaDataRes
+	parents     map[uuid.UUID]bool // parent ids that belong to the chat
+	beforeCalls int
+	reactions   map[uuid.UUID]map[uuid.UUID]string // msg -> user -> emoji
+	failAdd     error
 }
 
 func (f *fakeRepo) AddPrivate(_ context.Context, m MessageMetaDataRes) error {
@@ -32,6 +34,65 @@ func (f *fakeRepo) AddPrivate(_ context.Context, m MessageMetaDataRes) error {
 func (f *fakeRepo) AddPublic(ctx context.Context, m MessageMetaDataRes) error {
 	return f.AddPrivate(ctx, m)
 }
+func (f *fakeRepo) PrivateBefore(_ context.Context, _, _, before uuid.UUID, n int) ([]MessageMetaDataRes, error) {
+	f.beforeCalls++
+	return nil, nil
+}
+func (f *fakeRepo) GroupBefore(context.Context, uuid.UUID, uuid.UUID, int) ([]MessageMetaDataRes, error) {
+	f.beforeCalls++
+	return nil, nil
+}
+func (f *fakeRepo) MarkGroupRead(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error { return nil }
+func (f *fakeRepo) Conversations(context.Context, uuid.UUID) ([]Conversation, error)     { return nil, nil }
+func (f *fakeRepo) LocateMessage(_ context.Context, id uuid.UUID) (messageRef, error) {
+	for _, m := range f.saved {
+		if m.ID != id {
+			continue
+		}
+		to, _ := uuid.Parse(m.MsgInfo.Msg.ToID)
+		if m.MsgInfo.Msg.Type == TypePublic {
+			return messageRef{Kind: TypePublic, Group: to}, nil
+		}
+		return messageRef{Kind: TypePrivate, From: m.MsgInfo.FromID, To: to}, nil
+	}
+	return messageRef{}, ErrMessageNotFound
+}
+func (f *fakeRepo) SetReaction(_ context.Context, _ string, msg, user uuid.UUID, emoji string) error {
+	if f.reactions == nil {
+		f.reactions = map[uuid.UUID]map[uuid.UUID]string{}
+	}
+	if f.reactions[msg] == nil {
+		f.reactions[msg] = map[uuid.UUID]string{}
+	}
+	f.reactions[msg][user] = emoji
+	return nil
+}
+func (f *fakeRepo) DeleteReaction(_ context.Context, _ string, msg, user uuid.UUID) (bool, error) {
+	_, ok := f.reactions[msg][user]
+	delete(f.reactions[msg], user)
+	return ok, nil
+}
+func (f *fakeRepo) ReactionCounts(_ context.Context, _ string, me uuid.UUID, ids []uuid.UUID) (map[uuid.UUID][]ReactionCount, error) {
+	out := map[uuid.UUID][]ReactionCount{}
+	for _, id := range ids {
+		counts := map[string]*ReactionCount{}
+		var order []string
+		for user, e := range f.reactions[id] {
+			if counts[e] == nil {
+				counts[e] = &ReactionCount{Emoji: e}
+				order = append(order, e)
+			}
+			counts[e].Count++
+			counts[e].Me = counts[e].Me || user == me
+		}
+		slices.Sort(order)
+		for _, e := range order {
+			out[id] = append(out[id], *counts[e])
+		}
+	}
+	return out, nil
+}
+func (f *fakeRepo) Reactors(context.Context, string, uuid.UUID) ([]Reactor, error) { return nil, nil }
 func (f *fakeRepo) ParentInPrivate(_ context.Context, p, _, _ uuid.UUID) (bool, error) {
 	return f.parents[p], nil
 }
@@ -144,7 +205,7 @@ func TestPrivateMessagesKeepHistoryOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, err := f.svc.PrivateMessages(ctx, f.bob, f.alice, "")
+	got, err := f.svc.PrivateMessages(ctx, f.bob, f.alice, HistoryQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +227,7 @@ func TestPrivateMessagesKeepHistoryOrder(t *testing.T) {
 func TestPrivateMessagesSince(t *testing.T) {
 	f := setup(t)
 	ctx := context.Background()
-	if _, err := f.svc.PrivateMessages(ctx, f.alice, f.bob, "yesterday"); !errors.Is(err, ErrNotValidTimeFmt) {
+	if _, err := f.svc.PrivateMessages(ctx, f.alice, f.bob, HistoryQuery{Since: "yesterday"}); !errors.Is(err, ErrNotValidTimeFmt) {
 		t.Fatalf("bad since: %v", err)
 	}
 	cutoff := time.Now().UTC()
@@ -174,7 +235,7 @@ func TestPrivateMessagesSince(t *testing.T) {
 	if _, err := f.svc.SendMessage(ctx, f.alice, msg(f.bob, TypePrivate, "new")); err != nil {
 		t.Fatal(err)
 	}
-	got, err := f.svc.PrivateMessages(ctx, f.alice, f.bob, cutoff.Format(time.RFC3339Nano))
+	got, err := f.svc.PrivateMessages(ctx, f.alice, f.bob, HistoryQuery{Since: cutoff.Format(time.RFC3339Nano)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,11 +256,11 @@ func TestGroupMessages(t *testing.T) {
 	if got := f.push.targets[0]; len(got) != 1 || got[0] != f.bob {
 		t.Fatalf("fan-out should skip the sender: %v", got)
 	}
-	got, err := f.svc.GroupMessages(ctx, f.bob, f.group)
+	got, err := f.svc.GroupMessages(ctx, f.bob, f.group, HistoryQuery{})
 	if err != nil || len(got) != 1 {
 		t.Fatalf("GroupMessages = %v, %v", got, err)
 	}
-	if _, err := f.svc.GroupMessages(ctx, f.carol, f.group); !errors.Is(err, ErrNotAuthorized) {
+	if _, err := f.svc.GroupMessages(ctx, f.carol, f.group, HistoryQuery{}); !errors.Is(err, ErrNotAuthorized) {
 		t.Fatalf("non-member read: %v", err)
 	}
 }
@@ -254,7 +315,7 @@ func TestDatabaseFailureFailsSendAndSkipsDelivery(t *testing.T) {
 	if len(f.push.targets) != 0 {
 		t.Fatal("an unsaved message must not be delivered")
 	}
-	got, _ := f.svc.PrivateMessages(context.Background(), f.bob, f.alice, "")
+	got, _ := f.svc.PrivateMessages(context.Background(), f.bob, f.alice, HistoryQuery{})
 	if len(got) != 0 {
 		t.Fatalf("an unsaved message must not be cached: %+v", got)
 	}
@@ -287,5 +348,94 @@ func TestRealtimeEventPolicy(t *testing.T) {
 	}
 	if ok, _ := f.svc.SeenAllowed(ctx, f.carol, f.bob); ok {
 		t.Fatal("strangers must not send read receipts")
+	}
+}
+
+func TestHistoryQueryRules(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	if _, err := f.svc.PrivateMessages(ctx, f.alice, f.bob, HistoryQuery{Since: "2026-01-01T00:00:00Z", Before: uuid.NewString()}); !errors.Is(err, ErrSinceAndBefore) {
+		t.Fatalf("since+before: %v", err)
+	}
+	if _, err := f.svc.PrivateMessages(ctx, f.alice, f.bob, HistoryQuery{Before: "nope"}); !errors.Is(err, ErrBadCursor) {
+		t.Fatalf("bad cursor: %v", err)
+	}
+	if _, err := f.svc.GroupMessages(ctx, f.alice, f.group, HistoryQuery{Since: "2026-01-01T00:00:00Z"}); !errors.Is(err, ErrSinceNotSupported) {
+		t.Fatalf("group since: %v", err)
+	}
+	if _, err := f.svc.GroupMessages(ctx, f.carol, f.group, HistoryQuery{Before: uuid.NewString()}); !errors.Is(err, ErrNotAuthorized) {
+		t.Fatalf("non-member paging: %v", err)
+	}
+	// older pages come from postgres, not the cache
+	_, _ = f.svc.PrivateMessages(ctx, f.alice, f.bob, HistoryQuery{Before: uuid.NewString()})
+	_, _ = f.svc.GroupMessages(ctx, f.alice, f.group, HistoryQuery{Before: uuid.NewString()})
+	if f.repo.beforeCalls != 2 {
+		t.Fatalf("before calls = %d, want 2", f.repo.beforeCalls)
+	}
+	if _, limit, _ := (HistoryQuery{Limit: 5000}).parse(); limit != maxPage {
+		t.Fatalf("limit not capped: %d", limit)
+	}
+	if err := f.svc.MarkGroupRead(ctx, f.carol, f.group, uuid.NewString()); !errors.Is(err, ErrNotAuthorized) {
+		t.Fatalf("non-member read marker: %v", err)
+	}
+}
+
+func TestReactions(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	dm, _ := f.svc.SendMessage(ctx, f.alice, msg(f.bob, TypePrivate, "react to me"))
+	gm, _ := f.svc.SendMessage(ctx, f.alice, msg(f.group, TypePublic, "group msg"))
+
+	if err := f.svc.React(ctx, f.bob, dm, "ok"); !errors.Is(err, ErrNotAnEmoji) {
+		t.Fatalf("text as emoji: %v", err)
+	}
+	if err := f.svc.React(ctx, f.carol, dm, "👍"); !errors.Is(err, ErrMessageNotFound) {
+		t.Fatalf("outsider on a private message: %v", err)
+	}
+	if err := f.svc.React(ctx, f.carol, gm, "👍"); !errors.Is(err, ErrMessageNotFound) {
+		t.Fatalf("non-member on a group message: %v", err)
+	}
+	if err := f.svc.React(ctx, f.bob, uuid.New(), "👍"); !errors.Is(err, ErrMessageNotFound) {
+		t.Fatalf("unknown message: %v", err)
+	}
+
+	pushes := len(f.push.targets)
+	if err := f.svc.React(ctx, f.bob, dm, "👍"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.React(ctx, f.bob, dm, "❤️"); err != nil { // replaces, one per person
+		t.Fatal(err)
+	}
+	_ = f.svc.React(ctx, f.alice, dm, "❤️")
+	if got := f.push.targets[pushes]; len(got) != 1 || got[0] != f.alice {
+		t.Fatalf("bob's reaction should be pushed to alice only: %v", got)
+	}
+
+	page, err := f.svc.PrivateMessages(ctx, f.bob, f.alice, HistoryQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r []ReactionCount
+	for _, m := range page {
+		if m.ID == dm {
+			r = m.Reactions
+		}
+	}
+	if len(r) != 1 || r[0].Emoji != "❤️" || r[0].Count != 2 || !r[0].Me {
+		t.Fatalf("reactions in history = %+v", r)
+	}
+
+	if err := f.svc.Unreact(ctx, f.bob, dm); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.push.targets); f.svc.Unreact(ctx, f.bob, dm) != nil || len(f.push.targets) != n {
+		t.Fatal("removing a missing reaction must be a quiet no-op")
+	}
+	// group: members react, the rest of the group hears it
+	if err := f.svc.React(ctx, f.bob, gm, "🔥"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.push.targets[len(f.push.targets)-1]; len(got) != 1 || got[0] != f.alice {
+		t.Fatalf("group reaction targets = %v", got)
 	}
 }
