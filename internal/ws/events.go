@@ -122,4 +122,6 @@ type OutGoingMessage struct {
 	// which group chat the message belongs to.
 	GroupID   string    `json:"group_id,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+	// Media: the message's attachments (see chat history), if any.
+	Media any `json:"media,omitempty"`
 }

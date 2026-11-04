@@ -33,6 +33,15 @@ services:
           # Firebase service account key (JSON) for push; set in the dashboard
           - key: FIREBASE_SERVICE_ACCOUNT
             sync: false
+          # Cloudflare R2 for photos and videos (set in the dashboard)
+          - key: R2_ACCOUNT_ID
+            sync: false
+          - key: R2_BUCKET
+            sync: false
+          - key: R2_ACCESS_KEY_ID
+            sync: false
+          - key: R2_SECRET_ACCESS_KEY
+            sync: false
           # free Upstash is billed per command; Redis Streams polling would
           # use the monthly allowance while idle
           - key: QUEUE_BACKEND

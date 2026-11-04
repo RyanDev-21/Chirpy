@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"RyanDev-21.com/Chirpy/internal/media"
 	"github.com/google/uuid"
 )
 
@@ -48,6 +49,9 @@ type InCommingMessage struct {
 	ParendID string `json:"parent_id,omitempty"`
 	ToID     string `json:"to_id"`
 	Type     string `json:"type"`
+	// Media lists uploaded media ids (POST /api/media) to attach; a
+	// message with media may have no text.
+	Media []uuid.UUID `json:"media,omitempty"`
 }
 
 type PayloadForSeen struct {
@@ -74,6 +78,8 @@ type MessageMetaDataRes struct {
 	// Reactions are filled in when history is read (never cached with the
 	// message, since they change afterwards).
 	Reactions []ReactionCount `json:"reactions"`
+	// Media is the message's photos and videos (empty list if none).
+	Media []media.Attachment `json:"media"`
 }
 
 // ReactionCount is one emoji on a message: how many people used it and

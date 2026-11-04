@@ -49,6 +49,13 @@ func (a *App) Cleanup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	files, err := a.media.Cleanup(ctx)
+	if err != nil {
+		return err
+	}
+	if files > 0 {
+		a.logger.InfoContext(ctx, "media cleanup", "files_deleted", files)
+	}
 	if tokens > 0 || codes > 0 {
 		a.logger.InfoContext(ctx, "cleanup", "refresh_tokens", tokens, "email_codes", codes)
 	}

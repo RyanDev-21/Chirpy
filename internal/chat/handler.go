@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"RyanDev-21.com/Chirpy/internal/media"
 	"RyanDev-21.com/Chirpy/internal/platform/httpx"
 	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
 	"RyanDev-21.com/Chirpy/internal/ws"
@@ -26,6 +27,10 @@ func NewChatHandler(svc ChatService, hub *ws.Hub, upgrader *websocket.Upgrader, 
 
 func (h *ChatHandler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, media.ErrDisabled):
+		httpx.Error(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, media.ErrBadAttachment):
+		httpx.Error(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrMessageNotFound):
 		httpx.Error(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrNotAuthorized), errors.Is(err, ErrNotFriends), errors.Is(err, ErrNotYourMessage),

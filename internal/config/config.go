@@ -57,6 +57,9 @@ type Config struct {
 	// FirebaseServiceAccount is the service account key JSON for push
 	// notifications (FCM). Empty disables push.
 	FirebaseServiceAccount string
+	// Cloudflare R2 for photos and videos; all four are needed, otherwise
+	// media is off.
+	R2AccountID, R2Bucket, R2AccessKeyID, R2SecretAccessKey string
 
 	TLSCertFile string // empty: serve plain HTTP (e.g. behind a TLS proxy)
 	TLSKeyFile  string
@@ -113,6 +116,10 @@ func Load() (Config, error) {
 		MailFrom:               getenv("MAIL_FROM", "Chirpy <no-reply@mail.ponypigeon.com>"),
 		GoogleClientIDs:        splitList(os.Getenv("GOOGLE_CLIENT_IDS")),
 		FirebaseServiceAccount: os.Getenv("FIREBASE_SERVICE_ACCOUNT"),
+		R2AccountID:            os.Getenv("R2_ACCOUNT_ID"),
+		R2Bucket:               os.Getenv("R2_BUCKET"),
+		R2AccessKeyID:          os.Getenv("R2_ACCESS_KEY_ID"),
+		R2SecretAccessKey:      os.Getenv("R2_SECRET_ACCESS_KEY"),
 		TLSCertFile:            os.Getenv("TLS_CERT_FILE"),
 		TLSKeyFile:             os.Getenv("TLS_KEY_FILE"),
 		CORSOrigins:            splitList(getenv("CORS_ALLOWED_ORIGINS", "")),

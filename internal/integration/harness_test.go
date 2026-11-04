@@ -74,6 +74,7 @@ type env struct {
 	google *fakeGoogle
 	app    *app.App
 	push   *fakePush
+	r2     *fakeR2
 }
 
 // fakeGoogle accepts ID tokens registered in tokens (token -> claims).
@@ -153,7 +154,8 @@ func newEnv(t *testing.T, opts ...func(*config.Config)) *env {
 	ctx, cancel := context.WithCancel(context.Background())
 	mem, gg := &mail.Memory{}, &fakeGoogle{tokens: map[string]authsvc.GoogleClaims{}}
 	fp := &fakePush{dead: map[string]bool{}}
-	a, err := app.New(ctx, cfg, logger, app.WithMailer(mem), app.WithGoogleVerifier(gg), app.WithPushSender(fp))
+	r2 := newFakeR2(t)
+	a, err := app.New(ctx, cfg, logger, app.WithMailer(mem), app.WithGoogleVerifier(gg), app.WithPushSender(fp), app.WithMediaStorage(r2))
 	if err != nil {
 		cancel()
 		t.Fatal(err)
@@ -163,7 +165,7 @@ func newEnv(t *testing.T, opts ...func(*config.Config)) *env {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(a.Router())
-	e := &env{t: t, srv: srv, db: db, redis: rdb, cancel: cancel, mail: mem, google: gg, app: a, push: fp}
+	e := &env{t: t, srv: srv, db: db, redis: rdb, cancel: cancel, mail: mem, google: gg, app: a, push: fp, r2: r2}
 	t.Cleanup(func() {
 		srv.Close()
 		cancel()

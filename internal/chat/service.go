@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"RyanDev-21.com/Chirpy/internal/groups"
+	"RyanDev-21.com/Chirpy/internal/media"
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
 	"RyanDev-21.com/Chirpy/internal/push"
 	"RyanDev-21.com/Chirpy/internal/ws"
@@ -56,6 +58,8 @@ type ChatService interface {
 	DeleteMessage(ctx context.Context, me, msgID uuid.UUID) error
 	// SetNotifier enables push notifications for messages and reactions.
 	SetNotifier(n push.Notifier)
+	// SetMedia enables photos and videos in messages.
+	SetMedia(m MediaStore)
 	// ForgetGroup is retained for the group lifecycle hook; group messages are
 	// no longer cached.
 	ForgetGroup(ctx context.Context, groupID uuid.UUID)
@@ -76,6 +80,7 @@ type chatService struct {
 	push    Pusher
 	queue   queue.Publisher
 	notify  push.Notifier // nil: no push notifications
+	media   MediaStore    // nil: no photos/videos
 	logger  *slog.Logger
 }
 
@@ -85,8 +90,11 @@ func NewChatService(repo ChatRepo, cache Cache, groups GroupMembership, friends 
 
 func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InCommingMessage) (uuid.UUID, error) {
 	in.Content = strings.TrimSpace(in.Content)
-	if n := utf8.RuneCountInString(in.Content); n == 0 || n > maxMessageLen {
+	if n := utf8.RuneCountInString(in.Content); (n == 0 && len(in.Media) == 0) || n > maxMessageLen {
 		return uuid.Nil, ErrEmptyMessage
+	}
+	if len(in.Media) > 0 && s.media == nil {
+		return uuid.Nil, media.ErrDisabled
 	}
 	to, err := uuid.Parse(in.ToID)
 	if err != nil || to == from {
@@ -144,6 +152,19 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 		}
 	}
 
+	// media first: if the message then fails to save, the uploads are
+	// simply never shown and expire like any other
+	var attached []media.Attachment
+	if len(in.Media) > 0 {
+		chatType := TypePrivate
+		if in.Type == TypePublic {
+			chatType = TypePublic
+		}
+		if attached, err = s.media.Attach(ctx, from, in.Media, chatType, to, msgID); err != nil {
+			return uuid.Nil, err
+		}
+	}
+	msg.MsgInfo.Msg.Media = nil
 	if in.Type == TypePrivate {
 		err = s.repo.AddPrivate(ctx, msg)
 	} else {
@@ -160,6 +181,9 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 		Type:      in.Type,
 		CreatedAt: now,
 	}
+	if len(attached) > 0 {
+		out.Media = attached
+	}
 	if in.Type == TypePublic {
 		out.GroupID = to.String()
 	}
@@ -167,7 +191,7 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 		s.logger.WarnContext(ctx, "failed to push message", "error", err)
 	}
 	if s.notify != nil {
-		j := push.Job{Kind: push.KindPrivate, To: targets, From: from, MsgID: msgID, Preview: in.Content}
+		j := push.Job{Kind: push.KindPrivate, To: targets, From: from, MsgID: msgID, Preview: mediaPreview(in.Content, attached)}
 		if in.Type == TypePublic {
 			j.Kind, j.Group = push.KindGroup, to
 		}
@@ -342,6 +366,12 @@ func (s *chatService) withState(ctx context.Context, kind string, me uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
+	att := map[uuid.UUID][]media.Attachment{}
+	if s.media != nil {
+		if att, err = s.media.ForMessages(ctx, ids); err != nil {
+			return nil, err
+		}
+	}
 	for i := range msgs {
 		m := &msgs[i]
 		if m.Deleted {
@@ -350,6 +380,10 @@ func (s *chatService) withState(ctx context.Context, kind string, me uuid.UUID, 
 		m.Reactions = counts[m.ID]
 		if m.Reactions == nil {
 			m.Reactions = []ReactionCount{}
+		}
+		m.Media = att[m.ID]
+		if m.Media == nil || m.Deleted {
+			m.Media = []media.Attachment{}
 		}
 	}
 	return msgs, nil
@@ -406,6 +440,11 @@ func (s *chatService) DeleteMessage(ctx context.Context, me, msgID uuid.UUID) er
 	}
 	if !ok {
 		return ErrMessageNotFound
+	}
+	if s.media != nil {
+		if err := s.media.ExpireMessage(ctx, msgID); err != nil {
+			s.logger.WarnContext(ctx, "failed to expire media of deleted message", "error", err)
+		}
 	}
 	ev := ws.OutDeletedEvent{MsgID: msgID.String(), FromID: me.String(), Type: ref.Kind}
 	if ref.Kind == TypePublic {
@@ -486,6 +525,41 @@ func (s *chatService) React(ctx context.Context, me, msgID uuid.UUID, emoji stri
 }
 
 func (s *chatService) SetNotifier(n push.Notifier) { s.notify = n }
+
+func (s *chatService) SetMedia(m MediaStore) { s.media = m }
+
+// MediaStore is implemented by *media.Service.
+type MediaStore interface {
+	Attach(ctx context.Context, owner uuid.UUID, ids []uuid.UUID, chatType string, chatID, msgID uuid.UUID) ([]media.Attachment, error)
+	ForMessages(ctx context.Context, msgIDs []uuid.UUID) (map[uuid.UUID][]media.Attachment, error)
+	ExpireMessage(ctx context.Context, msgID uuid.UUID) error
+}
+
+// mediaPreview is the push text for a message: its text, or what it carries.
+func mediaPreview(text string, att []media.Attachment) string {
+	if text != "" || len(att) == 0 {
+		return text
+	}
+	photos, videos := 0, 0
+	for _, a := range att {
+		if a.Kind == "video" {
+			videos++
+		} else {
+			photos++
+		}
+	}
+	switch {
+	case videos == 0 && photos == 1:
+		return "📷 Photo"
+	case photos == 0 && videos == 1:
+		return "🎥 Video"
+	case videos == 0:
+		return fmt.Sprintf("📷 %d photos", photos)
+	case photos == 0:
+		return fmt.Sprintf("🎥 %d videos", videos)
+	}
+	return fmt.Sprintf("📎 %d files", photos+videos)
+}
 
 func (s *chatService) Unreact(ctx context.Context, me, msgID uuid.UUID) error {
 	ref, others, err := s.authorizeMessage(ctx, me, msgID, false)

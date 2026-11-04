@@ -72,6 +72,28 @@ type Groupmessage struct {
 	EditedAt  pgtype.Timestamp
 }
 
+type MediaDownload struct {
+	MediaID uuid.UUID
+	UserID  uuid.UUID
+}
+
+type Medium struct {
+	ID           uuid.UUID
+	OwnerID      pgtype.UUID
+	Kind         string
+	ContentType  string
+	Size         int64
+	Status       string
+	ChatType     pgtype.Text
+	ChatID       pgtype.UUID
+	MessageID    pgtype.UUID
+	CreatedAt    pgtype.Timestamp
+	ExpiresAt    pgtype.Timestamp
+	DeliveredAt  pgtype.Timestamp
+	LastAccessAt pgtype.Timestamp
+	DeletedAt    pgtype.Timestamp
+}
+
 type MemberTable struct {
 	ID       uuid.UUID
 	GroupID  uuid.UUID
