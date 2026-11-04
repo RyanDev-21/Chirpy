@@ -40,10 +40,11 @@ services:
             value: 2m
           - key: REDIS_POOL_SIZE
             value: "10"
-          # Render's load balancer is one proxy: the client IP is the last
-          # X-Forwarded-For entry
+          # requests pass Cloudflare's edge, then Render: two public proxies
+          # (Render's internal 10.x hops are skipped automatically). Checked
+          # with a tagged request: 1 resolved to a Cloudflare address.
           - key: TRUSTED_PROXIES
-            value: "1"
+            value: "2"
           - key: LOG_FORMAT
             value: json
           - key: LOG_LEVEL

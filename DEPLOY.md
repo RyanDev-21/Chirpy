@@ -67,7 +67,7 @@ Render service.
 | `QUEUE_BACKEND` | `memory` | Upstash bills per command; idle stream polling alone would exceed 500K/month. Only seen receipts and UI config are queued, so losing them on a restart is harmless. |
 | `DB_MAX_CONNS` | `5` | Small pool for a small database. |
 | `DB_MAX_IDLE_TIME` | `2m` | Close idle connections so Neon can scale to zero. |
-| `TRUSTED_PROXIES` | `1` | One public proxy (Render's edge) in front of the app. Render also adds internal `10.x` load-balancer hops after the client's address; private/internal hops are always skipped, so the client IP is the last *public* `X-Forwarded-For` entry. Without it every anonymous user shares one rate-limit budget. |
+| `TRUSTED_PROXIES` | `2` | Requests pass Cloudflare's edge (Render's CDN) and then Render: two public proxies. Render's internal `10.x` hops are skipped automatically. With `1` the server would see Cloudflare's address for everyone, and all anonymous users would share one rate-limit budget. To check: send a request with a unique `X-Request-Id` and compare its `client_ip` in Render's logs with `curl -4 ifconfig.me`. |
 
 ## Email (Resend) and Google sign-in
 
@@ -107,7 +107,8 @@ running the app, Postgres and Redis with Docker Compose:
 - set `QUEUE_BACKEND=redis` (durable queue; no per-command billing)
 - run Postgres with a daily `pg_dump` backup copied off the machine
 - put Caddy in front for automatic HTTPS on `api.ponypigeon.com`, and keep
-  `TRUSTED_PROXIES=1` (Caddy appends the client IP to `X-Forwarded-For`)
+  `TRUSTED_PROXIES=1` (Caddy is then the only public proxy; it appends the
+  client IP to `X-Forwarded-For`)
 - keep monitoring on Grafana Cloud's free tier rather than self-hosting
   Prometheus/Loki/Grafana on a small server
 
