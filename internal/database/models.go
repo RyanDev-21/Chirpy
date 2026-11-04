@@ -30,11 +30,6 @@ type Chirp struct {
 	UserID    uuid.UUID
 }
 
-type Eleconfig struct {
-	UserID uuid.UUID
-	Pref   []byte
-}
-
 type EmailCode struct {
 	UserID    uuid.UUID
 	Purpose   string

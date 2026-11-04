@@ -52,8 +52,6 @@ func TestProtectedRoutesRequireAuth(t *testing.T) {
 		{"DELETE", "/api/friends/requests/00000000-0000-0000-0000-000000000000"},
 		{"GET", "/api/users/search?q=a"},
 		{"POST", "/api/users/password"},
-		{"GET", "/api/users/configs"},
-		{"POST", "/api/users/configs"},
 		{"POST", "/api/chats/groups"},
 		{"GET", "/api/chats/groups"},
 		{"GET", "/api/chats/groups/00000000-0000-0000-0000-000000000000"},
@@ -263,25 +261,6 @@ func TestGroups(t *testing.T) {
 	e.expect(e.do("DELETE", members, member.Token, nil), 204)
 	e.now(`SELECT current_member::text FROM chat_groups WHERE id = $1`, "1", g.ChatID)
 	e.expect(e.do("POST", "/api/chats/message", member.Token, send), 403)
-}
-
-func TestUserConfigPersists(t *testing.T) {
-	e := newEnv(t)
-	u := e.signup("cfg")
-	cfg := map[string]any{"config_list": []map[string]any{{"label": "sidebar", "config": map[string]any{"color": map[string]string{"main_color": "red"}}}}}
-	e.expect(e.do("POST", "/api/users/configs", u.Token, cfg), 201)
-	e.now(`SELECT pref->0->>'label' FROM eleconfig`, "sidebar")
-	_ = e.redis.FlushDB(context.Background())
-	r := e.expect(e.do("GET", "/api/users/configs", u.Token, nil), 200)
-	var got struct {
-		List []struct {
-			Label string `json:"label"`
-		} `json:"config_list"`
-	}
-	r.json(t, &got)
-	if len(got.List) != 1 || got.List[0].Label != "sidebar" {
-		t.Fatalf("config after cache loss = %s", r.body)
-	}
 }
 
 func TestLoginRateLimit(t *testing.T) {

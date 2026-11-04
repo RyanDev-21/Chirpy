@@ -2,7 +2,6 @@ package users
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"RyanDev-21.com/Chirpy/internal/database"
@@ -19,8 +18,6 @@ type UserRepo interface {
 	UpdateUserPassword(ctx context.Context, payload UpdateUserPassword) (*User, error)
 	RevokeAllRefreshTokens(ctx context.Context, userID uuid.UUID) error
 	SearchByName(ctx context.Context, q string) ([]PublicUser, error)
-	SaveConfig(ctx context.Context, userID uuid.UUID, list []ElementCustom) error
-	GetConfig(ctx context.Context, userID uuid.UUID) ([]ElementCustom, error)
 }
 
 type userRepo struct {
@@ -108,28 +105,4 @@ func (r *userRepo) SearchByName(ctx context.Context, q string) ([]PublicUser, er
 		out = append(out, PublicUser{ID: v.ID, Name: v.Name})
 	}
 	return out, nil
-}
-
-func (r *userRepo) SaveConfig(ctx context.Context, userID uuid.UUID, list []ElementCustom) error {
-	raw, err := json.Marshal(list)
-	if err != nil {
-		return err
-	}
-	return r.queries.SavePosition(ctx, database.SavePositionParams{UserID: userID, Column2: raw})
-}
-
-// GetConfig returns the stored config, or an empty list if none was saved.
-func (r *userRepo) GetConfig(ctx context.Context, userID uuid.UUID) ([]ElementCustom, error) {
-	raw, err := r.queries.GetAllConfigForUser(ctx, userID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return []ElementCustom{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	list := []ElementCustom{}
-	if err := json.Unmarshal(raw, &list); err != nil {
-		return nil, err
-	}
-	return list, nil
 }

@@ -12,6 +12,8 @@ var (
 	ErrDuplicateEmail = errors.New("duplicate error")
 	ErrDuplicateName  = errors.New("duplicate name error")
 	ErrInvalidInput   = errors.New("invalid input")
+	// ErrNoPassword: the account signs in with Google only
+	ErrNoPassword = errors.New("account has no password")
 )
 
 type User struct {
@@ -55,28 +57,4 @@ type PasswordUpdateStruct struct {
 
 type FoundUserListRes struct {
 	UserList []PublicUser
-}
-
-type ColorField struct {
-	MainColor     string `json:"main_color"`
-	FallBackColor string `json:"fallback_color"`
-}
-
-type PositionField struct {
-	X string `json:"x"`
-	Y string `json:"y"`
-}
-
-type EleConfig struct {
-	Color    ColorField    `json:"color"`
-	Position PositionField `json:"position"`
-}
-
-type ElementCustom struct {
-	Label  string    `json:"label"`
-	Config EleConfig `json:"config"`
-}
-
-type ConfigList struct {
-	List []ElementCustom `json:"config_list"`
 }

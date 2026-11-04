@@ -19,7 +19,6 @@ type fakeRepo struct {
 	hashes  map[uuid.UUID]string
 	revoked int
 	lookups int
-	config  []ElementCustom
 }
 
 func newFakeRepo() *fakeRepo {
@@ -54,10 +53,6 @@ func (f *fakeRepo) UpdateUserPassword(_ context.Context, p UpdateUserPassword) (
 func (f *fakeRepo) RevokeAllRefreshTokens(context.Context, uuid.UUID) error { f.revoked++; return nil }
 func (f *fakeRepo) SearchByName(context.Context, string) ([]PublicUser, error) {
 	return []PublicUser{}, nil
-}
-func (f *fakeRepo) SaveConfig(context.Context, uuid.UUID, []ElementCustom) error { return nil }
-func (f *fakeRepo) GetConfig(context.Context, uuid.UUID) ([]ElementCustom, error) {
-	return f.config, nil
 }
 
 func newSvc(t *testing.T) (UserService, *fakeRepo) {
@@ -129,27 +124,5 @@ func TestUpdatePasswordRevokesSessions(t *testing.T) {
 	}
 	if repo.revoked != 1 {
 		t.Fatalf("refresh tokens revoked %d times", repo.revoked)
-	}
-}
-
-func TestConfigCacheAndQueue(t *testing.T) {
-	svc, repo := newSvc(t)
-	ctx := context.Background()
-	id := uuid.New()
-	repo.config = []ElementCustom{{Label: "from-db"}}
-
-	got, err := svc.GetConfig(ctx, id)
-	if err != nil || len(got) != 1 || got[0].Label != "from-db" {
-		t.Fatalf("GetConfig = %v %v", got, err)
-	}
-	if err := svc.SaveConfig(ctx, id, []ElementCustom{{Label: "new"}}); err != nil {
-		t.Fatal(err)
-	}
-	got, _ = svc.GetConfig(ctx, id)
-	if got[0].Label != "new" {
-		t.Fatalf("after save: %v", got)
-	}
-	if err := svc.SaveConfig(ctx, id, make([]ElementCustom, maxConfigItems+1)); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("too many items: %v", err)
 	}
 }

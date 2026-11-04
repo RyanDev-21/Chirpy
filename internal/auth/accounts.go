@@ -32,7 +32,7 @@ const (
 	purposeVerify = "verify_email"
 	purposeReset  = "reset_password"
 
-	codeTTL         = 15 * time.Minute
+	codeTTL         = 2 * time.Minute
 	codeMaxAttempts = 5
 	// a new code is not sent more often than this per user and purpose
 	codeResendGap = time.Minute
@@ -399,9 +399,9 @@ func codeEmail(u *users.User, purpose, code string) mail.Message {
 	if purpose == purposeReset {
 		what, subject = "reset your password", "Your Chirpy password reset code"
 	}
-	text := fmt.Sprintf("Hi %s,\n\nYour code to %s is %s.\nIt expires in 15 minutes.\n\nIf you didn't ask for this, you can ignore this email.\n", u.Name, what, code)
-	html := fmt.Sprintf(`<p>Hi %s,</p><p>Your code to %s is</p><p style="font-size:28px;font-weight:bold;letter-spacing:4px">%s</p><p>It expires in 15 minutes. If you didn't ask for this, you can ignore this email.</p>`,
-		htmlEscape(u.Name), what, code)
+	text := fmt.Sprintf("Hi %s,\n\nYour code to %s is %s.\nIt expires in %d minutes.\n\nIf you didn't ask for this, you can ignore this email.\n", u.Name, what, code, int(codeTTL.Minutes()))
+	html := fmt.Sprintf(`<p>Hi %s,</p><p>Your code to %s is</p><p style="font-size:28px;font-weight:bold;letter-spacing:4px">%s</p><p>It expires in %d minutes. If you didn't ask for this, you can ignore this email.</p>`,
+		htmlEscape(u.Name), what, code, int(codeTTL.Minutes()))
 	return mail.Message{To: u.Email, Subject: subject, Text: text, HTML: html}
 }
 

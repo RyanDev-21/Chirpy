@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"time"
 
-	"RyanDev-21.com/Chirpy/internal/ai"
 	authsvc "RyanDev-21.com/Chirpy/internal/auth"
 	"RyanDev-21.com/Chirpy/internal/chat"
 	"RyanDev-21.com/Chirpy/internal/config"
@@ -26,7 +25,6 @@ import (
 	"RyanDev-21.com/Chirpy/internal/ws"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
-	"google.golang.org/genai"
 )
 
 // App holds every long-lived dependency of the server.
@@ -57,7 +55,6 @@ type handlers struct {
 	account *authsvc.AccountHandler
 	chat    *chat.ChatHandler
 	groups  *groups.GroupHandler
-	ai      *ai.Handler // nil when no Gemini key is configured
 	admin   *adminHandler
 }
 
@@ -177,16 +174,6 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		chat:    chat.NewChatHandler(a.chat, a.hub, ws.Upgrader(cfg.CORSOrigins), logger),
 		groups:  groups.NewGroupHandler(a.groups),
 		admin:   &adminHandler{queries: queries},
-	}
-	if cfg.GeminiAPIKey != "" {
-		client, err := genai.NewClient(ctx, &genai.ClientConfig{APIKey: cfg.GeminiAPIKey})
-		if err != nil {
-			a.Close()
-			return nil, fmt.Errorf("create gemini client: %w", err)
-		}
-		a.handlers.ai = ai.NewGenAIHandler(ai.NewAiService(client, logger))
-	} else {
-		logger.Warn("GEMINI_API_KEY not set, AI routes disabled")
 	}
 	return a, nil
 }
