@@ -28,7 +28,26 @@ const (
 	EventDeleted   = "MsgDeleted"
 	EventGroupUpd  = "GroupUpdated"
 	EventGroupGone = "GroupRemoved"
+	EventGroupRead = "GroupRead"
+	EventPresence  = "Presence"
 )
+
+// OutGroupReadEvent: user_id has read group_id up to msg_id (groups of up
+// to 50 members only).
+type OutGroupReadEvent struct {
+	GroupID string `json:"group_id"`
+	UserID  string `json:"user_id"`
+	MsgID   string `json:"msg_id"`
+}
+
+// OutPresenceEvent: a friend came online or went offline. Hidden means
+// they (or you) hide last seen; online and last_seen_at are then absent.
+type OutPresenceEvent struct {
+	UserID     string     `json:"user_id"`
+	Online     bool       `json:"online"`
+	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
+	Hidden     bool       `json:"hidden,omitempty"`
+}
 
 // InCommingEvent is the envelope clients send over the socket.
 type InCommingEvent struct {

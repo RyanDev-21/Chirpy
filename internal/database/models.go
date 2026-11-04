@@ -205,6 +205,7 @@ type User struct {
 	BanReason       pgtype.Text
 	LastSeenAt      pgtype.Timestamp
 	DisplayName     string
+	HideLastSeen    bool
 }
 
 type UserAvatar struct {

@@ -57,6 +57,9 @@ type User struct {
 	Interests *[]string `json:"interests,omitempty"`
 	// Discoverable: shown to others in "people you may know".
 	Discoverable bool `json:"discoverable"`
+	// HideLastSeen: friends see neither online nor last seen (and you
+	// don't see theirs). Change it with PUT /api/users/me/privacy.
+	HideLastSeen bool `json:"hide_last_seen"`
 	// IsAdmin is never sent to clients; it gates the admin page.
 	IsAdmin bool `json:"-"`
 }

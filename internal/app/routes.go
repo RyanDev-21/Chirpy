@@ -114,6 +114,7 @@ func (a *App) Router() http.Handler {
 
 			r.Get("/users/me", a.handlers.users.Me)
 			r.With(limit(limitAccount)).Patch("/users/me", a.handlers.users.UpdateMe)
+			r.With(limit(limitAccount)).Put("/users/me/privacy", a.handlers.presence.SetPrivacy)
 			r.With(limit(limitAccount)).Post("/users/me/logout-all", a.handlers.users.LogoutAll)
 			r.With(limit(limitAccount)).Delete("/users/me", a.handlers.account.DeleteAccount)
 			r.With(limit(limitPassword)).Post("/users/password", a.handlers.users.UpdatePassword)
@@ -146,6 +147,7 @@ func (a *App) Router() http.Handler {
 
 			r.Route("/friends", func(r chi.Router) {
 				r.Get("/", a.handlers.friends.List)
+				r.Get("/presence", a.handlers.presence.Friends)
 				r.Get("/requests", a.handlers.friends.Requests)
 				r.With(limit(limitFriendRq)).Post("/requests", a.handlers.friends.Send)
 				r.With(limit(limitFriendUp)).Put("/requests/{request_id}", a.handlers.friends.Update)
@@ -180,6 +182,7 @@ func (a *App) Router() http.Handler {
 				r.With(limit(limitReact)).Put("/messages/{msg_id}/reaction", a.handlers.chat.React)
 				r.With(limit(limitReact)).Delete("/messages/{msg_id}/reaction", a.handlers.chat.Unreact)
 				r.Get("/messages/{msg_id}/reactions", a.handlers.chat.Reactors)
+				r.Get("/messages/{msg_id}/read-by", a.handlers.chat.ReadBy)
 				r.With(limit(limitEdit)).Patch("/messages/{msg_id}", a.handlers.chat.EditMessage)
 				r.With(limit(limitEdit)).Delete("/messages/{msg_id}", a.handlers.chat.DeleteMessage)
 			})

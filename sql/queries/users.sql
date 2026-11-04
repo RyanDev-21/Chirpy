@@ -102,3 +102,9 @@ UPDATE users SET display_name = @display_name, updated_at = NOW() WHERE id = @id
 
 -- name: GetDisplayName :one
 SELECT CASE WHEN display_name = '' THEN name ELSE display_name END::text FROM users WHERE id = $1;
+
+-- name: SetHideLastSeen :exec
+UPDATE users SET hide_last_seen = @hide, updated_at = NOW() WHERE id = @id;
+
+-- name: PresenceOf :many
+SELECT id, last_seen_at, hide_last_seen FROM users WHERE id = ANY(@ids::uuid[]);

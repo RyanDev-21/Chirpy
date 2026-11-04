@@ -142,3 +142,27 @@ func TestTypingIsThrottledPerChat(t *testing.T) {
 		t.Fatal("after the interval typing passes again")
 	}
 }
+
+func TestPresenceHookFirstAndLastDevice(t *testing.T) {
+	h := NewHub(slog.New(slog.DiscardHandler))
+	got := make(chan bool, 10)
+	h.OnPresence(func(_ uuid.UUID, online bool) { got <- online })
+	go h.Run()
+	phone := newTestClient(h, 4)
+	tablet := &Client{Hub: h, Send: make(chan []byte, 4), UserID: phone.UserID}
+	register(t, h, phone)
+	h.Register <- tablet
+	if v := <-got; !v {
+		t.Fatal("first device should report online")
+	}
+	h.Unregister <- phone
+	h.Unregister <- tablet
+	if v := <-got; v {
+		t.Fatal("last device leaving should report offline")
+	}
+	select {
+	case v := <-got:
+		t.Fatalf("extra presence change %v", v)
+	case <-time.After(50 * time.Millisecond):
+	}
+}

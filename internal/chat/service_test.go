@@ -43,8 +43,16 @@ func (f *fakeRepo) GroupBefore(context.Context, uuid.UUID, uuid.UUID, int) ([]Me
 	f.beforeCalls++
 	return nil, nil
 }
-func (f *fakeRepo) MarkGroupRead(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error { return nil }
-func (f *fakeRepo) Conversations(context.Context, uuid.UUID) ([]Conversation, error)     { return nil, nil }
+func (f *fakeRepo) MarkGroupRead(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error) {
+	return true, nil
+}
+func (f *fakeRepo) RecentGroupSenders(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
+func (f *fakeRepo) GroupReadBy(context.Context, messageRef, uuid.UUID) ([]Reader, error) {
+	return []Reader{}, nil
+}
+func (f *fakeRepo) Conversations(context.Context, uuid.UUID) ([]Conversation, error) { return nil, nil }
 func (f *fakeRepo) LocateMessage(_ context.Context, id uuid.UUID) (messageRef, error) {
 	for _, m := range f.saved {
 		if m.ID != id {
