@@ -22,6 +22,10 @@ type Hub struct {
 	clients map[uuid.UUID][]*Client // oldest first
 	logger  *slog.Logger
 	policy  EventPolicy
+	// presence, if set, is told when a user's first device connects
+	// (online) and their last one goes (offline). It runs on its own
+	// goroutine, outside the lock.
+	presence func(userID uuid.UUID, online bool)
 
 	Register   chan *Client
 	Unregister chan *Client
@@ -48,6 +52,15 @@ func (denyAll) SeenAllowed(context.Context, uuid.UUID, uuid.UUID) (bool, error) 
 
 // SetPolicy installs the event policy; call it before Run.
 func (h *Hub) SetPolicy(p EventPolicy) { h.policy = p }
+
+// OnPresence installs the online/offline hook; call it before Run.
+func (h *Hub) OnPresence(fn func(userID uuid.UUID, online bool)) { h.presence = fn }
+
+func (h *Hub) changed(userID uuid.UUID, online bool) {
+	if h.presence != nil {
+		go h.presence(userID, online)
+	}
+}
 
 var ErrNoClientFound = errors.New("no client exist")
 
@@ -87,6 +100,7 @@ func (h *Hub) Run() {
 		select {
 		case client := <-h.Register:
 			h.mu.Lock()
+			first := len(h.clients[client.UserID]) == 0
 			list := append(h.clients[client.UserID], client)
 			if len(list) > MaxDevices {
 				// too many devices: the oldest connection goes
@@ -95,6 +109,9 @@ func (h *Hub) Run() {
 			}
 			h.clients[client.UserID] = list
 			h.mu.Unlock()
+			if first {
+				h.changed(client.UserID, true)
+			}
 
 		case client := <-h.Unregister:
 			h.remove(client)
@@ -120,11 +137,15 @@ func (h *Hub) Online(userID uuid.UUID) bool {
 // signed out everywhere).
 func (h *Hub) Disconnect(userID uuid.UUID) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	for _, c := range h.clients[userID] {
+	list := h.clients[userID]
+	for _, c := range list {
 		close(c.Send)
 	}
 	delete(h.clients, userID)
+	h.mu.Unlock()
+	if len(list) > 0 {
+		h.changed(userID, false)
+	}
 }
 
 // remove drops one connection if it is still registered (closing its
@@ -139,6 +160,7 @@ func (h *Hub) remove(client *Client) {
 			list = append(list[:i:i], list[i+1:]...)
 			if len(list) == 0 {
 				delete(h.clients, client.UserID)
+				h.changed(client.UserID, false) // async: safe under the lock
 			} else {
 				h.clients[client.UserID] = list
 			}

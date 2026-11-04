@@ -31,7 +31,13 @@ type ChatRepo interface {
 	// chronological order; ErrBadCursor if it isn't in that chat.
 	PrivateBefore(ctx context.Context, a, b, before uuid.UUID, n int) ([]MessageMetaDataRes, error)
 	GroupBefore(ctx context.Context, groupID, before uuid.UUID, n int) ([]MessageMetaDataRes, error)
-	MarkGroupRead(ctx context.Context, groupID, userID, msgID uuid.UUID) error
+	// MarkGroupRead reports whether the marker moved forward.
+	MarkGroupRead(ctx context.Context, groupID, userID, msgID uuid.UUID) (bool, error)
+	// GroupReadBy lists current members, other than the sender, who have
+	// read up to (or past) the message.
+	GroupReadBy(ctx context.Context, ref messageRef, msgID uuid.UUID) ([]Reader, error)
+	// RecentGroupSenders: who sent the last 50 messages up to msgID.
+	RecentGroupSenders(ctx context.Context, groupID, msgID uuid.UUID) ([]uuid.UUID, error)
 	Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error)
 
 	// LocateMessage finds which chat a message belongs to (ErrMessageNotFound).
@@ -236,14 +242,32 @@ func (r *chatRepo) GroupBefore(ctx context.Context, groupID, before uuid.UUID, n
 	return out, nil
 }
 
-func (r *chatRepo) MarkGroupRead(ctx context.Context, groupID, userID, msgID uuid.UUID) error {
+func (r *chatRepo) MarkGroupRead(ctx context.Context, groupID, userID, msgID uuid.UUID) (bool, error) {
 	if _, err := r.q.GroupMessageCursor(ctx, database.GroupMessageCursorParams{ID: msgID, GroupID: pgUUID(groupID)}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrMessageNotInChat
+			return false, ErrMessageNotInChat
 		}
-		return err
+		return false, err
 	}
-	return r.q.MarkGroupRead(ctx, database.MarkGroupReadParams{GroupID: groupID, UserID: userID, MessageID: msgID})
+	n, err := r.q.MarkGroupRead(ctx, database.MarkGroupReadParams{GroupID: groupID, UserID: userID, MessageID: msgID})
+	return n > 0, err
+}
+
+func (r *chatRepo) RecentGroupSenders(ctx context.Context, groupID, msgID uuid.UUID) ([]uuid.UUID, error) {
+	return r.q.RecentGroupSenders(ctx, database.RecentGroupSendersParams{GroupID: pgUUID(groupID), MsgID: msgID})
+}
+
+func (r *chatRepo) GroupReadBy(ctx context.Context, ref messageRef, msgID uuid.UUID) ([]Reader, error) {
+	rows, err := r.q.GroupReadBy(ctx, database.GroupReadByParams{GroupID: ref.Group, Sender: ref.From, MsgAt: pgTime(ref.CreatedAt), MsgID: msgID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Reader, 0, len(rows))
+	for _, x := range rows {
+		out = append(out, Reader{UserID: x.ID, Name: x.Name, DisplayName: users.ShownName(x.Name, x.DisplayName),
+			AvatarURL: users.AvatarURLFrom(x.ID, x.AvatarAt), ReadAt: x.ReadAt.Time.UTC()})
+	}
+	return out, nil
 }
 
 func lastMessage(id uuid.UUID, content pgtype.Text, from pgtype.UUID, at pgtype.Timestamp, deleted bool) *LastMessage {

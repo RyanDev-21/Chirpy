@@ -53,6 +53,9 @@ type ChatService interface {
 	React(ctx context.Context, me, msgID uuid.UUID, emoji string) error
 	Unreact(ctx context.Context, me, msgID uuid.UUID) error
 	Reactors(ctx context.Context, me, msgID uuid.UUID) ([]Reactor, error)
+	// ReadBy lists who has read the caller's own group message (groups of
+	// up to ReadByMaxMembers).
+	ReadBy(ctx context.Context, me, msgID uuid.UUID) ([]Reader, error)
 	// EditMessage changes the text of the caller's own message, within
 	// EditWindow of sending; DeleteMessage deletes it for everyone.
 	EditMessage(ctx context.Context, me, msgID uuid.UUID, content string) (EditedMessage, error)
@@ -312,14 +315,35 @@ func (s *chatService) MarkGroupRead(ctx context.Context, me, groupID uuid.UUID, 
 	if err != nil {
 		return ErrNotValidUUID
 	}
-	ok, err := s.groups.IsMember(ctx, groupID, me)
+	members, err := s.groups.Members(ctx, groupID)
 	if err != nil {
 		return err
 	}
-	if !ok {
+	if !slices.Contains(members, me) {
 		return ErrNotAuthorized
 	}
-	return s.repo.MarkGroupRead(ctx, groupID, me, msgID)
+	moved, err := s.repo.MarkGroupRead(ctx, groupID, me, msgID)
+	if err != nil || !moved || len(members) > ReadByMaxMembers {
+		return err
+	}
+	// small groups: tell the senders of recent messages (read-by is only
+	// shown to a message's sender) and my other devices, so ticks update live
+	senders, err := s.repo.RecentGroupSenders(ctx, groupID, msgID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "failed to find group senders", "error", err)
+		return nil
+	}
+	to := []uuid.UUID{me}
+	for _, id := range senders {
+		if id != me && slices.Contains(members, id) {
+			to = append(to, id)
+		}
+	}
+	ev := ws.OutGroupReadEvent{GroupID: groupID.String(), UserID: me.String(), MsgID: msgID.String()}
+	if err := s.push.WriteToUsers(to, ws.Event{Event: ws.EventGroupRead, Payload: ev}); err != nil {
+		s.logger.WarnContext(ctx, "failed to push group read", "error", err)
+	}
+	return nil
 }
 
 func (s *chatService) Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error) {
@@ -627,6 +651,23 @@ func (s *chatService) Reactors(ctx context.Context, me, msgID uuid.UUID) ([]Reac
 		return nil, err
 	}
 	return s.repo.Reactors(ctx, ref.Kind, msgID)
+}
+
+func (s *chatService) ReadBy(ctx context.Context, me, msgID uuid.UUID) ([]Reader, error) {
+	ref, others, err := s.authorizeMessage(ctx, me, msgID, false)
+	if err != nil {
+		return nil, err
+	}
+	if ref.Kind != TypePublic {
+		return nil, ErrNotGroupMessage
+	}
+	if ref.From != me {
+		return nil, ErrNotYourMessage
+	}
+	if len(others)+1 > ReadByMaxMembers {
+		return nil, ErrGroupTooBig
+	}
+	return s.repo.GroupReadBy(ctx, ref, msgID)
 }
 
 // pushReaction tells the rest of the chat; emoji "" means removed.

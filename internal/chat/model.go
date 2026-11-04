@@ -35,6 +35,8 @@ var (
 	ErrMessageNotFound     = errors.New("message not found")
 	ErrNotYourMessage      = errors.New("you can only change your own messages")
 	ErrEditWindowClosed    = errors.New("messages can only be edited within 15 minutes of sending")
+	ErrNotGroupMessage     = errors.New("read-by is only for group messages")
+	ErrGroupTooBig         = errors.New("read-by is only shown in groups of up to 50 members")
 )
 
 // EditWindow is how long after sending the sender may edit a message.
@@ -101,6 +103,19 @@ type Reactor struct {
 	Emoji       string    `json:"emoji"`
 	CreatedAt   time.Time `json:"created_at"`
 }
+
+// Reader is a group member who has read a message (see ReadBy).
+type Reader struct {
+	UserID      uuid.UUID `json:"user_id"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"display_name"`
+	AvatarURL   *string   `json:"avatar_url"`
+	ReadAt      time.Time `json:"read_at"`
+}
+
+// ReadByMaxMembers: "read by" is only kept for groups up to this size, as
+// in other chat apps; bigger groups show no per-member receipts.
+const ReadByMaxMembers = 50
 
 // messageRef locates a message: a private one (between From and To) or a
 // group one (in Group). From is always the sender.

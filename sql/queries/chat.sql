@@ -64,7 +64,7 @@ WHERE id = @id AND ((from_id = @user_a AND to_id = @user_b) OR (from_id = @user_
 -- name: GroupMessageCursor :one
 SELECT created_at FROM GroupMessage WHERE id = @id AND group_id = @group_id;
 
--- name: MarkGroupRead :exec
+-- name: MarkGroupRead :execrows
 -- only moves forward: an older message never replaces a newer marker
 INSERT INTO group_reads (group_id, user_id, message_id)
 VALUES (@group_id, @user_id, @message_id)
@@ -155,3 +155,25 @@ WITH d AS (
     DELETE FROM group_message_reactions WHERE message_id IN (SELECT id FROM d)
 )
 SELECT count(*)::int FROM d;
+
+-- name: GroupReadBy :many
+-- members (not the sender) whose read marker is at or past the message
+SELECT u.id, u.name, u.display_name, u.avatar_at, r.updated_at AS read_at
+FROM group_reads r
+JOIN GroupMessage rm ON rm.id = r.message_id
+JOIN users u ON u.id = r.user_id
+JOIN member_table m ON m.group_id = r.group_id AND m.member_id = r.user_id
+WHERE r.group_id = @group_id AND r.user_id <> @sender::uuid
+  AND (rm.created_at, rm.id) >= (@msg_at::timestamp, @msg_id::uuid)
+ORDER BY r.updated_at;
+
+-- name: RecentGroupSenders :many
+-- who sent the last 50 messages up to and including msg_id: the people a
+-- read marker at msg_id gives "read" ticks to
+SELECT DISTINCT t.from_id::uuid FROM (
+  SELECT g.from_id FROM GroupMessage g
+  WHERE g.group_id = @group_id
+    AND (g.created_at, g.id) <= (SELECT m.created_at, m.id FROM GroupMessage m WHERE m.id = @msg_id::uuid)
+  ORDER BY g.created_at DESC, g.id DESC
+  LIMIT 50
+) t WHERE t.from_id IS NOT NULL;

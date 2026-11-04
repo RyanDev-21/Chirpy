@@ -331,7 +331,18 @@ type wsEvent struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
+// readEvent returns the next event, skipping friends' Presence updates
+// (background noise for most tests; see readAnyEvent).
 func readEvent(t *testing.T, conn *websocket.Conn) wsEvent {
+	t.Helper()
+	for {
+		if ev := readAnyEvent(t, conn); ev.Event != "Presence" {
+			return ev
+		}
+	}
+}
+
+func readAnyEvent(t *testing.T, conn *websocket.Conn) wsEvent {
 	t.Helper()
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_, raw, err := conn.ReadMessage()
