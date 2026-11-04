@@ -437,6 +437,64 @@ func (q *Queries) GroupMessageInGroup(ctx context.Context, arg GroupMessageInGro
 	return exists, err
 }
 
+const groupReadBy = `-- name: GroupReadBy :many
+SELECT u.id, u.name, u.display_name, u.avatar_at, r.updated_at AS read_at
+FROM group_reads r
+JOIN GroupMessage rm ON rm.id = r.message_id
+JOIN users u ON u.id = r.user_id
+JOIN member_table m ON m.group_id = r.group_id AND m.member_id = r.user_id
+WHERE r.group_id = $1 AND r.user_id <> $2::uuid
+  AND (rm.created_at, rm.id) >= ($3::timestamp, $4::uuid)
+ORDER BY r.updated_at
+`
+
+type GroupReadByParams struct {
+	GroupID uuid.UUID
+	Sender  uuid.UUID
+	MsgAt   pgtype.Timestamp
+	MsgID   uuid.UUID
+}
+
+type GroupReadByRow struct {
+	ID          uuid.UUID
+	Name        string
+	DisplayName string
+	AvatarAt    pgtype.Timestamp
+	ReadAt      pgtype.Timestamp
+}
+
+// members (not the sender) whose read marker is at or past the message
+func (q *Queries) GroupReadBy(ctx context.Context, arg GroupReadByParams) ([]GroupReadByRow, error) {
+	rows, err := q.db.Query(ctx, groupReadBy,
+		arg.GroupID,
+		arg.Sender,
+		arg.MsgAt,
+		arg.MsgID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GroupReadByRow
+	for rows.Next() {
+		var i GroupReadByRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.DisplayName,
+			&i.AvatarAt,
+			&i.ReadAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGroupConversations = `-- name: ListGroupConversations :many
 SELECT g.id AS group_id, g.name AS group_name,
        -- zero uuid when the group has no messages yet (last_at is then NULL)
@@ -578,7 +636,7 @@ func (q *Queries) ListPrivateConversations(ctx context.Context, me uuid.UUID) ([
 	return items, nil
 }
 
-const markGroupRead = `-- name: MarkGroupRead :exec
+const markGroupRead = `-- name: MarkGroupRead :execrows
 INSERT INTO group_reads (group_id, user_id, message_id)
 VALUES ($1, $2, $3)
 ON CONFLICT (group_id, user_id) DO UPDATE SET message_id = EXCLUDED.message_id, updated_at = NOW()
@@ -593,9 +651,12 @@ type MarkGroupReadParams struct {
 }
 
 // only moves forward: an older message never replaces a newer marker
-func (q *Queries) MarkGroupRead(ctx context.Context, arg MarkGroupReadParams) error {
-	_, err := q.db.Exec(ctx, markGroupRead, arg.GroupID, arg.UserID, arg.MessageID)
-	return err
+func (q *Queries) MarkGroupRead(ctx context.Context, arg MarkGroupReadParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markGroupRead, arg.GroupID, arg.UserID, arg.MessageID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const privateMessageCursor = `-- name: PrivateMessageCursor :one
@@ -636,4 +697,41 @@ func (q *Queries) PrivateMessageInChat(ctx context.Context, arg PrivateMessageIn
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const recentGroupSenders = `-- name: RecentGroupSenders :many
+SELECT DISTINCT t.from_id::uuid FROM (
+  SELECT g.from_id FROM GroupMessage g
+  WHERE g.group_id = $1
+    AND (g.created_at, g.id) <= (SELECT m.created_at, m.id FROM GroupMessage m WHERE m.id = $2::uuid)
+  ORDER BY g.created_at DESC, g.id DESC
+  LIMIT 50
+) t WHERE t.from_id IS NOT NULL
+`
+
+type RecentGroupSendersParams struct {
+	GroupID pgtype.UUID
+	MsgID   uuid.UUID
+}
+
+// who sent the last 50 messages up to and including msg_id: the people a
+// read marker at msg_id gives "read" ticks to
+func (q *Queries) RecentGroupSenders(ctx context.Context, arg RecentGroupSendersParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, recentGroupSenders, arg.GroupID, arg.MsgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var t_from_id uuid.UUID
+		if err := rows.Scan(&t_from_id); err != nil {
+			return nil, err
+		}
+		items = append(items, t_from_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

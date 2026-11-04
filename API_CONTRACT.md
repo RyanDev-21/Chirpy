@@ -217,7 +217,7 @@ exists.
 {"id":"uuid","name":"alice","email":"alice@example.com","email_verified":true,
  "bio":"hello","name_change_available_at":null,"avatar_url":null,
  "location":{"id":"th-bangkok","name":"Bangkok","country":"th"},
- "interests":["gaming","kpop"],"discoverable":false,
+ "interests":["gaming","kpop"],"discoverable":false,"hide_last_seen":false,
  "created_at":"…","updated_at":"…","is_chirpy_red":false}
 ```
 
@@ -407,6 +407,33 @@ All friend endpoints require authentication.
 ```json
 {"id_list":[{"user_id":"uuid","name":"bob","display_name":"Bob","avatar_url":null}]}
 ```
+
+### Online and last seen
+
+`GET /api/friends/presence` → `200`:
+
+```json
+{"hide_last_seen":false,
+ "friends":[{"user_id":"uuid","online":true,"last_seen_at":null,"hidden":false},
+            {"user_id":"uuid","online":false,"last_seen_at":"2026-11-05T09:12:00Z","hidden":false},
+            {"user_id":"uuid","online":false,"last_seen_at":null,"hidden":true}]}
+```
+
+Only friends are listed (strangers and blocked users see nothing). "Online"
+means the app has a live WebSocket. `last_seen_at` is set only when the
+friend is offline (it can be `null` for accounts that never connected).
+Fetch this when the friends or chat list opens, then follow `Presence`
+events. A disconnect is announced only after 5 seconds, so a quick reconnect
+(network switch) doesn't flash "offline".
+
+`hidden: true` means that friend hides their last seen, **or you hide
+yours** (it works both ways, as in WhatsApp): show nothing then, neither
+"online" nor a time.
+
+Turn it on or off: `PUT /api/users/me/privacy` `{"hide_last_seen":true}` →
+`200 {"hide_last_seen":true}` (`400` if not a boolean; 10/minute). Online
+friends get a `Presence` event right away. After turning it **off**, refetch
+`GET /api/friends/presence`, since you can see others again.
 
 ### List pending requests
 
@@ -697,6 +724,25 @@ group, for unread counts. Markers only move forward: sending an older id is
 accepted but changes nothing. Members only (`403`); an id from another chat
 is `400`.
 
+In groups of up to 50 members, moving your marker sends `GroupRead` to the
+people who sent the last 50 messages up to it (and to your other devices),
+so their "read by" ticks update live.
+
+### Who read my group message
+
+`GET /api/chat/messages/{msg_id}/read-by` → `200`:
+
+```json
+{"read_by":[{"user_id":"uuid","name":"annie","display_name":"Annie","avatar_url":null,"read_at":"…"}]}
+```
+
+Current members (not you) whose marker is at or past that message, in the
+order they read. Only for **your own** messages (`403` otherwise) in groups
+of up to 50 members (`400` for bigger groups and for private messages; use
+`Seen` there). `404` if you aren't in that chat. Show ✓✓ when everyone else
+in the group is in the list. Read markers are only sent when the app calls
+the endpoint above, so mark the newest visible message as the chat scrolls.
+
 ### Conversation list
 
 `GET /api/chats` → `200`:
@@ -751,7 +797,8 @@ uploads get `507` for a while.
 ### Sending
 
 1. `POST /api/media` with `{"kind":"image","content_type":"image/jpeg","size":123456}`
-   (size in bytes, exact) → `201`:
+   (size in bytes, exact; optionally `"width"`, `"height"`, and for videos
+   `"duration_ms"`, up to 65 000) → `201`:
    ```json
    {"media_id":"uuid","upload_url":"https://…","method":"PUT",
     "headers":{"Content-Type":"image/jpeg","If-None-Match":"*"},"expires_in":600}
@@ -767,7 +814,8 @@ uploads get `507` for a while.
 ### Receiving
 
 - History messages and the `msg` WebSocket event carry
-  `"media":[{"id":"…","kind":"image","content_type":"image/jpeg","size":123456,"expires_at":"…","expired":false}]`
+  `"media":[{"id":"…","kind":"video","content_type":"video/mp4","size":123456,"expires_at":"…","expired":false,"duration_ms":42000,"width":1280,"height":720,"thumbnail":true}]`
+  (`duration_ms`/`width`/`height` only if the sender's app sent them)
   (an empty list when there is none; omitted from the event).
 - `GET /api/media/{media_id}` → `200 {"url":"https://…","content_type":"…","size":…,"expires_in":300}`;
   download from `url` within 5 minutes (no auth header needed on that link;
@@ -775,6 +823,15 @@ uploads get `507` for a while.
   are told to save the file, not display it.
   Only the two people in the private chat, or group members, may (`404`
   otherwise).
+- **Video thumbnails:** after uploading a video, the sending app extracts a
+  still frame and sends it: `PUT /api/media/{media_id}/thumbnail` with the
+  image as the body (JPEG, PNG or WebP, at most 2 MB) → `204`. The server
+  shrinks it to at most 480 px, keeps the shape and removes metadata. Only
+  for your own videos (`404`), once per video (`409`), 20 per minute.
+  Recipients get it with `GET /api/media/{media_id}/thumbnail` → `200 {"url":…}`
+  (same access rules as the video; it doesn't count as a download), so the
+  chat can show the still, a ▶️ and the length before anyone downloads the
+  video. It's deleted with the video.
 - **Save the file on the phone.** The server keeps it only **24 hours after
   everyone in the chat has downloaded it**, and never longer than **7 days**
   (in groups over 50 members, just the 7 days). After that `GET` returns `410`
@@ -840,8 +897,13 @@ Every WebSocket message is an envelope:
 {"event":"<event-name>","payload":{}}
 ```
 
-Only one live connection is retained per user; a newer connection replaces the
-older one. Clients should handle reconnects and reload missed history using the
+A user can be connected from up to **5 devices** at once (phone, tablet…);
+a 6th connection closes their oldest. **Every device receives every event**,
+including your own actions from another device: `msg`, `MsgEdited`,
+`MsgDeleted` and `Reaction` come back to the sender's devices too (the device
+that acted can ignore events it already has, by id). Private `msg` events
+carry `to_id`, so your other devices know which chat a message you sent
+belongs to. Clients should handle reconnects and reload missed history using the
 REST endpoints. The server sends WebSocket text messages and periodic ping
 frames, and closes connections that stop answering pings for 60 seconds.
 A client message larger than 4096 bytes **closes the connection**. A failed
@@ -863,6 +925,8 @@ upgrade (no or bad token) returns `401` JSON instead of switching protocols.
 | `MsgDeleted` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…"}`: show the placeholder and drop its reactions |
 | `GroupUpdated` | `{"group_id":"…","change":"info|leader|members","user_id":"…"}`: `info` = name/description changed; `leader` = `user_id` is the new leader; `members` = `user_id` was removed. Refetch the group |
 | `GroupRemoved` | `{"group_id":"…","reason":"kicked|deleted"}`: you are no longer in that group; drop it from the list |
+| `GroupRead` | `{"group_id":"…","user_id":"uuid","msg_id":"…"}`: `user_id` has read the group up to `msg_id` (and everything before it). Groups of up to 50 only |
+| `Presence` | `{"user_id":"uuid","online":true}`, `{"user_id":"uuid","online":false,"last_seen_at":"…"}`, or `{"user_id":"uuid","online":false,"hidden":true}`: a friend came online, went offline, or hid their last seen. Ignore it while you hide yours |
 
 `msg`, `AddFri`, `AcceptFri`, and `DenyFri` are generated by backend actions.
 The event payloads for friend accept/deny follow the same shape, although the

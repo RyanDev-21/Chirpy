@@ -28,6 +28,7 @@ import (
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
 	"RyanDev-21.com/Chirpy/internal/platform/redisx"
 	"RyanDev-21.com/Chirpy/internal/platform/revoke"
+	"RyanDev-21.com/Chirpy/internal/presence"
 	"RyanDev-21.com/Chirpy/internal/push"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/internal/ws"
@@ -74,6 +75,7 @@ type handlers struct {
 	admin2   *admin.Handler
 	reports  *reports.Handler
 	media    *media.Handler
+	presence *presence.Handler
 }
 
 // New connects to Postgres and Redis and builds all services.
@@ -179,6 +181,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	a.groups = groups.NewGroupService(groups.NewGroupRepo(db), groups.NewStore(rdb), a.hub, logger)
 	a.chat = chat.NewChatService(chat.NewChatRepo(queries), chat.NewCache(rdb), a.groups, a.friends, a.hub, a.queue, logger)
 	a.hub.SetPolicy(a.chat)
+	presenceSvc := presence.NewService(queries, a.friends, a.hub, logger)
+	a.hub.OnPresence(presenceSvc.Changed)
 	a.groups.OnDelete(a.chat.ForgetGroup)
 	a.users.OnRename(a.friends.ForgetNames)
 
@@ -252,6 +256,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 			logger.WarnContext(ctx, "failed to invalidate group cache", "error", err)
 		}
 	}, logger)
+	a.admin.OnBanChange(a.chat.BansChanged)
 
 	a.handlers = handlers{
 		users:    users.NewUserHandler(a.users),
@@ -266,6 +271,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		admin2:   admin.NewHandler(a.admin),
 		reports:  reports.NewHandler(reports.NewService(db, logger)),
 		media:    media.NewHandler(a.media),
+		presence: presence.NewHandler(presenceSvc),
 	}
 	return a, nil
 }

@@ -38,6 +38,7 @@ type Service struct {
 	q       *database.Queries
 	ender   SessionEnder
 	changed func(ctx context.Context, groupID uuid.UUID) // drops cached group state
+	onBan   []func(ctx context.Context, userID uuid.UUID)
 	logger  *slog.Logger
 	now     func() time.Time
 }
@@ -265,6 +266,7 @@ func (s *Service) Ban(ctx context.Context, admin, target uuid.UUID, reason strin
 		detail = "until " + until.UTC().Format(time.RFC3339) + ": " + reason
 	}
 	s.Log(ctx, admin, "ban", target, uuid.Nil, detail)
+	s.bansChanged(ctx, target)
 	return nil
 }
 
@@ -318,6 +320,7 @@ func (s *Service) Unban(ctx context.Context, admin, target uuid.UUID) error {
 		return ErrNotBanned
 	}
 	s.Log(ctx, admin, "unban", target, uuid.Nil, "")
+	s.bansChanged(ctx, target)
 	return nil
 }
 
@@ -332,6 +335,7 @@ func (s *Service) LiftExpired(ctx context.Context) (int, error) {
 			return 0, err
 		}
 		s.Log(ctx, uuid.Nil, "ban_expired", id, uuid.Nil, "")
+		s.bansChanged(ctx, id)
 	}
 	return len(ids), nil
 }
@@ -503,4 +507,16 @@ const reportRetention = 180 * 24 * time.Hour
 // PurgeOldReports runs in the hourly cleanup.
 func (s *Service) PurgeOldReports(ctx context.Context) (int64, error) {
 	return s.q.DeleteOldClosedReports(ctx, ts(s.now().Add(-reportRetention)))
+}
+
+// OnBanChange registers code to run after a ban starts or ends (the chat
+// service refreshes which senders it hides).
+func (s *Service) OnBanChange(fn func(ctx context.Context, userID uuid.UUID)) {
+	s.onBan = append(s.onBan, fn)
+}
+
+func (s *Service) bansChanged(ctx context.Context, id uuid.UUID) {
+	for _, fn := range s.onBan {
+		fn(ctx, id)
+	}
 }

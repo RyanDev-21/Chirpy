@@ -52,8 +52,9 @@ func (q *Queries) CountMediaDownloads(ctx context.Context, mediaID uuid.UUID) (i
 }
 
 const createMedia = `-- name: CreateMedia :exec
-INSERT INTO media (id, owner_id, kind, content_type, size, created_at, expires_at, last_access_at)
-VALUES ($1, $2, $3, $4, $5, $6::timestamp, $7::timestamp, $6::timestamp)
+INSERT INTO media (id, owner_id, kind, content_type, size, created_at, expires_at, last_access_at, duration_ms, width, height)
+VALUES ($1, $2, $3, $4, $5, $6::timestamp, $7::timestamp, $6::timestamp,
+        $8, $9, $10)
 `
 
 type CreateMediaParams struct {
@@ -64,6 +65,9 @@ type CreateMediaParams struct {
 	Size        int64
 	Now         pgtype.Timestamp
 	ExpiresAt   pgtype.Timestamp
+	DurationMs  pgtype.Int4
+	Width       pgtype.Int4
+	Height      pgtype.Int4
 }
 
 func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) error {
@@ -75,6 +79,9 @@ func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) error 
 		arg.Size,
 		arg.Now,
 		arg.ExpiresAt,
+		arg.DurationMs,
+		arg.Width,
+		arg.Height,
 	)
 	return err
 }
@@ -111,7 +118,7 @@ func (q *Queries) ExpireMediaOfMessage(ctx context.Context, arg ExpireMediaOfMes
 }
 
 const getMedia = `-- name: GetMedia :one
-SELECT id, owner_id, kind, content_type, size, status, chat_type, chat_id, message_id, created_at, expires_at, delivered_at, last_access_at, deleted_at FROM media WHERE id = $1
+SELECT id, owner_id, kind, content_type, size, status, chat_type, chat_id, message_id, created_at, expires_at, delivered_at, last_access_at, deleted_at, duration_ms, width, height, has_thumbnail FROM media WHERE id = $1
 `
 
 func (q *Queries) GetMedia(ctx context.Context, id uuid.UUID) (Medium, error) {
@@ -132,6 +139,10 @@ func (q *Queries) GetMedia(ctx context.Context, id uuid.UUID) (Medium, error) {
 		&i.DeliveredAt,
 		&i.LastAccessAt,
 		&i.DeletedAt,
+		&i.DurationMs,
+		&i.Width,
+		&i.Height,
+		&i.HasThumbnail,
 	)
 	return i, err
 }
@@ -194,18 +205,22 @@ func (q *Queries) MarkMediaDelivered(ctx context.Context, arg MarkMediaDelivered
 }
 
 const mediaForMessages = `-- name: MediaForMessages :many
-SELECT id, message_id, kind, content_type, size, expires_at, deleted_at FROM media
+SELECT id, message_id, kind, content_type, size, expires_at, deleted_at, duration_ms, width, height, has_thumbnail FROM media
 WHERE message_id = ANY($1::uuid[]) ORDER BY created_at, id
 `
 
 type MediaForMessagesRow struct {
-	ID          uuid.UUID
-	MessageID   pgtype.UUID
-	Kind        string
-	ContentType string
-	Size        int64
-	ExpiresAt   pgtype.Timestamp
-	DeletedAt   pgtype.Timestamp
+	ID           uuid.UUID
+	MessageID    pgtype.UUID
+	Kind         string
+	ContentType  string
+	Size         int64
+	ExpiresAt    pgtype.Timestamp
+	DeletedAt    pgtype.Timestamp
+	DurationMs   pgtype.Int4
+	Width        pgtype.Int4
+	Height       pgtype.Int4
+	HasThumbnail bool
 }
 
 func (q *Queries) MediaForMessages(ctx context.Context, ids []uuid.UUID) ([]MediaForMessagesRow, error) {
@@ -225,6 +240,10 @@ func (q *Queries) MediaForMessages(ctx context.Context, ids []uuid.UUID) ([]Medi
 			&i.Size,
 			&i.ExpiresAt,
 			&i.DeletedAt,
+			&i.DurationMs,
+			&i.Width,
+			&i.Height,
+			&i.HasThumbnail,
 		); err != nil {
 			return nil, err
 		}
@@ -318,4 +337,47 @@ type RecordMediaDownloadParams struct {
 func (q *Queries) RecordMediaDownload(ctx context.Context, arg RecordMediaDownloadParams) error {
 	_, err := q.db.Exec(ctx, recordMediaDownload, arg.Now, arg.MediaID, arg.UserID)
 	return err
+}
+
+const setThumbnail = `-- name: SetThumbnail :execrows
+UPDATE media SET has_thumbnail = true
+WHERE id = $1 AND owner_id = $2 AND kind = 'video' AND deleted_at IS NULL AND NOT has_thumbnail
+`
+
+type SetThumbnailParams struct {
+	ID      uuid.UUID
+	OwnerID pgtype.UUID
+}
+
+// only the uploader's own, live video
+func (q *Queries) SetThumbnail(ctx context.Context, arg SetThumbnailParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setThumbnail, arg.ID, arg.OwnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const thumbnailsOf = `-- name: ThumbnailsOf :many
+SELECT id FROM media WHERE id = ANY($1::uuid[]) AND has_thumbnail
+`
+
+func (q *Queries) ThumbnailsOf(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, thumbnailsOf, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

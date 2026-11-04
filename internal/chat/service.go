@@ -53,6 +53,9 @@ type ChatService interface {
 	React(ctx context.Context, me, msgID uuid.UUID, emoji string) error
 	Unreact(ctx context.Context, me, msgID uuid.UUID) error
 	Reactors(ctx context.Context, me, msgID uuid.UUID) ([]Reactor, error)
+	// ReadBy lists who has read the caller's own group message (groups of
+	// up to ReadByMaxMembers).
+	ReadBy(ctx context.Context, me, msgID uuid.UUID) ([]Reader, error)
 	// EditMessage changes the text of the caller's own message, within
 	// EditWindow of sending; DeleteMessage deletes it for everyone.
 	EditMessage(ctx context.Context, me, msgID uuid.UUID, content string) (EditedMessage, error)
@@ -61,6 +64,8 @@ type ChatService interface {
 	SetNotifier(n push.Notifier)
 	// SetMedia enables photos and videos in messages.
 	SetMedia(m MediaStore)
+	// BansChanged refreshes which senders are suspended (after a ban/unban).
+	BansChanged(ctx context.Context, userID uuid.UUID)
 	// ForgetGroup is retained for the group lifecycle hook; group messages are
 	// no longer cached.
 	ForgetGroup(ctx context.Context, groupID uuid.UUID)
@@ -187,8 +192,11 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 	}
 	if in.Type == TypePublic {
 		out.GroupID = to.String()
+	} else {
+		out.ToID = to.String()
 	}
-	if err := s.push.WriteToUsers(targets, ws.Event{Event: ws.EventMessage, Payload: out}); err != nil {
+	// the sender's other devices (tablet, second phone) get it too
+	if err := s.push.WriteToUsers(withMe(targets, from), ws.Event{Event: ws.EventMessage, Payload: out}); err != nil {
 		s.logger.WarnContext(ctx, "failed to push message", "error", err)
 	}
 	telemetry.Message(ctx, in.Type, len(attached) > 0)
@@ -307,14 +315,35 @@ func (s *chatService) MarkGroupRead(ctx context.Context, me, groupID uuid.UUID, 
 	if err != nil {
 		return ErrNotValidUUID
 	}
-	ok, err := s.groups.IsMember(ctx, groupID, me)
+	members, err := s.groups.Members(ctx, groupID)
 	if err != nil {
 		return err
 	}
-	if !ok {
+	if !slices.Contains(members, me) {
 		return ErrNotAuthorized
 	}
-	return s.repo.MarkGroupRead(ctx, groupID, me, msgID)
+	moved, err := s.repo.MarkGroupRead(ctx, groupID, me, msgID)
+	if err != nil || !moved || len(members) > ReadByMaxMembers {
+		return err
+	}
+	// small groups: tell the senders of recent messages (read-by is only
+	// shown to a message's sender) and my other devices, so ticks update live
+	senders, err := s.repo.RecentGroupSenders(ctx, groupID, msgID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "failed to find group senders", "error", err)
+		return nil
+	}
+	to := []uuid.UUID{me}
+	for _, id := range senders {
+		if id != me && slices.Contains(members, id) {
+			to = append(to, id)
+		}
+	}
+	ev := ws.OutGroupReadEvent{GroupID: groupID.String(), UserID: me.String(), MsgID: msgID.String()}
+	if err := s.push.WriteToUsers(to, ws.Event{Event: ws.EventGroupRead, Payload: ev}); err != nil {
+		s.logger.WarnContext(ctx, "failed to push group read", "error", err)
+	}
+	return nil
 }
 
 func (s *chatService) Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error) {
@@ -457,7 +486,7 @@ func (s *chatService) EditMessage(ctx context.Context, me, msgID uuid.UUID, cont
 	if ref.Kind == TypePublic {
 		ev.GroupID = ref.Group.String()
 	}
-	if err := s.push.WriteToUsers(others, ws.Event{Event: ws.EventEdited, Payload: ev}); err != nil {
+	if err := s.push.WriteToUsers(withMe(others, me), ws.Event{Event: ws.EventEdited, Payload: ev}); err != nil {
 		s.logger.WarnContext(ctx, "failed to push edit", "error", err)
 	}
 	return EditedMessage{MsgID: msgID, Content: content, EditedAt: now}, nil
@@ -489,7 +518,7 @@ func (s *chatService) DeleteMessage(ctx context.Context, me, msgID uuid.UUID) er
 	if ref.Kind == TypePublic {
 		ev.GroupID = ref.Group.String()
 	}
-	if err := s.push.WriteToUsers(others, ws.Event{Event: ws.EventDeleted, Payload: ev}); err != nil {
+	if err := s.push.WriteToUsers(withMe(others, me), ws.Event{Event: ws.EventDeleted, Payload: ev}); err != nil {
 		s.logger.WarnContext(ctx, "failed to push delete", "error", err)
 	}
 	return nil
@@ -551,7 +580,7 @@ func (s *chatService) React(ctx context.Context, me, msgID uuid.UUID, emoji stri
 	if err := s.repo.SetReaction(ctx, ref.Kind, msgID, me, emoji); err != nil {
 		return err
 	}
-	s.pushReaction(ctx, ref, others, me, msgID, emoji)
+	s.pushReaction(ctx, ref, withMe(others, me), me, msgID, emoji)
 	telemetry.ChatAction(ctx, "react")
 	// the author hears about reactions to their message (not their own)
 	if s.notify != nil && ref.From != me && ref.From != uuid.Nil {
@@ -611,7 +640,7 @@ func (s *chatService) Unreact(ctx context.Context, me, msgID uuid.UUID) error {
 		return err
 	}
 	if removed {
-		s.pushReaction(ctx, ref, others, me, msgID, "")
+		s.pushReaction(ctx, ref, withMe(others, me), me, msgID, "")
 	}
 	return nil
 }
@@ -622,6 +651,23 @@ func (s *chatService) Reactors(ctx context.Context, me, msgID uuid.UUID) ([]Reac
 		return nil, err
 	}
 	return s.repo.Reactors(ctx, ref.Kind, msgID)
+}
+
+func (s *chatService) ReadBy(ctx context.Context, me, msgID uuid.UUID) ([]Reader, error) {
+	ref, others, err := s.authorizeMessage(ctx, me, msgID, false)
+	if err != nil {
+		return nil, err
+	}
+	if ref.Kind != TypePublic {
+		return nil, ErrNotGroupMessage
+	}
+	if ref.From != me {
+		return nil, ErrNotYourMessage
+	}
+	if len(others)+1 > ReadByMaxMembers {
+		return nil, ErrGroupTooBig
+	}
+	return s.repo.GroupReadBy(ctx, ref, msgID)
 }
 
 // pushReaction tells the rest of the chat; emoji "" means removed.
@@ -684,3 +730,11 @@ func classify(err error) error {
 func (s *chatService) HandleSeen(ctx context.Context, j JobSeen) error {
 	return classify(s.repo.UpdateLastSeen(ctx, j.ChatID, j.SeenID, j.MsgID))
 }
+
+// withMe adds the acting user, so their other devices stay in sync. A new
+// slice: callers keep using targets for push notifications.
+func withMe(targets []uuid.UUID, me uuid.UUID) []uuid.UUID {
+	return append(slices.Clone(targets), me)
+}
+
+func (s *chatService) BansChanged(context.Context, uuid.UUID) { s.repo.ForgetBans() }

@@ -60,8 +60,6 @@ WHERE id = $1 AND banned_at IS NOT NULL;
 -- name: ExpiredBans :many
 SELECT id FROM users WHERE banned_at IS NOT NULL AND banned_until IS NOT NULL AND banned_until < @now::timestamp;
 
--- name: BannedAmong :many
-SELECT id FROM users WHERE id = ANY(@ids::uuid[]) AND banned_at IS NOT NULL;
 
 -- name: UserBan :one
 SELECT banned_at, banned_until, is_admin FROM users WHERE id = $1;
@@ -83,3 +81,7 @@ UPDATE users SET last_seen_at = @now::timestamp WHERE id = @id;
 -- groups the user is in, with their role and how many members there are
 SELECT m.group_id, m.role, g.current_member FROM member_table m JOIN chat_groups g ON g.id = m.group_id
 WHERE m.member_id = $1;
+
+-- name: AllBannedUsers :many
+-- the (normally short) list of banned accounts, cached by each server
+SELECT id FROM users WHERE banned_at IS NOT NULL;

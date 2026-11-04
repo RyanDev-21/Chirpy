@@ -42,7 +42,7 @@ const (
 
 var (
 	ErrDisabled      = errors.New("media is not configured on this server")
-	ErrBadMedia      = errors.New("kind must be image (JPEG, PNG, WebP, HEIC; max 5 MB) or video (MP4, MOV, WebM; max 25 MB) with its size in bytes")
+	ErrBadMedia      = errors.New("kind must be image (JPEG, PNG, WebP, HEIC; max 5 MB) or video (MP4, MOV, WebM; max 25 MB, 60 s) with its size in bytes; width/height up to 8192")
 	ErrDailyQuota    = errors.New("daily upload limit reached (200 MB per day)")
 	ErrStorageFull   = errors.New("media storage is full right now; try again later")
 	ErrNotFound      = errors.New("media not found")
@@ -64,6 +64,12 @@ type Attachment struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 	// Expired: removed from storage; the phone shows its own copy, if any.
 	Expired bool `json:"expired"`
+	// As measured by the sender's phone; 0 when unknown.
+	DurationMs int `json:"duration_ms,omitempty"`
+	Width      int `json:"width,omitempty"`
+	Height     int `json:"height,omitempty"`
+	// Thumbnail: a still is available at GET /api/media/{id}/thumbnail.
+	Thumbnail bool `json:"thumbnail"`
 }
 
 // Members lists a group's members (groups.GroupService).
@@ -99,7 +105,24 @@ type Upload struct {
 }
 
 // NewUpload checks limits and returns a link to PUT the file to.
-func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, kind, contentType string, size int64) (Upload, error) {
+// Dims are what the phone measured about the file (all optional).
+type Dims struct {
+	DurationMs int `json:"duration_ms"`
+	Width      int `json:"width"`
+	Height     int `json:"height"`
+}
+
+func (d Dims) ok(kind string) bool {
+	if d.Width < 0 || d.Height < 0 || d.Width > 8192 || d.Height > 8192 || d.DurationMs < 0 {
+		return false
+	}
+	// videos are cut to 60 s on the phone; a little slack for rounding
+	return kind == "video" && d.DurationMs <= 65_000 || kind == "image" && d.DurationMs == 0
+}
+
+func optInt(n int) pgtype.Int4 { return pgtype.Int4{Int32: int32(n), Valid: n > 0} }
+
+func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, kind, contentType string, size int64, dims Dims) (Upload, error) {
 	if s.store == nil {
 		return Upload{}, ErrDisabled
 	}
@@ -107,7 +130,7 @@ func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, kind, contentT
 	if kind == "video" {
 		limit = MaxVideoBytes
 	}
-	if !allowedTypes[kind][contentType] || size <= 0 || size > limit {
+	if !allowedTypes[kind][contentType] || size <= 0 || size > limit || !dims.ok(kind) {
 		return Upload{}, ErrBadMedia
 	}
 	now := s.now()
@@ -132,6 +155,7 @@ func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, kind, contentT
 	if err := s.q.CreateMedia(ctx, database.CreateMediaParams{
 		ID: id, OwnerID: pu(owner), Kind: kind, ContentType: contentType, Size: size,
 		Now: ts(now), ExpiresAt: ts(now.Add(maxLifetime)),
+		DurationMs: optInt(dims.DurationMs), Width: optInt(dims.Width), Height: optInt(dims.Height),
 	}); err != nil {
 		return Upload{}, err
 	}
@@ -179,7 +203,8 @@ func (s *Service) Attach(ctx context.Context, owner uuid.UUID, ids []uuid.UUID, 
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, Attachment{ID: id, Kind: m.Kind, ContentType: m.ContentType, Size: m.Size, ExpiresAt: m.ExpiresAt.Time.UTC()})
+		out = append(out, Attachment{ID: id, Kind: m.Kind, ContentType: m.ContentType, Size: m.Size, ExpiresAt: m.ExpiresAt.Time.UTC(),
+			DurationMs: int(m.DurationMs.Int32), Width: int(m.Width.Int32), Height: int(m.Height.Int32), Thumbnail: m.HasThumbnail})
 	}
 	for _, id := range ids {
 		n, err := s.q.AttachMedia(ctx, database.AttachMediaParams{
@@ -209,7 +234,8 @@ func (s *Service) ForMessages(ctx context.Context, msgIDs []uuid.UUID) (map[uuid
 	for _, r := range rows {
 		mid := uuid.UUID(r.MessageID.Bytes)
 		out[mid] = append(out[mid], Attachment{ID: r.ID, Kind: r.Kind, ContentType: r.ContentType, Size: r.Size,
-			ExpiresAt: r.ExpiresAt.Time.UTC(), Expired: r.DeletedAt.Valid})
+			ExpiresAt: r.ExpiresAt.Time.UTC(), Expired: r.DeletedAt.Valid,
+			DurationMs: int(r.DurationMs.Int32), Width: int(r.Width.Int32), Height: int(r.Height.Int32), Thumbnail: r.HasThumbnail && !r.DeletedAt.Valid})
 	}
 	return out, nil
 }
@@ -237,41 +263,9 @@ type Download struct {
 // Download checks that viewer is in the chat, records the download and
 // returns a short-lived link.
 func (s *Service) Download(ctx context.Context, viewer, id uuid.UUID) (Download, error) {
-	if s.store == nil {
-		return Download{}, ErrDisabled
-	}
-	m, err := s.q.GetMedia(ctx, id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Download{}, ErrNotFound
-	}
+	m, owner, recipients, err := s.access(ctx, viewer, id)
 	if err != nil {
 		return Download{}, err
-	}
-	if m.Status != "ready" {
-		return Download{}, ErrNotFound
-	}
-	chatID := uuid.UUID(m.ChatID.Bytes)
-	owner := uuid.UUID(m.OwnerID.Bytes) // zero if the uploader deleted their account
-	var recipients []uuid.UUID          // who must download it before the 24 h clock starts
-	switch m.ChatType.String {
-	case "private":
-		if viewer != owner && viewer != chatID {
-			return Download{}, ErrNotFound
-		}
-		recipients = []uuid.UUID{chatID}
-	case "public":
-		members, err := s.members.Members(ctx, chatID)
-		if err != nil || !slices.Contains(members, viewer) {
-			return Download{}, ErrNotFound // also for a deleted group
-		}
-		if len(members) <= trackGroupsUpTo {
-			recipients = slices.DeleteFunc(members, func(u uuid.UUID) bool { return u == owner })
-		}
-	default:
-		return Download{}, ErrNotFound
-	}
-	if m.DeletedAt.Valid || !m.OwnerID.Valid {
-		return Download{}, ErrExpired
 	}
 	now := s.now()
 	if viewer != owner {
@@ -334,7 +328,21 @@ func (s *Service) Cleanup(ctx context.Context) (int, error) {
 
 func (s *Service) remove(ctx context.Context, ids []uuid.UUID, reason string) int {
 	var done []uuid.UUID
+	thumbs := map[uuid.UUID]bool{}
+	if len(ids) > 0 {
+		if withThumb, err := s.q.ThumbnailsOf(ctx, ids); err == nil {
+			for _, id := range withThumb {
+				thumbs[id] = true
+			}
+		}
+	}
 	for _, id := range ids {
+		if thumbs[id] {
+			if err := s.store.Delete(ctx, thumbKey(id)); err != nil {
+				s.logger.WarnContext(ctx, "failed to delete thumbnail", "media_id", id, "error", err)
+				continue
+			}
+		}
 		if err := s.store.Delete(ctx, key(id)); err != nil {
 			s.logger.WarnContext(ctx, "failed to delete media file", "media_id", id, "error", err)
 			continue
@@ -348,4 +356,110 @@ func (s *Service) remove(ctx context.Context, ids []uuid.UUID, reason string) in
 		}
 	}
 	return len(done)
+}
+
+// access loads media that viewer may see: the two people of a private
+// chat, or current members of the group. recipients are who must download
+// it before the 24 h clock starts (nil for big groups).
+func (s *Service) access(ctx context.Context, viewer, id uuid.UUID) (database.Medium, uuid.UUID, []uuid.UUID, error) {
+	var none database.Medium
+	if s.store == nil {
+		return none, uuid.Nil, nil, ErrDisabled
+	}
+	m, err := s.q.GetMedia(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return none, uuid.Nil, nil, ErrNotFound
+	}
+	if err != nil {
+		return none, uuid.Nil, nil, err
+	}
+	if m.Status != "ready" {
+		return none, uuid.Nil, nil, ErrNotFound
+	}
+	chatID := uuid.UUID(m.ChatID.Bytes)
+	owner := uuid.UUID(m.OwnerID.Bytes) // zero if the uploader deleted their account
+	var recipients []uuid.UUID
+	switch m.ChatType.String {
+	case "private":
+		if viewer != owner && viewer != chatID {
+			return none, uuid.Nil, nil, ErrNotFound
+		}
+		recipients = []uuid.UUID{chatID}
+	case "public":
+		members, err := s.members.Members(ctx, chatID)
+		if err != nil || !slices.Contains(members, viewer) {
+			return none, uuid.Nil, nil, ErrNotFound // also for a deleted group
+		}
+		if len(members) <= trackGroupsUpTo {
+			recipients = slices.DeleteFunc(members, func(u uuid.UUID) bool { return u == owner })
+		}
+	default:
+		return none, uuid.Nil, nil, ErrNotFound
+	}
+	if m.DeletedAt.Valid || !m.OwnerID.Valid {
+		return none, uuid.Nil, nil, ErrExpired
+	}
+	return m, owner, recipients, nil
+}
+
+// --- video thumbnails ---
+
+func thumbKey(id uuid.UUID) string { return "t/" + id.String() }
+
+// MaxThumbnailUpload is the largest thumbnail image accepted (before the
+// server shrinks it).
+const MaxThumbnailUpload = 2 << 20
+
+var (
+	ErrNotVideo     = errors.New("thumbnails are for your own videos")
+	ErrThumbnailSet = errors.New("this video already has a thumbnail")
+)
+
+// SetThumbnail stores a still frame for a video, made on the phone. The
+// server re-encodes it (max 480 px, JPEG, metadata stripped), so only a
+// real, small image ever reaches other phones.
+func (s *Service) SetThumbnail(ctx context.Context, owner, id uuid.UUID, raw []byte) error {
+	if s.store == nil {
+		return ErrDisabled
+	}
+	m, err := s.q.GetMedia(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && (m.OwnerID != pu(owner) || m.Kind != "video" || m.DeletedAt.Valid)) {
+		return ErrNotVideo
+	}
+	if err != nil {
+		return err
+	}
+	// set once: the preview can't be swapped after people have seen it
+	if m.HasThumbnail {
+		return ErrThumbnailSet
+	}
+	img, err := ProcessThumbnail(raw)
+	if err != nil {
+		return err
+	}
+	if err := s.store.Put(ctx, thumbKey(id), "image/jpeg", img); err != nil {
+		return err
+	}
+	n, err := s.q.SetThumbnail(ctx, database.SetThumbnailParams{ID: id, OwnerID: pu(owner)})
+	if err == nil && n == 0 {
+		return ErrThumbnailSet // set or deleted meanwhile
+	}
+	return err
+}
+
+// Thumbnail is a short-lived link to a video's still, for the same people
+// who may download the video (it doesn't count as a download).
+func (s *Service) Thumbnail(ctx context.Context, viewer, id uuid.UUID) (Download, error) {
+	m, _, _, err := s.access(ctx, viewer, id)
+	if err != nil {
+		return Download{}, err
+	}
+	if !m.HasThumbnail {
+		return Download{}, ErrNotFound
+	}
+	u, err := s.store.PresignGet(thumbKey(id), "image/jpeg", downloadTTL)
+	if err != nil {
+		return Download{}, err
+	}
+	return Download{URL: u, ContentType: "image/jpeg", ExpiresIn: int(downloadTTL.Seconds())}, nil
 }

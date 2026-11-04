@@ -39,7 +39,8 @@ func (h *ChatHandler) writeErr(w http.ResponseWriter, r *http.Request, err error
 	case errors.Is(err, ErrNotValidToID), errors.Is(err, ErrNotValidParentID), errors.Is(err, ErrNotSupportedTypeMsg),
 		errors.Is(err, ErrEmptyMessage), errors.Is(err, ErrNotValidTimeFmt), errors.Is(err, ErrNotValidUUID),
 		errors.Is(err, ErrMessageNotInChat), errors.Is(err, ErrBadCursor), errors.Is(err, ErrSinceAndBefore),
-		errors.Is(err, ErrSinceNotSupported), errors.Is(err, ErrNotAnEmoji):
+		errors.Is(err, ErrSinceNotSupported), errors.Is(err, ErrNotAnEmoji), errors.Is(err, ErrNotGroupMessage),
+		errors.Is(err, ErrGroupTooBig):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	default:
 		httpx.ServerError(w, r, err)
@@ -247,6 +248,21 @@ func (h *ChatHandler) Reactors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string][]Reactor{"reactions": list})
+}
+
+// ReadBy handles GET /api/chat/messages/{msg_id}/read-by (own group
+// messages, groups of up to 50).
+func (h *ChatHandler) ReadBy(w http.ResponseWriter, r *http.Request) {
+	me, msgID, ok := h.messageTarget(w, r)
+	if !ok {
+		return
+	}
+	list, err := h.svc.ReadBy(r.Context(), me, msgID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string][]Reader{"read_by": list})
 }
 
 // EditMessage handles PATCH /api/chat/messages/{msg_id} {"msg":"new text"}.

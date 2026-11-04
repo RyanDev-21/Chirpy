@@ -43,8 +43,16 @@ func (f *fakeRepo) GroupBefore(context.Context, uuid.UUID, uuid.UUID, int) ([]Me
 	f.beforeCalls++
 	return nil, nil
 }
-func (f *fakeRepo) MarkGroupRead(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error { return nil }
-func (f *fakeRepo) Conversations(context.Context, uuid.UUID) ([]Conversation, error)     { return nil, nil }
+func (f *fakeRepo) MarkGroupRead(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error) {
+	return true, nil
+}
+func (f *fakeRepo) RecentGroupSenders(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
+func (f *fakeRepo) GroupReadBy(context.Context, messageRef, uuid.UUID) ([]Reader, error) {
+	return []Reader{}, nil
+}
+func (f *fakeRepo) Conversations(context.Context, uuid.UUID) ([]Conversation, error) { return nil, nil }
 func (f *fakeRepo) LocateMessage(_ context.Context, id uuid.UUID) (messageRef, error) {
 	for _, m := range f.saved {
 		if m.ID != id {
@@ -114,6 +122,8 @@ func (f *fakeRepo) RecentPublic(context.Context, uuid.UUID, int) ([]MessageMetaD
 	return f.history, nil
 }
 func (f *fakeRepo) UpdateLastSeen(context.Context, string, uuid.UUID, uuid.UUID) error { return nil }
+
+func (f *fakeRepo) ForgetBans() {}
 
 func (f *fakeRepo) Suspended(context.Context, []uuid.UUID) (map[uuid.UUID]bool, error) {
 	return map[uuid.UUID]bool{}, nil
@@ -281,8 +291,9 @@ func TestGroupMessages(t *testing.T) {
 	if _, err := f.svc.SendMessage(ctx, f.alice, msg(f.group, TypePublic, "hello group")); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.push.targets[0]; len(got) != 1 || got[0] != f.bob {
-		t.Fatalf("fan-out should skip the sender: %v", got)
+	// members, then the sender's own devices
+	if got := f.push.targets[0]; len(got) != 2 || got[0] != f.bob || got[1] != f.alice {
+		t.Fatalf("fan-out: %v", got)
 	}
 	got, err := f.svc.GroupMessages(ctx, f.bob, f.group, HistoryQuery{})
 	if err != nil || len(got) != 1 {
@@ -435,8 +446,8 @@ func TestReactions(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = f.svc.React(ctx, f.alice, dm, "❤️")
-	if got := f.push.targets[pushes]; len(got) != 1 || got[0] != f.alice {
-		t.Fatalf("bob's reaction should be pushed to alice only: %v", got)
+	if got := f.push.targets[pushes]; len(got) != 2 || got[0] != f.alice || got[1] != f.bob {
+		t.Fatalf("bob's reaction should reach alice and bob's other devices: %v", got)
 	}
 
 	page, err := f.svc.PrivateMessages(ctx, f.bob, f.alice, HistoryQuery{})
@@ -463,7 +474,7 @@ func TestReactions(t *testing.T) {
 	if err := f.svc.React(ctx, f.bob, gm, "🔥"); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.push.targets[len(f.push.targets)-1]; len(got) != 1 || got[0] != f.alice {
+	if got := f.push.targets[len(f.push.targets)-1]; len(got) != 2 || got[0] != f.alice || got[1] != f.bob {
 		t.Fatalf("group reaction targets = %v", got)
 	}
 }
@@ -489,8 +500,8 @@ func TestEditAndDelete(t *testing.T) {
 	if err != nil || got.Content != "hello" {
 		t.Fatalf("edit = %+v %v", got, err)
 	}
-	if tg := f.push.targets[pushes]; len(tg) != 1 || tg[0] != f.bob {
-		t.Fatalf("edit pushed to %v, want bob", tg)
+	if tg := f.push.targets[pushes]; len(tg) != 2 || tg[0] != f.bob || tg[1] != f.alice {
+		t.Fatalf("edit pushed to %v, want bob and alice's devices", tg)
 	}
 	page, _ := f.svc.PrivateMessages(ctx, f.bob, f.alice, HistoryQuery{})
 	if last := page[len(page)-1]; last.MsgInfo.Msg.Content != "hello" || last.EditedAt == nil {

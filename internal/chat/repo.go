@@ -6,6 +6,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"RyanDev-21.com/Chirpy/internal/database"
@@ -30,7 +31,13 @@ type ChatRepo interface {
 	// chronological order; ErrBadCursor if it isn't in that chat.
 	PrivateBefore(ctx context.Context, a, b, before uuid.UUID, n int) ([]MessageMetaDataRes, error)
 	GroupBefore(ctx context.Context, groupID, before uuid.UUID, n int) ([]MessageMetaDataRes, error)
-	MarkGroupRead(ctx context.Context, groupID, userID, msgID uuid.UUID) error
+	// MarkGroupRead reports whether the marker moved forward.
+	MarkGroupRead(ctx context.Context, groupID, userID, msgID uuid.UUID) (bool, error)
+	// GroupReadBy lists current members, other than the sender, who have
+	// read up to (or past) the message.
+	GroupReadBy(ctx context.Context, ref messageRef, msgID uuid.UUID) ([]Reader, error)
+	// RecentGroupSenders: who sent the last 50 messages up to msgID.
+	RecentGroupSenders(ctx context.Context, groupID, msgID uuid.UUID) ([]uuid.UUID, error)
 	Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error)
 
 	// LocateMessage finds which chat a message belongs to (ErrMessageNotFound).
@@ -46,15 +53,18 @@ type ChatRepo interface {
 	// deleted. Deleting also removes its reactions.
 	EditMessage(ctx context.Context, kind string, msgID uuid.UUID, content string, at time.Time) (bool, error)
 	DeleteMessage(ctx context.Context, kind string, msgID uuid.UUID, at time.Time) (bool, error)
-	// Suspended returns which of these users are banned.
+	// Suspended returns which of these users are banned (cached briefly).
 	Suspended(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]bool, error)
+	// ForgetBans drops the cached list (after a ban or unban here).
+	ForgetBans()
 }
 
 type chatRepo struct {
-	q *database.Queries
+	q      *database.Queries
+	banned *bannedCache
 }
 
-func NewChatRepo(q *database.Queries) ChatRepo { return &chatRepo{q: q} }
+func NewChatRepo(q *database.Queries) ChatRepo { return &chatRepo{q: q, banned: &bannedCache{}} }
 
 func pgUUID(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
 
@@ -232,14 +242,32 @@ func (r *chatRepo) GroupBefore(ctx context.Context, groupID, before uuid.UUID, n
 	return out, nil
 }
 
-func (r *chatRepo) MarkGroupRead(ctx context.Context, groupID, userID, msgID uuid.UUID) error {
+func (r *chatRepo) MarkGroupRead(ctx context.Context, groupID, userID, msgID uuid.UUID) (bool, error) {
 	if _, err := r.q.GroupMessageCursor(ctx, database.GroupMessageCursorParams{ID: msgID, GroupID: pgUUID(groupID)}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrMessageNotInChat
+			return false, ErrMessageNotInChat
 		}
-		return err
+		return false, err
 	}
-	return r.q.MarkGroupRead(ctx, database.MarkGroupReadParams{GroupID: groupID, UserID: userID, MessageID: msgID})
+	n, err := r.q.MarkGroupRead(ctx, database.MarkGroupReadParams{GroupID: groupID, UserID: userID, MessageID: msgID})
+	return n > 0, err
+}
+
+func (r *chatRepo) RecentGroupSenders(ctx context.Context, groupID, msgID uuid.UUID) ([]uuid.UUID, error) {
+	return r.q.RecentGroupSenders(ctx, database.RecentGroupSendersParams{GroupID: pgUUID(groupID), MsgID: msgID})
+}
+
+func (r *chatRepo) GroupReadBy(ctx context.Context, ref messageRef, msgID uuid.UUID) ([]Reader, error) {
+	rows, err := r.q.GroupReadBy(ctx, database.GroupReadByParams{GroupID: ref.Group, Sender: ref.From, MsgAt: pgTime(ref.CreatedAt), MsgID: msgID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Reader, 0, len(rows))
+	for _, x := range rows {
+		out = append(out, Reader{UserID: x.ID, Name: x.Name, DisplayName: users.ShownName(x.Name, x.DisplayName),
+			AvatarURL: users.AvatarURLFrom(x.ID, x.AvatarAt), ReadAt: x.ReadAt.Time.UTC()})
+	}
+	return out, nil
 }
 
 func lastMessage(id uuid.UUID, content pgtype.Text, from pgtype.UUID, at pgtype.Timestamp, deleted bool) *LastMessage {
@@ -396,9 +424,49 @@ func (r *chatRepo) Suspended(ctx context.Context, ids []uuid.UUID) (map[uuid.UUI
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := r.q.BannedAmong(ctx, ids)
-	for _, id := range rows {
-		out[id] = true
+	banned, err := r.banned.get(ctx, r.q)
+	if err != nil {
+		return nil, err
 	}
-	return out, err
+	for _, id := range ids {
+		if banned[id] {
+			out[id] = true
+		}
+	}
+	return out, nil
+}
+
+// bannedCache holds the list of banned accounts for bannedTTL, so pages of
+// history don't each ask the database. A new ban hides messages within
+// bannedTTL (the ban itself, sign-out and login refusal, is immediate).
+type bannedCache struct {
+	mu      sync.Mutex
+	ids     map[uuid.UUID]bool
+	fetched time.Time
+}
+
+const bannedTTL = 30 * time.Second
+
+func (c *bannedCache) get(ctx context.Context, q *database.Queries) (map[uuid.UUID]bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ids != nil && time.Since(c.fetched) < bannedTTL {
+		return c.ids, nil
+	}
+	rows, err := q.AllBannedUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[uuid.UUID]bool, len(rows))
+	for _, id := range rows {
+		ids[id] = true
+	}
+	c.ids, c.fetched = ids, time.Now()
+	return ids, nil
+}
+
+func (r *chatRepo) ForgetBans() {
+	r.banned.mu.Lock()
+	r.banned.ids = nil
+	r.banned.mu.Unlock()
 }
