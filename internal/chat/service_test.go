@@ -30,6 +30,7 @@ func (f *fakeRepo) AddPrivate(_ context.Context, m MessageMetaDataRes) error {
 		return f.failAdd
 	}
 	f.saved = append(f.saved, m)
+	f.history = append(f.history, m)
 	return nil
 }
 func (f *fakeRepo) AddPublic(ctx context.Context, m MessageMetaDataRes) error {
@@ -108,10 +109,10 @@ func (f *fakeRepo) RecentPrivate(_ context.Context, _, _ uuid.UUID, n int) ([]Me
 }
 func (f *fakeRepo) PrivateSince(context.Context, uuid.UUID, uuid.UUID, time.Time, int) ([]MessageMetaDataRes, error) {
 	f.since++
-	return nil, nil
+	return f.history, nil
 }
 func (f *fakeRepo) RecentPublic(context.Context, uuid.UUID, int) ([]MessageMetaDataRes, error) {
-	return nil, nil
+	return f.history, nil
 }
 func (f *fakeRepo) UpdateLastSeen(context.Context, string, uuid.UUID, uuid.UUID) error { return nil }
 func (f *fakeRepo) MessageChanges(context.Context, string, []uuid.UUID) (map[uuid.UUID]messageChange, error) {
@@ -263,8 +264,8 @@ func TestPrivateMessagesSince(t *testing.T) {
 	if len(got) != 1 || got[0].MsgInfo.Msg.Content != "new" {
 		t.Fatalf("since result = %+v", got)
 	}
-	if f.repo.since != 0 {
-		t.Fatal("cache covered the range; postgres should not be queried")
+	if f.repo.since != 1 {
+		t.Fatalf("PrivateSince calls = %d, want 1", f.repo.since)
 	}
 }
 
@@ -338,7 +339,7 @@ func TestDatabaseFailureFailsSendAndSkipsDelivery(t *testing.T) {
 	}
 	got, _ := f.svc.PrivateMessages(context.Background(), f.bob, f.alice, HistoryQuery{})
 	if len(got) != 0 {
-		t.Fatalf("an unsaved message must not be cached: %+v", got)
+		t.Fatalf("an unsaved message must not be returned: %+v", got)
 	}
 }
 
@@ -387,7 +388,7 @@ func TestHistoryQueryRules(t *testing.T) {
 	if _, err := f.svc.GroupMessages(ctx, f.carol, f.group, HistoryQuery{Before: uuid.NewString()}); !errors.Is(err, ErrNotAuthorized) {
 		t.Fatalf("non-member paging: %v", err)
 	}
-	// older pages come from postgres, not the cache
+	// older pages come from postgres
 	_, _ = f.svc.PrivateMessages(ctx, f.alice, f.bob, HistoryQuery{Before: uuid.NewString()})
 	_, _ = f.svc.GroupMessages(ctx, f.alice, f.group, HistoryQuery{Before: uuid.NewString()})
 	if f.repo.beforeCalls != 2 {
@@ -466,6 +467,7 @@ func TestEditAndDelete(t *testing.T) {
 	ctx := context.Background()
 	dm, _ := f.svc.SendMessage(ctx, f.alice, msg(f.bob, TypePrivate, "helo"))
 	gm, _ := f.svc.SendMessage(ctx, f.alice, msg(f.group, TypePublic, "group"))
+	f.repo.history = f.repo.saved[:1]
 
 	if _, err := f.svc.EditMessage(ctx, f.bob, dm, "hijack"); !errors.Is(err, ErrNotYourMessage) {
 		t.Fatalf("edit someone else's message: %v", err)
@@ -484,9 +486,6 @@ func TestEditAndDelete(t *testing.T) {
 	if tg := f.push.targets[pushes]; len(tg) != 1 || tg[0] != f.bob {
 		t.Fatalf("edit pushed to %v, want bob", tg)
 	}
-	// the edit dropped the cache: the reseed reads "postgres", which still
-	// has the original text; the overlay brings it up to date
-	f.repo.history = f.repo.saved[:1]
 	page, _ := f.svc.PrivateMessages(ctx, f.bob, f.alice, HistoryQuery{})
 	if last := page[len(page)-1]; last.MsgInfo.Msg.Content != "hello" || last.EditedAt == nil {
 		t.Fatalf("after edit: %+v", last)

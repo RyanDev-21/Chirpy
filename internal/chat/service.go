@@ -16,6 +16,12 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+const (
+	streamCap = 200
+	pageSize  = 50
+	maxPage   = 100
+)
+
 // GroupMembership is implemented by groups.GroupService.
 type GroupMembership interface {
 	IsMember(ctx context.Context, groupID, userID uuid.UUID) (bool, error)
@@ -47,7 +53,8 @@ type ChatService interface {
 	// EditWindow of sending; DeleteMessage deletes it for everyone.
 	EditMessage(ctx context.Context, me, msgID uuid.UUID, content string) (EditedMessage, error)
 	DeleteMessage(ctx context.Context, me, msgID uuid.UUID) error
-	// ForgetGroup drops cached messages of a deleted group.
+	// ForgetGroup is retained for the group lifecycle hook; group messages are
+	// no longer cached.
 	ForgetGroup(ctx context.Context, groupID uuid.UUID)
 	MarkSeen(ctx context.Context, me, other uuid.UUID, msgID string) error
 
@@ -88,10 +95,7 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 		}
 	}
 
-	var (
-		key     chatKey
-		targets []uuid.UUID
-	)
+	var targets []uuid.UUID
 	switch in.Type {
 	case TypePrivate:
 		ok, err := s.friends.AreFriends(ctx, from, to)
@@ -101,7 +105,7 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 		if !ok {
 			return uuid.Nil, ErrNotFriends
 		}
-		key, targets = privateKey(from, to), []uuid.UUID{to}
+		targets = []uuid.UUID{to}
 	case TypePublic:
 		members, err := s.groups.Members(ctx, to)
 		if err != nil {
@@ -110,7 +114,6 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 		if !slices.Contains(members, from) {
 			return uuid.Nil, ErrNotAuthorized
 		}
-		key = groupKey(to)
 		targets = slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == from })
 	default:
 		return uuid.Nil, ErrNotSupportedTypeMsg
@@ -137,12 +140,6 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 		}
 	}
 
-	// Seed before inserting: a seed read after the insert would already
-	// contain this message and the append below would duplicate it.
-	if err := s.ensureSeeded(ctx, key, from, to, in.Type); err != nil {
-		return uuid.Nil, err
-	}
-	// postgres is the source of truth: the message is durable before we answer
 	if in.Type == TypePrivate {
 		err = s.repo.AddPrivate(ctx, msg)
 	} else {
@@ -150,13 +147,6 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 	}
 	if err != nil {
 		return uuid.Nil, err
-	}
-	if err := s.cache.Append(ctx, key, msg); err != nil {
-		// the message is saved; drop the stream so the next read reseeds it
-		s.logger.WarnContext(ctx, "failed to append message to cache, invalidating", "error", err)
-		if err := s.cache.Invalidate(ctx, key); err != nil {
-			s.logger.ErrorContext(ctx, "failed to invalidate chat cache", "error", err)
-		}
 	}
 	out := ws.OutGoingMessage{
 		ID:        msgID.String(),
@@ -182,24 +172,6 @@ func (s *chatService) parentInChat(ctx context.Context, kind string, parentID, f
 	return s.repo.ParentInGroup(ctx, parentID, to)
 }
 
-// ensureSeeded loads recent history from postgres into the stream once.
-func (s *chatService) ensureSeeded(ctx context.Context, key chatKey, a, b uuid.UUID, kind string) error {
-	ok, err := s.cache.Loaded(ctx, key)
-	if err != nil || ok {
-		return err
-	}
-	var msgs []MessageMetaDataRes
-	if kind == TypePrivate {
-		msgs, err = s.repo.RecentPrivate(ctx, a, b, streamCap)
-	} else {
-		msgs, err = s.repo.RecentPublic(ctx, b, streamCap)
-	}
-	if err != nil {
-		return err
-	}
-	return s.cache.Seed(ctx, key, msgs)
-}
-
 func parseSince(since string) (time.Time, error) {
 	if since == "" {
 		return time.Time{}, nil
@@ -218,8 +190,6 @@ type HistoryQuery struct {
 	Before string
 	Limit  int
 }
-
-const maxPage = 100
 
 func (q HistoryQuery) parse() (before uuid.UUID, limit int, err error) {
 	if q.Since != "" && q.Before != "" {
@@ -251,29 +221,17 @@ func (s *chatService) privateHistory(ctx context.Context, me, other uuid.UUID, q
 		return nil, err
 	}
 	if before != uuid.Nil {
-		// older history is read from postgres; the cache only holds the tail
 		return s.repo.PrivateBefore(ctx, me, other, before, limit)
 	}
+
 	sinceT, err := parseSince(q.Since)
 	if err != nil {
 		return nil, err
 	}
-	key := privateKey(me, other)
-	if err := s.ensureSeeded(ctx, key, me, other, TypePrivate); err != nil {
-		return nil, err
+	if !sinceT.IsZero() {
+		return s.repo.PrivateSince(ctx, me, other, sinceT, streamCap)
 	}
-	if sinceT.IsZero() {
-		return s.cache.Recent(ctx, key, limit)
-	}
-	cached, err := s.cache.Recent(ctx, key, streamCap)
-	if err != nil {
-		return nil, err
-	}
-	// the cache only answers if it reaches back past `since`
-	if len(cached) < streamCap || (len(cached) > 0 && !cached[0].CreatedAt.After(sinceT)) {
-		return slices.DeleteFunc(cached, func(m MessageMetaDataRes) bool { return !m.CreatedAt.After(sinceT) }), nil
-	}
-	return s.repo.PrivateSince(ctx, me, other, sinceT, streamCap)
+	return s.repo.RecentPrivate(ctx, me, other, limit)
 }
 
 func (s *chatService) GroupMessages(ctx context.Context, me, groupID uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error) {
@@ -302,11 +260,7 @@ func (s *chatService) groupHistory(ctx context.Context, me, groupID uuid.UUID, q
 	if before != uuid.Nil {
 		return s.repo.GroupBefore(ctx, groupID, before, limit)
 	}
-	key := groupKey(groupID)
-	if err := s.ensureSeeded(ctx, key, me, groupID, TypePublic); err != nil {
-		return nil, err
-	}
-	return s.cache.Recent(ctx, key, limit)
+	return s.repo.RecentPublic(ctx, groupID, limit)
 }
 
 // MarkGroupRead records the last group message the caller has read.
@@ -425,7 +379,6 @@ func (s *chatService) EditMessage(ctx context.Context, me, msgID uuid.UUID, cont
 	if !ok {
 		return EditedMessage{}, ErrMessageNotFound // deleted meanwhile
 	}
-	s.dropCached(ctx, ref)
 	ev := ws.OutEditedEvent{MsgID: msgID.String(), FromID: me.String(), Type: ref.Kind, Content: content, EditedAt: now}
 	if ref.Kind == TypePublic {
 		ev.GroupID = ref.Group.String()
@@ -452,7 +405,6 @@ func (s *chatService) DeleteMessage(ctx context.Context, me, msgID uuid.UUID) er
 	if !ok {
 		return ErrMessageNotFound
 	}
-	s.dropCached(ctx, ref)
 	ev := ws.OutDeletedEvent{MsgID: msgID.String(), FromID: me.String(), Type: ref.Kind}
 	if ref.Kind == TypePublic {
 		ev.GroupID = ref.Group.String()
@@ -464,20 +416,7 @@ func (s *chatService) DeleteMessage(ctx context.Context, me, msgID uuid.UUID) er
 }
 
 func (s *chatService) ForgetGroup(ctx context.Context, groupID uuid.UUID) {
-	s.dropCached(ctx, messageRef{Kind: TypePublic, Group: groupID})
-}
-
-// dropCached removes the chat's cached stream after an edit or delete, so
-// old or deleted text doesn't linger in redis (reads overlay the current
-// state anyway; see withState).
-func (s *chatService) dropCached(ctx context.Context, ref messageRef) {
-	key := groupKey(ref.Group)
-	if ref.Kind == TypePrivate {
-		key = privateKey(ref.From, ref.To)
-	}
-	if err := s.cache.Invalidate(ctx, key); err != nil {
-		s.logger.WarnContext(ctx, "failed to invalidate chat cache", "error", err)
-	}
+	// nothing cached per group anymore
 }
 
 // --- reactions ---
