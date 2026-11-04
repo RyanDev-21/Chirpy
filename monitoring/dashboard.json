@@ -59,7 +59,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "refId": "A",
-          "expr": "sum by (status) (rate(chirpy_http_requests_total{job=\"chirpy-api\"}[5m]))",
+          "expr": "(sum by (status) (rate(chirpy_http_requests_total{job=\"chirpy-api\"}[5m]))) or vector(0)",
           "legendFormat": "__auto"
         }
       ]
@@ -90,7 +90,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "refId": "A",
-          "expr": "sum(rate(chirpy_http_requests_total{job=\"chirpy-api\",status=\"5xx\"}[5m])) / sum(rate(chirpy_http_requests_total{job=\"chirpy-api\"}[5m]))",
+          "expr": "(sum(rate(chirpy_http_requests_total{job=\"chirpy-api\",status=\"5xx\"}[5m])) or vector(0)) / sum(rate(chirpy_http_requests_total{job=\"chirpy-api\"}[5m]))",
           "legendFormat": "__auto"
         }
       ]
@@ -152,7 +152,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "refId": "A",
-          "expr": "sum by (policy) (rate(chirpy_ratelimit_denied_total{job=\"chirpy-api\"}[5m]))",
+          "expr": "(sum by (policy) (rate(chirpy_ratelimit_denied_total{job=\"chirpy-api\"}[5m]))) or vector(0)",
           "legendFormat": "__auto"
         }
       ]
@@ -234,7 +234,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "refId": "A",
-          "expr": "sum by (type, media) (rate(chirpy_chat_messages_total{job=\"chirpy-api\"}[5m])) * 60",
+          "expr": "(sum by (type, media) (rate(chirpy_chat_messages_total{job=\"chirpy-api\"}[5m])) * 60) or vector(0)",
           "legendFormat": "__auto"
         }
       ]
@@ -265,7 +265,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "refId": "A",
-          "expr": "sum by (event, result) (rate(chirpy_auth_events_total{job=\"chirpy-api\"}[5m])) * 60",
+          "expr": "(sum by (event, result) (rate(chirpy_auth_events_total{job=\"chirpy-api\"}[5m])) * 60) or vector(0)",
           "legendFormat": "__auto"
         }
       ]
@@ -296,7 +296,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "refId": "A",
-          "expr": "sum by (action) (rate(chirpy_chat_actions_total{job=\"chirpy-api\"}[5m])) * 60",
+          "expr": "(sum by (action) (rate(chirpy_chat_actions_total{job=\"chirpy-api\"}[5m])) * 60) or vector(0)",
           "legendFormat": "__auto"
         }
       ]
@@ -339,7 +339,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "refId": "A",
-          "expr": "sum by (result) (rate(chirpy_push_sent_total{job=\"chirpy-api\"}[15m])) * 60",
+          "expr": "(sum by (result) (rate(chirpy_push_sent_total{job=\"chirpy-api\"}[15m])) * 60) or vector(0)",
           "legendFormat": "__auto"
         }
       ]
@@ -370,7 +370,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "refId": "A",
-          "expr": "sum by (event, detail) (rate(chirpy_media_events_total{job=\"chirpy-api\"}[15m])) * 60",
+          "expr": "(sum by (event, detail) (rate(chirpy_media_events_total{job=\"chirpy-api\"}[15m])) * 60) or vector(0)",
           "legendFormat": "__auto"
         }
       ]
@@ -522,7 +522,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "refId": "A",
-          "expr": "sum by (topic, result) (rate(chirpy_queue_jobs_total{job=\"chirpy-api\"}[15m])) * 60",
+          "expr": "(sum by (topic, result) (rate(chirpy_queue_jobs_total{job=\"chirpy-api\"}[15m])) * 60) or vector(0)",
           "legendFormat": "__auto"
         }
       ]
