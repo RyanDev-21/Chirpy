@@ -95,6 +95,7 @@ func main() {
 
 	run("GET /users/me", func(c *client, i int) int { return c.get("/api/users/me") })
 	run("GET /chats (conversation list)", func(c *client, i int) int { return c.get("/api/chats") })
+	run("GET /friends (friend list)", func(c *client, i int) int { return c.get("/api/friends") })
 	privHistory := func(c *client, i int) int {
 		return c.get("/api/chat/" + w.friends[c.u.id][i%friendsPerUser].String() + "/messages")
 	}
