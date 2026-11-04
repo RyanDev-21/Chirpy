@@ -1,6 +1,7 @@
 package media
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -28,6 +29,8 @@ type Storage interface {
 	// Size is the stored object's size; ErrNoObject if it isn't there.
 	Size(ctx context.Context, key string) (int64, error)
 	Delete(ctx context.Context, key string) error
+	// Put stores a small object the server made itself (thumbnails).
+	Put(ctx context.Context, key, contentType string, data []byte) error
 }
 
 var ErrNoObject = errors.New("object not found")
@@ -184,4 +187,26 @@ func (s sigV4) presign(method, host, path string, headers, params map[string]str
 	key = hmacSHA256(key, "aws4_request")
 	sig := hex.EncodeToString(hmacSHA256(key, toSign))
 	return "https://" + host + canonPath + "?" + canonQuery + "&X-Amz-Signature=" + sig
+}
+
+func (r *R2) Put(ctx context.Context, key, contentType string, data []byte) error {
+	u := r.signer.presign(http.MethodPut, r.host, r.path(key), map[string]string{
+		"content-length": strconv.Itoa(len(data)),
+		"content-type":   contentType,
+	}, nil, time.Minute, time.Now())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.ContentLength = int64(len(data))
+	res, err := r.client.Do(req)
+	if err != nil {
+		return err
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("r2 put: %s", res.Status)
+	}
+	return nil
 }

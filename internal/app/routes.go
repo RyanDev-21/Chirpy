@@ -40,7 +40,9 @@ var (
 	limitDiscover = limitPolicy{"discover", 20, time.Minute}
 	limitDevices  = limitPolicy{"push_settings", 30, time.Minute}
 	limitMedia    = limitPolicy{"media_upload", 60, time.Minute}
-	limitAdmin    = limitPolicy{"admin", 120, time.Minute}
+	// each thumbnail is decoded and resized on the server
+	limitThumb = limitPolicy{"thumbnail", 20, time.Minute}
+	limitAdmin = limitPolicy{"admin", 120, time.Minute}
 	// reports are rare; a burst means abuse of the report button
 	limitReport = limitPolicy{"report", 10, time.Hour}
 	// every authenticated route also shares one per-user budget, so routes
@@ -134,6 +136,8 @@ func (a *App) Router() http.Handler {
 
 			r.With(limit(limitMedia)).Post("/media", a.handlers.media.Create)
 			r.Get("/media/{media_id}", a.handlers.media.Get)
+			r.With(limit(limitThumb)).Put("/media/{media_id}/thumbnail", a.handlers.media.PutThumbnail)
+			r.Get("/media/{media_id}/thumbnail", a.handlers.media.GetThumbnail)
 
 			r.With(limit(limitReport)).Post("/reports", a.handlers.reports.Create)
 

@@ -751,7 +751,8 @@ uploads get `507` for a while.
 ### Sending
 
 1. `POST /api/media` with `{"kind":"image","content_type":"image/jpeg","size":123456}`
-   (size in bytes, exact) → `201`:
+   (size in bytes, exact; optionally `"width"`, `"height"`, and for videos
+   `"duration_ms"`, up to 65 000) → `201`:
    ```json
    {"media_id":"uuid","upload_url":"https://…","method":"PUT",
     "headers":{"Content-Type":"image/jpeg","If-None-Match":"*"},"expires_in":600}
@@ -767,7 +768,8 @@ uploads get `507` for a while.
 ### Receiving
 
 - History messages and the `msg` WebSocket event carry
-  `"media":[{"id":"…","kind":"image","content_type":"image/jpeg","size":123456,"expires_at":"…","expired":false}]`
+  `"media":[{"id":"…","kind":"video","content_type":"video/mp4","size":123456,"expires_at":"…","expired":false,"duration_ms":42000,"width":1280,"height":720,"thumbnail":true}]`
+  (`duration_ms`/`width`/`height` only if the sender's app sent them)
   (an empty list when there is none; omitted from the event).
 - `GET /api/media/{media_id}` → `200 {"url":"https://…","content_type":"…","size":…,"expires_in":300}`;
   download from `url` within 5 minutes (no auth header needed on that link;
@@ -775,6 +777,15 @@ uploads get `507` for a while.
   are told to save the file, not display it.
   Only the two people in the private chat, or group members, may (`404`
   otherwise).
+- **Video thumbnails:** after uploading a video, the sending app extracts a
+  still frame and sends it: `PUT /api/media/{media_id}/thumbnail` with the
+  image as the body (JPEG, PNG or WebP, at most 2 MB) → `204`. The server
+  shrinks it to at most 480 px, keeps the shape and removes metadata. Only
+  for your own videos (`404`), once per video (`409`), 20 per minute.
+  Recipients get it with `GET /api/media/{media_id}/thumbnail` → `200 {"url":…}`
+  (same access rules as the video; it doesn't count as a download), so the
+  chat can show the still, a ▶️ and the length before anyone downloads the
+  video. It's deleted with the video.
 - **Save the file on the phone.** The server keeps it only **24 hours after
   everyone in the chat has downloaded it**, and never longer than **7 days**
   (in groups over 50 members, just the 7 days). After that `GET` returns `410`

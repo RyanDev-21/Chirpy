@@ -1,6 +1,7 @@
 -- name: CreateMedia :exec
-INSERT INTO media (id, owner_id, kind, content_type, size, created_at, expires_at, last_access_at)
-VALUES (@id, @owner_id, @kind, @content_type, @size, @now::timestamp, @expires_at::timestamp, @now::timestamp);
+INSERT INTO media (id, owner_id, kind, content_type, size, created_at, expires_at, last_access_at, duration_ms, width, height)
+VALUES (@id, @owner_id, @kind, @content_type, @size, @now::timestamp, @expires_at::timestamp, @now::timestamp,
+        sqlc.narg(duration_ms), sqlc.narg(width), sqlc.narg(height));
 
 -- name: MediaUploadedSince :one
 -- bytes a user started uploading since @since (daily quota)
@@ -19,7 +20,7 @@ UPDATE media SET status = 'ready', chat_type = @chat_type, chat_id = @chat_id, m
 WHERE id = @id AND owner_id = @owner_id AND status = 'pending' AND deleted_at IS NULL;
 
 -- name: MediaForMessages :many
-SELECT id, message_id, kind, content_type, size, expires_at, deleted_at FROM media
+SELECT id, message_id, kind, content_type, size, expires_at, deleted_at, duration_ms, width, height, has_thumbnail FROM media
 WHERE message_id = ANY(@ids::uuid[]) ORDER BY created_at, id;
 
 -- name: RecordMediaDownload :exec
@@ -58,3 +59,11 @@ SELECT id, size FROM media WHERE deleted_at IS NULL ORDER BY last_access_at, cre
 
 -- name: MarkMediaDeleted :exec
 UPDATE media SET deleted_at = @now::timestamp WHERE id = ANY(@ids::uuid[]);
+
+-- name: SetThumbnail :execrows
+-- only the uploader's own, live video
+UPDATE media SET has_thumbnail = true
+WHERE id = @id AND owner_id = @owner_id AND kind = 'video' AND deleted_at IS NULL AND NOT has_thumbnail;
+
+-- name: ThumbnailsOf :many
+SELECT id FROM media WHERE id = ANY(@ids::uuid[]) AND has_thumbnail;

@@ -5,6 +5,8 @@ package integration
 import (
 	"bytes"
 	"context"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -82,6 +84,18 @@ func (f *fakeR2) Delete(_ context.Context, key string) error {
 	defer f.mu.Unlock()
 	delete(f.objects, key)
 	return nil
+}
+func (f *fakeR2) Put(_ context.Context, key, _ string, data []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.objects[key] = data
+	return nil
+}
+func (f *fakeR2) hasKey(key string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.objects[key]
+	return ok
 }
 func (f *fakeR2) has(id string) bool {
 	f.mu.Lock()
@@ -349,4 +363,96 @@ func TestMediaSecurityGaps(t *testing.T) {
 	if !e.r2.has(up.ID) {
 		t.Fatal("cleanup removed media of a live account")
 	}
+}
+
+func TestVideoThumbnailAndDims(t *testing.T) {
+	e := newEnv(t)
+	alice, bob, mallory := e.signup("alice"), e.signup("bobby"), e.signup("mallory")
+	e.befriend(alice, bob)
+	// dims are checked: videos are at most ~60 s
+	e.expect(e.do("POST", "/api/media", alice.Token, map[string]any{"kind": "video", "content_type": "video/mp4", "size": 10, "duration_ms": 600000}), 400)
+	var up upload
+	e.expect(e.do("POST", "/api/media", alice.Token, map[string]any{"kind": "video", "content_type": "video/mp4", "size": 9,
+		"duration_ms": 42000, "width": 1280, "height": 720}), 201).json(t, &up)
+	req, _ := http.NewRequest("PUT", up.URL, strings.NewReader("mp4 bytes"))
+	for k, v := range up.Headers {
+		req.Header.Set(k, v)
+	}
+	if res, err := http.DefaultClient.Do(req); err != nil || res.StatusCode != 200 {
+		t.Fatalf("upload %v %v", err, res)
+	}
+
+	frame := photoWithEXIF(t) // a real JPEG with EXIF in it
+	thumb := func(u user, id string, body []byte) int {
+		r, _ := e.doRaw("PUT", "/api/media/"+id+"/thumbnail", u.Token, body, map[string]string{"Content-Type": "image/jpeg"})
+		return r.code
+	}
+	if got := thumb(alice, up.ID, []byte("not an image")); got != 400 {
+		t.Fatalf("bad thumbnail: %d", got)
+	}
+	if got := thumb(mallory, up.ID, frame); got != 404 {
+		t.Fatalf("someone else's video: %d", got)
+	}
+	photo := e.uploadFile(alice, "image", "image/jpeg", []byte("jpeg"))
+	if got := thumb(alice, photo, frame); got != 404 {
+		t.Fatalf("thumbnail on a photo: %d", got)
+	}
+	if got := thumb(alice, up.ID, frame); got != 204 {
+		t.Fatalf("thumbnail: %d", got)
+	}
+	if got := thumb(alice, up.ID, pngFrame(t)); got != 409 { // no swapping the preview later
+		t.Fatalf("second thumbnail: %d", got)
+	}
+	e.expect(e.do("POST", "/api/chats/message", alice.Token, map[string]any{"to_id": bob.ID, "type": "private", "media": []string{up.ID}}), 200)
+
+	var page struct {
+		MsgList []struct {
+			Media []struct {
+				DurationMs int  `json:"duration_ms"`
+				Width      int  `json:"width"`
+				Height     int  `json:"height"`
+				Thumbnail  bool `json:"thumbnail"`
+			} `json:"media"`
+		} `json:"msgList"`
+	}
+	e.expect(e.do("GET", "/api/chat/"+alice.ID+"/messages", bob.Token, nil), 200).json(t, &page)
+	if m := page.MsgList[0].Media[0]; m.DurationMs != 42000 || m.Width != 1280 || m.Height != 720 || !m.Thumbnail {
+		t.Fatalf("attachment %+v", m)
+	}
+	// bob gets the still without downloading the video; mallory can't
+	e.expect(e.do("GET", "/api/media/"+up.ID+"/thumbnail", mallory.Token, nil), 404)
+	var d struct {
+		URL string `json:"url"`
+	}
+	e.expect(e.do("GET", "/api/media/"+up.ID+"/thumbnail", bob.Token, nil), 200).json(t, &d)
+	res, err := http.Get(d.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if bytes.Contains(img, []byte("Exif")) || bytes.Contains(img, []byte("GPS")) {
+		t.Fatal("thumbnail kept EXIF metadata")
+	}
+	e.now(`SELECT (delivered_at IS NULL)::text FROM media WHERE id = $1`, "true", up.ID) // a thumbnail isn't a download
+
+	// the thumbnail goes with its video
+	if _, err := e.db.Exec(`UPDATE media SET expires_at = NOW() - interval '1 minute' WHERE id = $1`, up.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.app.Cleanup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if e.r2.hasKey("t/"+up.ID) || e.r2.has(up.ID) {
+		t.Fatal("video or thumbnail left in storage")
+	}
+}
+
+func pngFrame(t *testing.T) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	if err := png.Encode(&b, image.NewRGBA(image.Rect(0, 0, 64, 36))); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
 }
