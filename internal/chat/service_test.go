@@ -15,7 +15,6 @@ import (
 )
 
 type fakeRepo struct {
-	changes     map[uuid.UUID]messageChange
 	history     []MessageMetaDataRes
 	since       int
 	saved       []MessageMetaDataRes
@@ -51,7 +50,7 @@ func (f *fakeRepo) LocateMessage(_ context.Context, id uuid.UUID) (messageRef, e
 		if m.ID != id {
 			continue
 		}
-		if f.changes[id].Deleted {
+		if m.Deleted {
 			break
 		}
 		to, _ := uuid.Parse(m.MsgInfo.Msg.ToID)
@@ -115,22 +114,25 @@ func (f *fakeRepo) RecentPublic(context.Context, uuid.UUID, int) ([]MessageMetaD
 	return f.history, nil
 }
 func (f *fakeRepo) UpdateLastSeen(context.Context, string, uuid.UUID, uuid.UUID) error { return nil }
-func (f *fakeRepo) MessageChanges(context.Context, string, []uuid.UUID) (map[uuid.UUID]messageChange, error) {
-	return f.changes, nil
-}
+
+// EditMessage and DeleteMessage change the stored row, like postgres.
 func (f *fakeRepo) EditMessage(_ context.Context, _ string, id uuid.UUID, content string, at time.Time) (bool, error) {
-	if f.changes == nil {
-		f.changes = map[uuid.UUID]messageChange{}
+	for i := range f.saved {
+		if f.saved[i].ID == id && !f.saved[i].Deleted {
+			f.saved[i].MsgInfo.Msg.Content, f.saved[i].EditedAt = content, &at
+			return true, nil
+		}
 	}
-	f.changes[id] = messageChange{Content: content, EditedAt: &at}
-	return true, nil
+	return false, nil
 }
 func (f *fakeRepo) DeleteMessage(_ context.Context, _ string, id uuid.UUID, _ time.Time) (bool, error) {
-	if f.changes == nil {
-		f.changes = map[uuid.UUID]messageChange{}
+	for i := range f.saved {
+		if f.saved[i].ID == id && !f.saved[i].Deleted {
+			f.saved[i].MsgInfo.Msg.Content, f.saved[i].Deleted = "", true
+			return true, nil
+		}
 	}
-	f.changes[id] = messageChange{Deleted: true}
-	return true, nil
+	return false, nil
 }
 
 type fakeGroups map[uuid.UUID][]uuid.UUID

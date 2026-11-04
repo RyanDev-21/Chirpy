@@ -25,7 +25,9 @@ var (
 	ErrInvalidCode      = errors.New("invalid or expired code")
 	ErrMailUnavailable  = errors.New("could not send email, try again shortly")
 	ErrInvalidGoogle    = errors.New("invalid Google sign-in")
-	ErrReauthRequired   = errors.New("confirm with your password or a fresh Google sign-in")
+	// ErrGoogleUnavailable: GOOGLE_CLIENT_IDS is not set on this server
+	ErrGoogleUnavailable = errors.New("Google sign-in is not configured")
+	ErrReauthRequired    = errors.New("confirm with your password or a fresh Google sign-in")
 )
 
 const (
@@ -269,7 +271,7 @@ func (s *accountService) ResetPassword(ctx context.Context, email, code, newPass
 
 func (s *accountService) Google(ctx context.Context, idToken string) (GoogleResult, error) {
 	if s.google == nil {
-		return GoogleResult{}, ErrInvalidGoogle
+		return GoogleResult{}, ErrGoogleUnavailable
 	}
 	c, err := s.google.Verify(ctx, idToken)
 	if err != nil || !c.EmailVerified || c.Subject == "" || c.Email == "" {
@@ -362,7 +364,9 @@ func (s *accountService) DeleteAccount(ctx context.Context, userID uuid.UUID, pa
 		if err != nil || !ok {
 			return ErrReauthRequired
 		}
-	case googleIDToken != "" && s.google != nil:
+	case googleIDToken != "" && s.google == nil:
+		return ErrGoogleUnavailable
+	case googleIDToken != "":
 		c, err := s.google.Verify(ctx, googleIDToken)
 		if err != nil {
 			return ErrReauthRequired
