@@ -95,12 +95,14 @@ func (a *App) Router() http.Handler {
 			r.Use(limit(limitAPI))
 
 			r.Get("/users/me", a.handlers.users.Me)
+			r.With(limit(limitAccount)).Patch("/users/me", a.handlers.users.UpdateMe)
 			r.With(limit(limitAccount)).Delete("/users/me", a.handlers.account.DeleteAccount)
 			r.With(limit(limitPassword)).Post("/users/password", a.handlers.users.UpdatePassword)
 			r.With(limit(limitSearch)).Get("/users/search", a.handlers.users.SearchUser)
 			r.Get("/users/blocks", a.handlers.friends.Blocked)
 			r.With(limit(limitFriendUp)).Post("/users/blocks", a.handlers.friends.Block)
 			r.With(limit(limitFriendUp)).Delete("/users/blocks/{user_id}", a.handlers.friends.Unblock)
+			r.Get("/users/{user_id}", a.handlers.users.Profile)
 
 			r.Route("/friends", func(r chi.Router) {
 				r.Get("/", a.handlers.friends.List)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"RyanDev-21.com/Chirpy/internal/platform/secure"
 	"RyanDev-21.com/Chirpy/internal/testutil"
@@ -53,6 +54,27 @@ func (f *fakeRepo) UpdateUserPassword(_ context.Context, p UpdateUserPassword) (
 func (f *fakeRepo) RevokeAllRefreshTokens(context.Context, uuid.UUID) error { f.revoked++; return nil }
 func (f *fakeRepo) SearchByName(context.Context, uuid.UUID, string) ([]PublicUser, error) {
 	return []PublicUser{}, nil
+}
+
+func (f *fakeRepo) Rename(_ context.Context, id uuid.UUID, name string, now, cutoff time.Time) (*User, error) {
+	u := f.users[id]
+	if u.NameChangeAvailableAt != nil && u.NameChangeAvailableAt.After(now) {
+		return nil, &RenameTooSoonError{Until: *u.NameChangeAvailableAt}
+	}
+	next := now.Add(RenameEvery)
+	u.Name, u.NameChangeAvailableAt = name, &next
+	return u, nil
+}
+func (f *fakeRepo) SetBio(_ context.Context, id uuid.UUID, bio string) (*User, error) {
+	f.users[id].Bio = bio
+	return f.users[id], nil
+}
+func (f *fakeRepo) PublicProfile(_ context.Context, id, _ uuid.UUID) (Profile, error) {
+	u, ok := f.users[id]
+	if !ok {
+		return Profile{}, ErrUserNotFound
+	}
+	return Profile{ID: id, Name: u.Name, Bio: u.Bio}, nil
 }
 
 func newSvc(t *testing.T) (UserService, *fakeRepo) {
@@ -124,5 +146,42 @@ func TestUpdatePasswordRevokesSessions(t *testing.T) {
 	}
 	if repo.revoked != 1 {
 		t.Fatalf("refresh tokens revoked %d times", repo.revoked)
+	}
+}
+
+func TestUpdateProfile(t *testing.T) {
+	svc, repo := newSvc(t)
+	ctx := context.Background()
+	u, _ := repo.Create(ctx, CreateUserInput{Name: "before", Email: "p@x.io"})
+	str := func(s string) *string { return &s }
+	renamed := 0
+	svc.OnRename(func(context.Context, uuid.UUID) { renamed++ })
+
+	for _, req := range []UpdateProfileRequest{
+		{},
+		{Name: str("no spaces allowed")},
+		{Name: str("ab")},
+	} {
+		if _, err := svc.UpdateProfile(ctx, u.ID, req); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("%+v: %v", req, err)
+		}
+	}
+	if _, err := svc.UpdateProfile(ctx, u.ID, UpdateProfileRequest{Bio: str(strings.Repeat("b", maxBioLen+1))}); !errors.Is(err, ErrBioTooLong) {
+		t.Fatalf("long bio: %v", err)
+	}
+	got, err := svc.UpdateProfile(ctx, u.ID, UpdateProfileRequest{Name: str(" after "), Bio: str(" hi ")})
+	if err != nil || got.Name != "after" || got.Bio != "hi" || renamed != 1 {
+		t.Fatalf("update = %+v %v (renamed %d)", got, err, renamed)
+	}
+	// same name again is not a rename; a different one is too soon
+	if _, err := svc.UpdateProfile(ctx, u.ID, UpdateProfileRequest{Name: str("after")}); err != nil || renamed != 1 {
+		t.Fatalf("same name: %v (renamed %d)", err, renamed)
+	}
+	var soon *RenameTooSoonError
+	if _, err := svc.UpdateProfile(ctx, u.ID, UpdateProfileRequest{Name: str("again")}); !errors.As(err, &soon) {
+		t.Fatalf("second rename: %v", err)
+	}
+	if name, _ := svc.GetName(ctx, u.ID); name != "after" {
+		t.Fatalf("cached name %q", name)
 	}
 }

@@ -80,3 +80,58 @@ func (h *UserHandler) Me(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err)
 	}
 }
+
+// UpdateMe handles PATCH /api/users/me {"name"?, "bio"?}.
+func (h *UserHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var req UpdateProfileRequest
+	if err := httpx.Decode(w, r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid parameters")
+		return
+	}
+	u, err := h.svc.UpdateProfile(r.Context(), me, req)
+	var soon *RenameTooSoonError
+	switch {
+	case err == nil:
+		httpx.JSON(w, http.StatusOK, u)
+	case errors.Is(err, ErrInvalidInput):
+		httpx.Error(w, http.StatusBadRequest, "send name and/or bio; name is 3-25 characters without spaces")
+	case errors.Is(err, ErrBioTooLong):
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrDuplicateName):
+		httpx.Error(w, http.StatusConflict, "username taken")
+	case errors.As(err, &soon):
+		httpx.Error(w, http.StatusForbidden, soon.Error())
+	case errors.Is(err, ErrUserNotFound):
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+	default:
+		httpx.ServerError(w, r, err)
+	}
+}
+
+// Profile handles GET /api/users/{user_id}: another user's public profile.
+func (h *UserHandler) Profile(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id, err := httpx.PathUUID(r, "user_id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	p, err := h.svc.Profile(r.Context(), me, id)
+	switch {
+	case err == nil:
+		httpx.JSON(w, http.StatusOK, p)
+	case errors.Is(err, ErrUserNotFound):
+		httpx.Error(w, http.StatusNotFound, "no user found")
+	default:
+		httpx.ServerError(w, r, err)
+	}
+}

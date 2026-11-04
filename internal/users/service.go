@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/mail"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"RyanDev-21.com/Chirpy/internal/platform/secure"
@@ -29,12 +30,21 @@ type UserService interface {
 	Me(ctx context.Context, userID uuid.UUID) (*User, error)
 	// GetName returns a user's display name (cached).
 	GetName(ctx context.Context, userID uuid.UUID) (string, error)
+	// UpdateProfile changes the caller's username (at most once per
+	// RenameEvery) and/or bio.
+	UpdateProfile(ctx context.Context, me uuid.UUID, req UpdateProfileRequest) (*User, error)
+	// Profile is another user's public profile (hidden when blocked).
+	Profile(ctx context.Context, viewer, id uuid.UUID) (Profile, error)
+	// OnRename registers cleanup after a username change (friend lists
+	// cache names).
+	OnRename(fn func(ctx context.Context, userID uuid.UUID))
 }
 
 type userService struct {
-	repo   UserRepo
-	store  Store
-	logger *slog.Logger
+	repo     UserRepo
+	store    Store
+	onRename []func(ctx context.Context, userID uuid.UUID)
+	logger   *slog.Logger
 }
 
 func NewUserService(repo UserRepo, store Store, logger *slog.Logger) UserService {
@@ -162,4 +172,60 @@ func (s *userService) GetName(ctx context.Context, userID uuid.UUID) (string, er
 		s.logger.WarnContext(ctx, "failed to cache user name", "error", err)
 	}
 	return user.Name, nil
+}
+
+func (s *userService) UpdateProfile(ctx context.Context, me uuid.UUID, req UpdateProfileRequest) (*User, error) {
+	if req.Name == nil && req.Bio == nil {
+		return nil, ErrInvalidInput
+	}
+	if req.Bio != nil {
+		bio := strings.TrimSpace(*req.Bio)
+		if utf8.RuneCountInString(bio) > maxBioLen {
+			return nil, ErrBioTooLong
+		}
+		req.Bio = &bio
+	}
+	var (
+		u   *User
+		err error
+	)
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if err := ValidateName(name); err != nil {
+			return nil, err
+		}
+		cur, _, err := s.repo.GetUserByID(ctx, me)
+		if err != nil {
+			return nil, err
+		}
+		if name != cur.Name {
+			now := time.Now().UTC()
+			if u, err = s.repo.Rename(ctx, me, name, now, now.Add(-RenameEvery)); err != nil {
+				return nil, err
+			}
+			if err := s.store.SetNames(ctx, PublicUser{ID: me, Name: name}); err != nil {
+				s.logger.WarnContext(ctx, "failed to cache new name", "error", err)
+			}
+			for _, fn := range s.onRename {
+				fn(ctx, me)
+			}
+		}
+	}
+	if req.Bio != nil {
+		if u, err = s.repo.SetBio(ctx, me, *req.Bio); err != nil {
+			return nil, err
+		}
+	}
+	if u == nil { // same name as before, no bio
+		u, _, err = s.repo.GetUserByID(ctx, me)
+	}
+	return u, err
+}
+
+func (s *userService) Profile(ctx context.Context, viewer, id uuid.UUID) (Profile, error) {
+	return s.repo.PublicProfile(ctx, id, viewer)
+}
+
+func (s *userService) OnRename(fn func(ctx context.Context, userID uuid.UUID)) {
+	s.onRename = append(s.onRename, fn)
 }

@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"errors"
+	"time"
 
 	"RyanDev-21.com/Chirpy/internal/database"
 	"github.com/google/uuid"
@@ -19,6 +20,12 @@ type UserRepo interface {
 	RevokeAllRefreshTokens(ctx context.Context, userID uuid.UUID) error
 	// SearchByName leaves out users with a block either way with me.
 	SearchByName(ctx context.Context, me uuid.UUID, q string) ([]PublicUser, error)
+	// Rename changes the username unless it was changed after cutoff
+	// (RenameTooSoonError); ErrDuplicateName if taken.
+	Rename(ctx context.Context, id uuid.UUID, name string, now, cutoff time.Time) (*User, error)
+	SetBio(ctx context.Context, id uuid.UUID, bio string) (*User, error)
+	// PublicProfile is ErrUserNotFound if either user blocked the other.
+	PublicProfile(ctx context.Context, id, viewer uuid.UUID) (Profile, error)
 }
 
 type userRepo struct {
@@ -30,7 +37,7 @@ func NewUserRepo(queries *database.Queries) UserRepo {
 }
 
 func toUser(u database.User) *User {
-	return &User{
+	out := &User{
 		ID:        u.ID,
 		Name:      u.Name,
 		CreatedAt: u.CreatedAt,
@@ -38,7 +45,14 @@ func toUser(u database.User) *User {
 		Email:     u.Email,
 		IsRED:     u.IsChirpyRed.Bool,
 		Verified:  u.EmailVerifiedAt.Valid,
+		Bio:       u.Bio,
 	}
+	if u.NameChangedAt.Valid {
+		if next := u.NameChangedAt.Time.UTC().Add(RenameEvery); next.After(time.Now()) {
+			out.NameChangeAvailableAt = &next
+		}
+	}
+	return out
 }
 
 func (r *userRepo) Create(ctx context.Context, input CreateUserInput) (*User, error) {
@@ -106,4 +120,50 @@ func (r *userRepo) SearchByName(ctx context.Context, me uuid.UUID, q string) ([]
 		out = append(out, PublicUser{ID: v.ID, Name: v.Name})
 	}
 	return out, nil
+}
+
+func (r *userRepo) Rename(ctx context.Context, id uuid.UUID, name string, now, cutoff time.Time) (*User, error) {
+	u, err := r.queries.RenameUser(ctx, database.RenameUserParams{
+		ID: id, Name: name, Now: pgtype.Timestamp{Time: now, Valid: true}, Cutoff: pgtype.Timestamp{Time: cutoff, Valid: true},
+	})
+	var pgErr *pgconn.PgError
+	switch {
+	case errors.As(err, &pgErr) && pgErr.Code == "23505":
+		return nil, ErrDuplicateName
+	case errors.Is(err, pgx.ErrNoRows):
+		cur, _, gerr := r.GetUserByID(ctx, id)
+		if gerr != nil {
+			return nil, gerr
+		}
+		until := now.Add(RenameEvery)
+		if cur.NameChangeAvailableAt != nil {
+			until = *cur.NameChangeAvailableAt
+		}
+		return nil, &RenameTooSoonError{Until: until}
+	case err != nil:
+		return nil, err
+	}
+	return toUser(u), nil
+}
+
+func (r *userRepo) SetBio(ctx context.Context, id uuid.UUID, bio string) (*User, error) {
+	u, err := r.queries.SetBio(ctx, database.SetBioParams{ID: id, Bio: bio})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return toUser(u), nil
+}
+
+func (r *userRepo) PublicProfile(ctx context.Context, id, viewer uuid.UUID) (Profile, error) {
+	p, err := r.queries.GetPublicProfile(ctx, database.GetPublicProfileParams{ID: id, Viewer: viewer})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Profile{}, ErrUserNotFound
+	}
+	if err != nil {
+		return Profile{}, err
+	}
+	return Profile{ID: p.ID, Name: p.Name, Bio: p.Bio}, nil
 }
