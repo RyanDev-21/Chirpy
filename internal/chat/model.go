@@ -101,14 +101,6 @@ type messageRef struct {
 	CreatedAt time.Time
 }
 
-// messageChange is the edit/delete state of a message, read from postgres
-// and laid over cached copies (which are written once, at send time).
-type messageChange struct {
-	Content  string
-	EditedAt *time.Time
-	Deleted  bool
-}
-
 // EditedMessage is the response to an edit.
 type EditedMessage struct {
 	MsgID    uuid.UUID `json:"msg_id"`

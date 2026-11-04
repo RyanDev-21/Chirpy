@@ -149,6 +149,7 @@ Use Android's Credential Manager "Sign in with Google" with the server's
 username, `409` username taken, `401` expired/used token (start again).
 
 Invalid tokens and Google accounts with an unverified email return `401`.
+`503` means Google sign-in isn't configured on the server (offer email sign-in).
 
 ### Refresh
 
@@ -567,7 +568,7 @@ deleted", and keep replies pointing at it working.
 Query parameters (use `since` or `before`, not both):
 
 - none: the most recent page.
-- `limit=1..100`: page size (default 50).
+- `limit=1..100`: page size (default 30).
 - `before=<message_id>`: the page just older than that message, for "load
   more" while scrolling up. Pass the `message_id` of the oldest message you
   have; an empty list means you reached the start. A message from another

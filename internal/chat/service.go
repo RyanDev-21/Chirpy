@@ -18,7 +18,7 @@ import (
 
 const (
 	streamCap = 200
-	pageSize  = 50
+	pageSize  = 30 // default history page: fits Render free's CPU slice
 	maxPage   = 100
 )
 
@@ -320,18 +320,12 @@ func (s *chatService) MarkSeen(ctx context.Context, me, other uuid.UUID, msgIDSt
 
 // --- current state of a page ---
 
-// withState brings a page of messages up to date from postgres: edits and
-// deletions (cached copies are written once, at send time, so a cache
-// reseeded concurrently with an edit can't serve stale text) and reaction
-// counts. Two indexed queries per page, whatever its source.
+// withState attaches reaction counts to a page of messages (one indexed
+// query); edits and deletions are already in the rows read from postgres.
 func (s *chatService) withState(ctx context.Context, kind string, me uuid.UUID, msgs []MessageMetaDataRes) ([]MessageMetaDataRes, error) {
 	ids := make([]uuid.UUID, len(msgs))
 	for i, m := range msgs {
 		ids[i] = m.ID
-	}
-	changes, err := s.repo.MessageChanges(ctx, kind, ids)
-	if err != nil {
-		return nil, err
 	}
 	counts, err := s.repo.ReactionCounts(ctx, kind, me, ids)
 	if err != nil {
@@ -339,9 +333,6 @@ func (s *chatService) withState(ctx context.Context, kind string, me uuid.UUID, 
 	}
 	for i := range msgs {
 		m := &msgs[i]
-		if c, ok := changes[m.ID]; ok {
-			m.MsgInfo.Msg.Content, m.EditedAt, m.Deleted = c.Content, c.EditedAt, c.Deleted
-		}
 		if m.Deleted {
 			m.MsgInfo.Msg.Content = ""
 		}
