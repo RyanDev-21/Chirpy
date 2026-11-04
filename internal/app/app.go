@@ -15,6 +15,7 @@ import (
 	"RyanDev-21.com/Chirpy/internal/chat"
 	"RyanDev-21.com/Chirpy/internal/config"
 	"RyanDev-21.com/Chirpy/internal/database"
+	"RyanDev-21.com/Chirpy/internal/discover"
 	"RyanDev-21.com/Chirpy/internal/friends"
 	"RyanDev-21.com/Chirpy/internal/groups"
 	"RyanDev-21.com/Chirpy/internal/platform/mail"
@@ -49,13 +50,14 @@ type App struct {
 }
 
 type handlers struct {
-	users   *users.UserHandler
-	friends *friends.Handler
-	auth    *authsvc.AuthHandler
-	account *authsvc.AccountHandler
-	chat    *chat.ChatHandler
-	groups  *groups.GroupHandler
-	admin   *adminHandler
+	users    *users.UserHandler
+	friends  *friends.Handler
+	auth     *authsvc.AuthHandler
+	account  *authsvc.AccountHandler
+	chat     *chat.ChatHandler
+	groups   *groups.GroupHandler
+	admin    *adminHandler
+	discover *discover.Handler
 }
 
 // New connects to Postgres and Redis and builds all services.
@@ -169,13 +171,14 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		cfg.JWTSecret, logger)
 
 	a.handlers = handlers{
-		users:   users.NewUserHandler(a.users),
-		friends: friends.NewHandler(a.friends),
-		auth:    authsvc.NewAuthHandler(a.auth),
-		account: authsvc.NewAccountHandler(accounts),
-		chat:    chat.NewChatHandler(a.chat, a.hub, ws.Upgrader(cfg.CORSOrigins), logger),
-		groups:  groups.NewGroupHandler(a.groups),
-		admin:   &adminHandler{queries: queries},
+		users:    users.NewUserHandler(a.users),
+		friends:  friends.NewHandler(a.friends),
+		auth:     authsvc.NewAuthHandler(a.auth),
+		account:  authsvc.NewAccountHandler(accounts),
+		chat:     chat.NewChatHandler(a.chat, a.hub, ws.Upgrader(cfg.CORSOrigins), logger),
+		groups:   groups.NewGroupHandler(a.groups),
+		admin:    &adminHandler{queries: queries},
+		discover: discover.NewHandler(discover.NewService(queries)),
 	}
 	return a, nil
 }

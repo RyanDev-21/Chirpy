@@ -180,6 +180,8 @@ exists.
 ```json
 {"id":"uuid","name":"alice","email":"alice@example.com","email_verified":true,
  "bio":"hello","name_change_available_at":null,"avatar_url":null,
+ "location":{"id":"th-bangkok","name":"Bangkok","country":"th"},
+ "interests":["gaming","kpop"],"discoverable":false,
  "created_at":"…","updated_at":"…","is_chirpy_red":false}
 ```
 
@@ -199,12 +201,23 @@ is. Maximum 10 requests/minute.
   name doesn't affect login.
 - `bio`: trimmed, at most 150 characters (`400`); can be changed any time,
   `""` clears it.
+- `location`: a place `id` from **Discovery options** (`400` otherwise), or
+  `""` to clear. A city, "other city in <country>", or a world region; no
+  coordinates are ever sent or stored.
+- `interests`: the full new list, up to 10 ids from **Discovery options**
+  (`400` otherwise); `[]` clears it. Duplicates are ignored.
+- `discoverable`: `true` to appear in other people's suggestions (off by
+  default).
+
+Everything is validated first: if one field is invalid, nothing changes.
 
 ### View a profile
 
 `GET /api/users/{user_id}` →
-`200 {"id":"uuid","name":"bob","bio":"…","avatar_url":"/api/users/uuid/avatar?v=…"}`.
-No email. `404` for unknown users, and when either of you blocked the other.
+`200 {"id":"uuid","name":"bob","bio":"…","avatar_url":"/api/users/uuid/avatar?v=…","location":{…},"interests":["…"]}`.
+No email. `location` and `interests` are only shown to friends, or to
+everyone if the user is discoverable (otherwise `null` and `[]`). `404` for
+unknown users, and when either of you blocked the other.
 
 ### Profile picture
 
@@ -283,6 +296,43 @@ fail as if your account didn't exist (`404`).
 - `GET /api/users/blocks` →
   `200 {"blocked":[{"user_id":"uuid","name":"bob","created_at":"…"}]}`,
   newest first.
+
+## Discovery ("people you may know")
+
+### Discovery options
+
+`GET /api/discover/options` → `200`:
+
+```json
+{"countries":[{"code":"th","name":"Thailand","places":[
+   {"id":"th-bangkok","name":"Bangkok","country":"th"},
+   {"id":"th","name":"Other city in Thailand","country":"th"}]}],
+ "regions":[{"id":"europe","name":"Europe"}],
+ "interests":[{"id":"gaming","name":"Video games","category":"Games"}],
+ "max_interests":10}
+```
+
+Detailed cities for Asian countries; the rest of the world is picked by
+region. Show interests grouped by `category`. The lists rarely change
+(cached for a day).
+
+### Suggestions
+
+`GET /api/discover[?limit=1..50&page=0..9]` (default 20 per page) →
+`200`:
+
+```json
+{"suggestions":[{"id":"uuid","name":"lin","avatar_url":null,
+  "location":{"id":"th-bangkok","name":"Bangkok","country":"th"},
+  "shared_interests":["gaming"],"mutual_friends":2}]}
+```
+
+Only users who turned on `discoverable`, and you must be discoverable too
+(`403` otherwise: seeing others means being visible). Friends, anyone with a
+pending request either way, and blocks either way are left out. People are
+ranked by mutual friends, then shared interests, then same city (same
+country counts a little); people with nothing in common don't appear. No
+distances are shown. Maximum 20 requests/minute.
 
 ## Friends
 

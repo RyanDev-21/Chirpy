@@ -122,6 +122,9 @@ type User struct {
 	Bio             string
 	NameChangedAt   pgtype.Timestamp
 	AvatarAt        pgtype.Timestamp
+	LocationID      pgtype.Text
+	LocationCountry string
+	Discoverable    bool
 }
 
 type UserAvatar struct {
@@ -142,6 +145,11 @@ type UserIdentity struct {
 	UserID    uuid.UUID
 	Email     string
 	CreatedAt pgtype.Timestamp
+}
+
+type UserInterest struct {
+	UserID     uuid.UUID
+	InterestID string
 }
 
 type UserRelationship struct {

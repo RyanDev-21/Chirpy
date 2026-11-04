@@ -12,10 +12,47 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addInterests = `-- name: AddInterests :exec
+INSERT INTO user_interests (user_id, interest_id)
+SELECT $1, unnest($2::text[])
+ON CONFLICT DO NOTHING
+`
+
+type AddInterestsParams struct {
+	UserID uuid.UUID
+	Ids    []string
+}
+
+func (q *Queries) AddInterests(ctx context.Context, arg AddInterestsParams) error {
+	_, err := q.db.Exec(ctx, addInterests, arg.UserID, arg.Ids)
+	return err
+}
+
+const areFriendsSQL = `-- name: AreFriendsSQL :one
+SELECT EXISTS (
+    SELECT 1 FROM user_relationships
+    WHERE status = 'confirm'
+      AND LEAST(user_id, otherUser_id) = LEAST($1::uuid, $2::uuid)
+      AND GREATEST(user_id, otherUser_id) = GREATEST($1::uuid, $2::uuid)
+)
+`
+
+type AreFriendsSQLParams struct {
+	A uuid.UUID
+	B uuid.UUID
+}
+
+func (q *Queries) AreFriendsSQL(ctx context.Context, arg AreFriendsSQLParams) (bool, error) {
+	row := q.db.QueryRow(ctx, areFriendsSQL, arg.A, arg.B)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users(id, name, created_at, updated_at, email, password)
 VALUES (gen_random_uuid(), $1, NOW(), NOW(), $2, $3)
-RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at
+RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable
 `
 
 type CreateUserParams struct {
@@ -39,6 +76,9 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Bio,
 		&i.NameChangedAt,
 		&i.AvatarAt,
+		&i.LocationID,
+		&i.LocationCountry,
+		&i.Discoverable,
 	)
 	return i, err
 }
@@ -90,8 +130,32 @@ func (q *Queries) GetAvatar(ctx context.Context, arg GetAvatarParams) (GetAvatar
 	return i, err
 }
 
+const getInterests = `-- name: GetInterests :many
+SELECT interest_id FROM user_interests WHERE user_id = $1 ORDER BY interest_id
+`
+
+func (q *Queries) GetInterests(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, getInterests, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var interest_id string
+		if err := rows.Scan(&interest_id); err != nil {
+			return nil, err
+		}
+		items = append(items, interest_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getPublicProfile = `-- name: GetPublicProfile :one
-SELECT u.id, u.name, u.bio, u.avatar_at FROM users u
+SELECT u.id, u.name, u.bio, u.avatar_at, u.location_id, u.discoverable FROM users u
 WHERE u.id = $1
   AND NOT EXISTS (
       SELECT 1 FROM user_blocks b
@@ -106,10 +170,12 @@ type GetPublicProfileParams struct {
 }
 
 type GetPublicProfileRow struct {
-	ID       uuid.UUID
-	Name     string
-	Bio      string
-	AvatarAt pgtype.Timestamp
+	ID           uuid.UUID
+	Name         string
+	Bio          string
+	AvatarAt     pgtype.Timestamp
+	LocationID   pgtype.Text
+	Discoverable bool
 }
 
 // hidden (no row) when either user blocked the other
@@ -121,12 +187,14 @@ func (q *Queries) GetPublicProfile(ctx context.Context, arg GetPublicProfilePara
 		&i.Name,
 		&i.Bio,
 		&i.AvatarAt,
+		&i.LocationID,
+		&i.Discoverable,
 	)
 	return i, err
 }
 
 const getUserInfoByEmail = `-- name: GetUserInfoByEmail :one
-SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at FROM users WHERE email = $1
+SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, error) {
@@ -144,12 +212,15 @@ func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, e
 		&i.Bio,
 		&i.NameChangedAt,
 		&i.AvatarAt,
+		&i.LocationID,
+		&i.LocationCountry,
+		&i.Discoverable,
 	)
 	return i, err
 }
 
 const getUserInfoByID = `-- name: GetUserInfoByID :one
-SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at FROM users WHERE id = $1
+SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, error) {
@@ -167,14 +238,31 @@ func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, erro
 		&i.Bio,
 		&i.NameChangedAt,
 		&i.AvatarAt,
+		&i.LocationID,
+		&i.LocationCountry,
+		&i.Discoverable,
 	)
 	return i, err
+}
+
+const removeOtherInterests = `-- name: RemoveOtherInterests :exec
+DELETE FROM user_interests WHERE user_id = $1 AND NOT (interest_id = ANY($2::text[]))
+`
+
+type RemoveOtherInterestsParams struct {
+	UserID uuid.UUID
+	Keep   []string
+}
+
+func (q *Queries) RemoveOtherInterests(ctx context.Context, arg RemoveOtherInterestsParams) error {
+	_, err := q.db.Exec(ctx, removeOtherInterests, arg.UserID, arg.Keep)
+	return err
 }
 
 const renameUser = `-- name: RenameUser :one
 UPDATE users SET name = $1, name_changed_at = $2::timestamp, updated_at = $2::timestamp
 WHERE id = $3 AND (name_changed_at IS NULL OR name_changed_at < $4::timestamp)
-RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at
+RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable
 `
 
 type RenameUserParams struct {
@@ -206,6 +294,9 @@ func (q *Queries) RenameUser(ctx context.Context, arg RenameUserParams) (User, e
 		&i.Bio,
 		&i.NameChangedAt,
 		&i.AvatarAt,
+		&i.LocationID,
+		&i.LocationCountry,
+		&i.Discoverable,
 	)
 	return i, err
 }
@@ -275,7 +366,7 @@ func (q *Queries) SetAvatar(ctx context.Context, arg SetAvatarParams) error {
 }
 
 const setBio = `-- name: SetBio :one
-UPDATE users SET bio = $1, updated_at = NOW() WHERE id = $2 RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at
+UPDATE users SET bio = $1, updated_at = NOW() WHERE id = $2 RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable
 `
 
 type SetBioParams struct {
@@ -298,8 +389,40 @@ func (q *Queries) SetBio(ctx context.Context, arg SetBioParams) (User, error) {
 		&i.Bio,
 		&i.NameChangedAt,
 		&i.AvatarAt,
+		&i.LocationID,
+		&i.LocationCountry,
+		&i.Discoverable,
 	)
 	return i, err
+}
+
+const setDiscoverable = `-- name: SetDiscoverable :exec
+UPDATE users SET discoverable = $1, updated_at = NOW() WHERE id = $2
+`
+
+type SetDiscoverableParams struct {
+	Discoverable bool
+	ID           uuid.UUID
+}
+
+func (q *Queries) SetDiscoverable(ctx context.Context, arg SetDiscoverableParams) error {
+	_, err := q.db.Exec(ctx, setDiscoverable, arg.Discoverable, arg.ID)
+	return err
+}
+
+const setLocation = `-- name: SetLocation :exec
+UPDATE users SET location_id = $1, location_country = $2, updated_at = NOW() WHERE id = $3
+`
+
+type SetLocationParams struct {
+	LocationID pgtype.Text
+	Country    string
+	ID         uuid.UUID
+}
+
+func (q *Queries) SetLocation(ctx context.Context, arg SetLocationParams) error {
+	_, err := q.db.Exec(ctx, setLocation, arg.LocationID, arg.Country, arg.ID)
+	return err
 }
 
 const updatePassword = `-- name: UpdatePassword :exec

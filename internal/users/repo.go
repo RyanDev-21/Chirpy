@@ -30,6 +30,11 @@ type UserRepo interface {
 	DeleteAvatar(ctx context.Context, id uuid.UUID) error
 	// Avatar is ErrUserNotFound without a picture or across a block.
 	Avatar(ctx context.Context, id, viewer uuid.UUID) ([]byte, time.Time, error)
+	// SetLocation stores a catalog place ("" clears it).
+	SetLocation(ctx context.Context, id uuid.UUID, place string, country string) error
+	SetDiscoverable(ctx context.Context, id uuid.UUID, on bool) error
+	SetInterests(ctx context.Context, id uuid.UUID, ids []string) error
+	Interests(ctx context.Context, id uuid.UUID) ([]string, error)
 }
 
 type userRepo struct {
@@ -54,6 +59,8 @@ func toUser(u database.User) *User {
 	if u.AvatarAt.Valid {
 		out.AvatarURL = avatarURL(u.ID, u.AvatarAt.Time)
 	}
+	out.Location = PlaceOf(u.LocationID.String)
+	out.Discoverable = u.Discoverable
 	if u.NameChangedAt.Valid {
 		if next := u.NameChangedAt.Time.UTC().Add(RenameEvery); next.After(time.Now()) {
 			out.NameChangeAvailableAt = &next
@@ -172,9 +179,21 @@ func (r *userRepo) PublicProfile(ctx context.Context, id, viewer uuid.UUID) (Pro
 	if err != nil {
 		return Profile{}, err
 	}
-	out := Profile{ID: p.ID, Name: p.Name, Bio: p.Bio}
+	out := Profile{ID: p.ID, Name: p.Name, Bio: p.Bio, Interests: []string{}}
 	if p.AvatarAt.Valid {
 		out.AvatarURL = avatarURL(p.ID, p.AvatarAt.Time)
+	}
+	visible := p.Discoverable || id == viewer
+	if !visible {
+		if visible, err = r.queries.AreFriendsSQL(ctx, database.AreFriendsSQLParams{A: id, B: viewer}); err != nil {
+			return Profile{}, err
+		}
+	}
+	if visible {
+		out.Location = PlaceOf(p.LocationID.String)
+		if out.Interests, err = r.Interests(ctx, id); err != nil {
+			return Profile{}, err
+		}
 	}
 	return out, nil
 }
@@ -196,4 +215,32 @@ func (r *userRepo) Avatar(ctx context.Context, id, viewer uuid.UUID) ([]byte, ti
 		return nil, time.Time{}, err
 	}
 	return a.Image, a.UpdatedAt.Time.UTC(), nil
+}
+
+func (r *userRepo) SetLocation(ctx context.Context, id uuid.UUID, place, country string) error {
+	return r.queries.SetLocation(ctx, database.SetLocationParams{ID: id, LocationID: pgtype.Text{String: place, Valid: place != ""}, Country: country})
+}
+
+func (r *userRepo) SetDiscoverable(ctx context.Context, id uuid.UUID, on bool) error {
+	return r.queries.SetDiscoverable(ctx, database.SetDiscoverableParams{ID: id, Discoverable: on})
+}
+
+// SetInterests replaces the list: two statements, each idempotent, so a
+// retry or a concurrent update still ends with one of the requested lists.
+func (r *userRepo) SetInterests(ctx context.Context, id uuid.UUID, ids []string) error {
+	if err := r.queries.RemoveOtherInterests(ctx, database.RemoveOtherInterestsParams{UserID: id, Keep: ids}); err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return r.queries.AddInterests(ctx, database.AddInterestsParams{UserID: id, Ids: ids})
+}
+
+func (r *userRepo) Interests(ctx context.Context, id uuid.UUID) ([]string, error) {
+	ids, err := r.queries.GetInterests(ctx, id)
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids, err
 }
