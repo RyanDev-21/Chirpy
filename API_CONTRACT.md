@@ -40,6 +40,10 @@ Rate limits are per user when authenticated, otherwise per client IP (the
 real client address behind Render's proxy, which clients cannot spoof).
 **Login, refresh and revoke share one budget of 10 requests/minute** (they are
 one policy), so token refreshes count against the same limit as logins.
+Every authenticated route (and the WebSocket upgrade) also counts against a
+shared budget of **300 requests/minute per user**, on top of any route limit
+listed below. `/readyz` and `/healthz` allow 30 requests/minute per IP;
+`/livez` is not limited.
 
 ## Health endpoints
 
@@ -78,7 +82,7 @@ sign-up can't be used to find out who is registered.
 `POST /api/auth/verify-email` with `{"email":"alice@example.com","code":"482913"}`
 → `200`, the same session response as **Login**.
 
-Codes expire after 15 minutes and die after 5 wrong tries. Any failure is
+Codes expire after 2 minutes and die after 5 wrong tries. Any failure is
 `400 {"error":"invalid or expired code"}`.
 
 ### Resend verification code
@@ -185,7 +189,9 @@ Request:
 
 Success: `200`, the updated user object (without tokens). The old password
 must match; changing the password revokes all refresh tokens. `400` invalid
-new password, `401` wrong old password, `404` user not found.
+new password, `401` wrong old password, `409` the account signs in with Google
+only and has no password (set one with **Password reset**), `404` user not
+found. Maximum 5 requests/minute.
 
 ### Delete account
 
@@ -286,7 +292,7 @@ Request:
 `group_name` is 1–30 characters, `description` is at most 1000 characters,
 and `max_mems` is 2–1000. Success: `201 {"chat_id":"group-uuid"}`. The
 creator is automatically the leader and occupies one member slot. Group names
-are case-insensitively unique (`409`).
+are case-insensitively unique (`409`). Maximum 10 groups created per minute.
 
 ### My groups
 
@@ -324,7 +330,7 @@ its code. Codes are case-insensitive and the dash and spaces are optional, so
   Members only (`404` otherwise).
 - `POST /api/chats/groups/{group_id}/invite` → `200 {"code":"NEW2-CODE"}`.
   Leader only (`403` for other members): makes a new code, and the old code
-  stops working immediately.
+  stops working immediately. Maximum 10 requests/minute.
 
 ### Preview an invite
 
@@ -544,18 +550,6 @@ seconds while the user keeps typing. Seen:
 Typing and seen events from strangers or unauthorized group members are
 silently dropped. REST message sending and REST seen updates remain the
 authoritative operations.
-
-## AI suggestions (optional, disabled in production)
-
-This route exists only when the backend has a Gemini API key configured. It is
-not part of the first release, so production returns `404`.
-
-`GET /api/ai/suggestions` — authenticated, maximum 5 requests/minute.
-
-Success is a streamed `text/plain; charset=utf-8` response. Each suggestion
-chunk is emitted as one line. The frontend should consume the response as a
-stream rather than expecting JSON. If AI is not configured, the route is not
-registered and returns `404`.
 
 ## Frontend implementation notes
 

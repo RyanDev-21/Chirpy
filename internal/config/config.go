@@ -46,8 +46,6 @@ type Config struct {
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 
-	GeminiAPIKey string
-
 	// ResendAPIKey enables email (verification and reset codes). Without it
 	// emails are printed to the log on PLATFORM=dev and refused elsewhere.
 	ResendAPIKey string
@@ -108,7 +106,6 @@ func Load() (Config, error) {
 		RedisUser:       os.Getenv("REDIS_USR"),
 		RedisPass:       os.Getenv("REDIS_PASS"),
 		JWTSecret:       os.Getenv("SECRET"),
-		GeminiAPIKey:    firstNonEmpty(os.Getenv("GEMINI_API_KEY"), os.Getenv("GENMINI_API_KEY")),
 		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
 		MailFrom:        getenv("MAIL_FROM", "Chirpy <no-reply@mail.ponypigeon.com>"),
 		GoogleClientIDs: splitList(os.Getenv("GOOGLE_CLIENT_IDS")),
@@ -202,15 +199,6 @@ func getenv(k, def string) string {
 		return v
 	}
 	return def
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 func splitList(s string) []string {

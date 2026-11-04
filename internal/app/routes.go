@@ -26,13 +26,22 @@ var (
 	limitFriendUp = limitPolicy{"friend_update", 30, time.Minute}
 	limitSend     = limitPolicy{"send_message", 120, time.Minute}
 	limitWS       = limitPolicy{"ws_connect", 20, time.Minute}
-	limitAI       = limitPolicy{"ai", 5, time.Minute}
 	// joining and previewing invites share a small budget so codes can't
 	// be brute-forced (40-bit codes at 20/min would take ~100,000 years)
 	limitGroupJoin = limitPolicy{"group_join", 20, time.Minute}
 	// verification, reset and Google sign-in; codes also die after 5 wrong tries
 	limitAccount = limitPolicy{"account", 10, time.Minute}
 	limitReact   = limitPolicy{"react", 60, time.Minute}
+	// every authenticated route also shares one per-user budget, so routes
+	// without a tighter policy (reads, seen markers) can't be hammered
+	limitAPI = limitPolicy{"api", 300, time.Minute}
+	// each change-password request runs argon2 (deliberately slow)
+	limitPassword    = limitPolicy{"password", 5, time.Minute}
+	limitGroupCreate = limitPolicy{"group_create", 10, time.Minute}
+	limitInviteReset = limitPolicy{"invite_reset", 10, time.Minute}
+	// readyz pings Postgres and Redis; per IP so it can't be used to keep
+	// the free-tier database awake or burn Redis commands
+	limitHealth = limitPolicy{"health", 30, time.Minute}
 )
 
 // Router builds the HTTP handler. Middleware is attached per route group so
@@ -52,8 +61,8 @@ func (a *App) Router() http.Handler {
 	// external keep-alive ping does not keep the database awake. readyz
 	// checks dependencies (healthz is kept as an alias).
 	r.Get("/livez", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	r.Get("/readyz", a.health)
-	r.Get("/healthz", a.health)
+	r.With(limit(limitHealth)).Get("/readyz", a.health)
+	r.With(limit(limitHealth)).Get("/healthz", a.health)
 
 	r.Route("/api", func(r chi.Router) {
 		// public
@@ -76,18 +85,17 @@ func (a *App) Router() http.Handler {
 
 		// websocket: the Android client sends the Authorization header on the
 		// upgrade request (OkHttp/Ktor support it); ?token= is not accepted
-		r.With(authed, limit(limitWS)).Get("/chats/ws", a.handlers.chat.ServeWs)
+		r.With(authed, limit(limitAPI), limit(limitWS)).Get("/chats/ws", a.handlers.chat.ServeWs)
 
 		// authenticated
 		r.Group(func(r chi.Router) {
 			r.Use(authed)
+			r.Use(limit(limitAPI))
 
 			r.Get("/users/me", a.handlers.users.Me)
 			r.With(limit(limitAccount)).Delete("/users/me", a.handlers.account.DeleteAccount)
-			r.Post("/users/password", a.handlers.users.UpdatePassword)
+			r.With(limit(limitPassword)).Post("/users/password", a.handlers.users.UpdatePassword)
 			r.With(limit(limitSearch)).Get("/users/search", a.handlers.users.SearchUser)
-			r.Get("/users/configs", a.handlers.users.GetConfig)
-			r.Post("/users/configs", a.handlers.users.SaveConfig)
 
 			r.Route("/friends", func(r chi.Router) {
 				r.Get("/", a.handlers.friends.List)
@@ -100,14 +108,14 @@ func (a *App) Router() http.Handler {
 
 			r.Route("/chats/groups", func(r chi.Router) {
 				r.Get("/", a.handlers.groups.MyGroups)
-				r.Post("/", a.handlers.groups.CreateGroup)
+				r.With(limit(limitGroupCreate)).Post("/", a.handlers.groups.CreateGroup)
 				r.Get("/{group_id}", a.handlers.groups.Detail)
 				r.Delete("/{group_id}/members", a.handlers.groups.LeaveGroup)
 				// joining needs the invite code: groups are private
 				r.With(limit(limitGroupJoin)).Post("/join", a.handlers.groups.JoinByInvite)
 				r.With(limit(limitGroupJoin)).Get("/invites/{code}", a.handlers.groups.PreviewInvite)
 				r.Get("/{group_id}/invite", a.handlers.groups.InviteCode)
-				r.Post("/{group_id}/invite", a.handlers.groups.RegenerateInvite)
+				r.With(limit(limitInviteReset)).Post("/{group_id}/invite", a.handlers.groups.RegenerateInvite)
 			})
 			r.With(limit(limitSend)).Post("/chats/message", a.handlers.chat.SendMessage)
 			r.Get("/chats", a.handlers.chat.Conversations)
@@ -121,10 +129,6 @@ func (a *App) Router() http.Handler {
 				r.With(limit(limitReact)).Delete("/messages/{msg_id}/reaction", a.handlers.chat.Unreact)
 				r.Get("/messages/{msg_id}/reactions", a.handlers.chat.Reactors)
 			})
-
-			if a.handlers.ai != nil {
-				r.With(limit(limitAI)).Get("/ai/suggestions", a.handlers.ai.Suggest)
-			}
 		})
 	})
 

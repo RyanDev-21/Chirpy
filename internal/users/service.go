@@ -17,7 +17,6 @@ const (
 	maxEmailLen    = 125
 	minPasswordLen = 8
 	maxPasswordLen = 128
-	maxConfigItems = 100
 )
 
 const passwordSpecials = "@$!%*?&"
@@ -26,8 +25,6 @@ type UserService interface {
 	Register(ctx context.Context, name, email, password string) (*User, error)
 	UpdatePassword(ctx context.Context, userID uuid.UUID, oldPass, newPass string) (*User, error)
 	SearchUser(ctx context.Context, q string) ([]PublicUser, error)
-	SaveConfig(ctx context.Context, userID uuid.UUID, list []ElementCustom) error
-	GetConfig(ctx context.Context, userID uuid.UUID) ([]ElementCustom, error)
 	// Me returns the caller's own profile.
 	Me(ctx context.Context, userID uuid.UUID) (*User, error)
 	// GetName returns a user's display name (cached).
@@ -103,6 +100,10 @@ func (s *userService) UpdatePassword(ctx context.Context, userID uuid.UUID, oldP
 	if err != nil {
 		return nil, err
 	}
+	if hash == "" {
+		secure.BurnPasswordCheck(oldPassword)
+		return nil, ErrNoPassword
+	}
 	ok, err := secure.CheckPassword(oldPassword, hash)
 	if err != nil {
 		return nil, err
@@ -161,40 +162,4 @@ func (s *userService) GetName(ctx context.Context, userID uuid.UUID) (string, er
 		s.logger.WarnContext(ctx, "failed to cache user name", "error", err)
 	}
 	return user.Name, nil
-}
-
-func (s *userService) SaveConfig(ctx context.Context, userID uuid.UUID, list []ElementCustom) error {
-	if len(list) > maxConfigItems {
-		return ErrInvalidInput
-	}
-	if list == nil {
-		list = []ElementCustom{}
-	}
-	// postgres first: with QUEUE_BACKEND=memory a queued save could be lost
-	// on restart, and saves are rare enough to do inline
-	if err := s.repo.SaveConfig(ctx, userID, list); err != nil {
-		return err
-	}
-	if err := s.store.SetConfig(ctx, userID, list); err != nil {
-		s.logger.WarnContext(ctx, "failed to cache config", "error", err)
-	}
-	return nil
-}
-
-func (s *userService) GetConfig(ctx context.Context, userID uuid.UUID) ([]ElementCustom, error) {
-	list, ok, err := s.store.Config(ctx, userID)
-	if err != nil {
-		s.logger.WarnContext(ctx, "config cache read failed", "error", err)
-	}
-	if ok {
-		return list, nil
-	}
-	list, err = s.repo.GetConfig(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.store.SetConfig(ctx, userID, list); err != nil {
-		s.logger.WarnContext(ctx, "failed to cache config", "error", err)
-	}
-	return list, nil
 }

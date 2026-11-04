@@ -36,6 +36,8 @@ func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "password must be 8-128 characters with at least one of @$!%*?&")
 	case errors.Is(err, secure.ErrPassNotMatch):
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+	case errors.Is(err, ErrNoPassword):
+		httpx.Error(w, http.StatusConflict, "this account signs in with Google and has no password; set one with password reset")
 	case errors.Is(err, ErrUserNotFound):
 		httpx.Error(w, http.StatusNotFound, "no user found")
 	default:
@@ -53,41 +55,6 @@ func (h *UserHandler) SearchUser(w http.ResponseWriter, r *http.Request) {
 	default:
 		httpx.ServerError(w, r, err)
 	}
-}
-
-func (h *UserHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
-	userID, err := reqctx.User(r.Context())
-	if err != nil {
-		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-	var p ConfigList
-	if err := httpx.Decode(w, r, &p); err != nil {
-		httpx.Error(w, http.StatusBadRequest, "invalid parameters")
-		return
-	}
-	switch err := h.svc.SaveConfig(r.Context(), userID, p.List); {
-	case err == nil:
-		w.WriteHeader(http.StatusCreated)
-	case errors.Is(err, ErrInvalidInput):
-		httpx.Error(w, http.StatusBadRequest, "too many config items")
-	default:
-		httpx.ServerError(w, r, err)
-	}
-}
-
-func (h *UserHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	userID, err := reqctx.User(r.Context())
-	if err != nil {
-		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-	list, err := h.svc.GetConfig(r.Context(), userID)
-	if err != nil {
-		httpx.ServerError(w, r, err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, ConfigList{List: list})
 }
 
 // Me handles GET /api/users/me: the signed-in user's own profile.

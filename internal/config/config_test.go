@@ -20,12 +20,11 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("DB_URL", "postgres://x")
 	t.Setenv("SECRET", strings.Repeat("s", 32))
 	t.Setenv("CORS_ALLOWED_ORIGINS", " https://a , https://b ,")
-	t.Setenv("GENMINI_API_KEY", "legacy")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Addr != ":8080" || cfg.IsDev() || len(cfg.CORSOrigins) != 2 || cfg.GeminiAPIKey != "legacy" {
+	if cfg.Addr != ":8080" || cfg.IsDev() || len(cfg.CORSOrigins) != 2 {
 		t.Fatalf("unexpected config %+v", cfg)
 	}
 }

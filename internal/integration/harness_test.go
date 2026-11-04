@@ -125,7 +125,7 @@ func newEnv(t *testing.T, opts ...func(*config.Config)) *env {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`TRUNCATE users, refresh_tokens, user_relationships, message, chat_groups,
-		GroupMessage, member_table, EleConfig, seen_messages CASCADE`); err != nil {
+		GroupMessage, member_table, seen_messages CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
@@ -173,8 +173,9 @@ func newEnv(t *testing.T, opts ...func(*config.Config)) *env {
 }
 
 type resp struct {
-	code int
-	body []byte
+	code   int
+	body   []byte
+	header http.Header
 }
 
 func (r resp) json(t *testing.T, v any) {
@@ -204,7 +205,7 @@ func (e *env) do(method, path, token string, body any) resp {
 	}
 	defer res.Body.Close()
 	raw, _ := io.ReadAll(res.Body)
-	return resp{code: res.StatusCode, body: raw}
+	return resp{code: res.StatusCode, body: raw, header: res.Header}
 }
 
 func (e *env) expect(r resp, code int) resp {
