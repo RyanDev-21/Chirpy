@@ -47,14 +47,20 @@ func (q *Queries) DeletePrivateReaction(ctx context.Context, arg DeletePrivateRe
 }
 
 const groupMessageGroup = `-- name: GroupMessageGroup :one
-SELECT group_id FROM GroupMessage WHERE id = $1 AND deleted_at IS NULL
+SELECT group_id, from_id, created_at FROM GroupMessage WHERE id = $1 AND deleted_at IS NULL
 `
 
-func (q *Queries) GroupMessageGroup(ctx context.Context, id uuid.UUID) (pgtype.UUID, error) {
+type GroupMessageGroupRow struct {
+	GroupID   pgtype.UUID
+	FromID    pgtype.UUID
+	CreatedAt pgtype.Timestamp
+}
+
+func (q *Queries) GroupMessageGroup(ctx context.Context, id uuid.UUID) (GroupMessageGroupRow, error) {
 	row := q.db.QueryRow(ctx, groupMessageGroup, id)
-	var group_id pgtype.UUID
-	err := row.Scan(&group_id)
-	return group_id, err
+	var i GroupMessageGroupRow
+	err := row.Scan(&i.GroupID, &i.FromID, &i.CreatedAt)
+	return i, err
 }
 
 const groupReactionSummary = `-- name: GroupReactionSummary :many
@@ -142,18 +148,19 @@ func (q *Queries) GroupReactors(ctx context.Context, messageID uuid.UUID) ([]Gro
 }
 
 const privateMessageParticipants = `-- name: PrivateMessageParticipants :one
-SELECT from_id, to_id FROM message WHERE id = $1 AND deleted_at IS NULL
+SELECT from_id, to_id, created_at FROM message WHERE id = $1 AND deleted_at IS NULL
 `
 
 type PrivateMessageParticipantsRow struct {
-	FromID pgtype.UUID
-	ToID   pgtype.UUID
+	FromID    pgtype.UUID
+	ToID      pgtype.UUID
+	CreatedAt pgtype.Timestamp
 }
 
 func (q *Queries) PrivateMessageParticipants(ctx context.Context, id uuid.UUID) (PrivateMessageParticipantsRow, error) {
 	row := q.db.QueryRow(ctx, privateMessageParticipants, id)
 	var i PrivateMessageParticipantsRow
-	err := row.Scan(&i.FromID, &i.ToID)
+	err := row.Scan(&i.FromID, &i.ToID, &i.CreatedAt)
 	return i, err
 }
 

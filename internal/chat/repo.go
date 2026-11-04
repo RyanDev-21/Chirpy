@@ -40,6 +40,14 @@ type ChatRepo interface {
 	// ReactionCounts returns per-message counts for a page of messages.
 	ReactionCounts(ctx context.Context, kind string, me uuid.UUID, ids []uuid.UUID) (map[uuid.UUID][]ReactionCount, error)
 	Reactors(ctx context.Context, kind string, msgID uuid.UUID) ([]Reactor, error)
+
+	// MessageChanges returns edit/delete state for the edited or deleted
+	// messages among ids.
+	MessageChanges(ctx context.Context, kind string, ids []uuid.UUID) (map[uuid.UUID]messageChange, error)
+	// EditMessage / DeleteMessage report false if the message is already
+	// deleted. Deleting also removes its reactions.
+	EditMessage(ctx context.Context, kind string, msgID uuid.UUID, content string, at time.Time) (bool, error)
+	DeleteMessage(ctx context.Context, kind string, msgID uuid.UUID, at time.Time) (bool, error)
 }
 
 type chatRepo struct {
@@ -60,6 +68,14 @@ func pgOptUUID(s string) pgtype.UUID {
 
 func pgText(s string) pgtype.Text         { return pgtype.Text{String: s, Valid: true} }
 func pgTime(t time.Time) pgtype.Timestamp { return pgtype.Timestamp{Time: t, Valid: true} }
+
+func optTime(t pgtype.Timestamp) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	u := t.Time.UTC()
+	return &u
+}
 
 func optString(id pgtype.UUID) string {
 	if !id.Valid {
@@ -97,6 +113,8 @@ func fromPrivate(rows []database.Message) []MessageMetaDataRes {
 		out = append(out, MessageMetaDataRes{
 			ID:        m.ID,
 			CreatedAt: created,
+			EditedAt:  optTime(m.EditedAt),
+			Deleted:   m.DeletedAt.Valid,
 			MsgInfo: MessageCache{
 				FromID:    uuid.UUID(m.FromID.Bytes),
 				CreatedAt: created,
@@ -119,6 +137,8 @@ func fromPublic(rows []database.Groupmessage) []MessageMetaDataRes {
 		out = append(out, MessageMetaDataRes{
 			ID:        m.ID,
 			CreatedAt: created,
+			EditedAt:  optTime(m.EditedAt),
+			Deleted:   m.DeletedAt.Valid,
 			MsgInfo: MessageCache{
 				FromID:    uuid.UUID(m.FromID.Bytes),
 				CreatedAt: created,
@@ -222,11 +242,11 @@ func (r *chatRepo) MarkGroupRead(ctx context.Context, groupID, userID, msgID uui
 	return r.q.MarkGroupRead(ctx, database.MarkGroupReadParams{GroupID: groupID, UserID: userID, MessageID: msgID})
 }
 
-func lastMessage(id uuid.UUID, content pgtype.Text, from pgtype.UUID, at pgtype.Timestamp) *LastMessage {
+func lastMessage(id uuid.UUID, content pgtype.Text, from pgtype.UUID, at pgtype.Timestamp, deleted bool) *LastMessage {
 	if !at.Valid {
 		return nil
 	}
-	return &LastMessage{ID: id, Msg: content.String, FromID: uuid.UUID(from.Bytes), CreatedAt: at.Time.UTC()}
+	return &LastMessage{ID: id, Msg: content.String, FromID: uuid.UUID(from.Bytes), CreatedAt: at.Time.UTC(), Deleted: deleted}
 }
 
 // Conversations lists private chats and groups, most recent activity first;
@@ -243,11 +263,11 @@ func (r *chatRepo) Conversations(ctx context.Context, me uuid.UUID) ([]Conversat
 	out := make([]Conversation, 0, len(priv)+len(grp))
 	for _, p := range priv {
 		out = append(out, Conversation{Type: TypePrivate, ID: p.OtherID, Name: p.OtherName,
-			LastMessage: lastMessage(p.LastID, p.LastContent, p.LastFrom, p.LastAt), Unread: int(p.Unread)})
+			LastMessage: lastMessage(p.LastID, p.LastContent, p.LastFrom, p.LastAt, p.LastDeleted), Unread: int(p.Unread)})
 	}
 	for _, g := range grp {
 		out = append(out, Conversation{Type: TypePublic, ID: g.GroupID, Name: g.GroupName,
-			LastMessage: lastMessage(g.LastID, g.LastContent, g.LastFrom, g.LastAt), Unread: int(g.Unread)})
+			LastMessage: lastMessage(g.LastID, g.LastContent, g.LastFrom, g.LastAt, g.LastDeleted), Unread: int(g.Unread)})
 	}
 	slices.SortStableFunc(out, func(a, b Conversation) int {
 		switch {
@@ -266,7 +286,7 @@ func (r *chatRepo) Conversations(ctx context.Context, me uuid.UUID) ([]Conversat
 func (r *chatRepo) LocateMessage(ctx context.Context, msgID uuid.UUID) (messageRef, error) {
 	p, err := r.q.PrivateMessageParticipants(ctx, msgID)
 	if err == nil {
-		return messageRef{Kind: TypePrivate, From: uuid.UUID(p.FromID.Bytes), To: uuid.UUID(p.ToID.Bytes)}, nil
+		return messageRef{Kind: TypePrivate, From: uuid.UUID(p.FromID.Bytes), To: uuid.UUID(p.ToID.Bytes), CreatedAt: p.CreatedAt.Time.UTC()}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return messageRef{}, err
@@ -278,7 +298,7 @@ func (r *chatRepo) LocateMessage(ctx context.Context, msgID uuid.UUID) (messageR
 	if err != nil {
 		return messageRef{}, err
 	}
-	return messageRef{Kind: TypePublic, Group: uuid.UUID(g.Bytes)}, nil
+	return messageRef{Kind: TypePublic, Group: uuid.UUID(g.GroupID.Bytes), From: uuid.UUID(g.FromID.Bytes), CreatedAt: g.CreatedAt.Time.UTC()}, nil
 }
 
 func (r *chatRepo) SetReaction(ctx context.Context, kind string, msgID, userID uuid.UUID, emoji string) error {
@@ -347,4 +367,54 @@ func (r *chatRepo) Reactors(ctx context.Context, kind string, msgID uuid.UUID) (
 		out = append(out, Reactor{UserID: x.UserID, Name: x.Name, Emoji: x.Emoji, CreatedAt: x.CreatedAt.Time.UTC()})
 	}
 	return out, nil
+}
+
+func (r *chatRepo) MessageChanges(ctx context.Context, kind string, ids []uuid.UUID) (map[uuid.UUID]messageChange, error) {
+	out := make(map[uuid.UUID]messageChange)
+	if len(ids) == 0 {
+		return out, nil
+	}
+	add := func(id uuid.UUID, content pgtype.Text, edited, deleted pgtype.Timestamp) {
+		out[id] = messageChange{Content: content.String, EditedAt: optTime(edited), Deleted: deleted.Valid}
+	}
+	if kind == TypePrivate {
+		rows, err := r.q.PrivateMessageChanges(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		for _, x := range rows {
+			add(x.ID, x.Content, x.EditedAt, x.DeletedAt)
+		}
+		return out, nil
+	}
+	rows, err := r.q.GroupMessageChanges(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, x := range rows {
+		add(x.ID, x.Content, x.EditedAt, x.DeletedAt)
+	}
+	return out, nil
+}
+
+func (r *chatRepo) EditMessage(ctx context.Context, kind string, msgID uuid.UUID, content string, at time.Time) (bool, error) {
+	var n int64
+	var err error
+	if kind == TypePrivate {
+		n, err = r.q.EditPrivateMessage(ctx, database.EditPrivateMessageParams{ID: msgID, Content: pgText(content), At: pgTime(at)})
+	} else {
+		n, err = r.q.EditGroupMessage(ctx, database.EditGroupMessageParams{ID: msgID, Content: pgText(content), At: pgTime(at)})
+	}
+	return n > 0, err
+}
+
+func (r *chatRepo) DeleteMessage(ctx context.Context, kind string, msgID uuid.UUID, at time.Time) (bool, error) {
+	var n int32
+	var err error
+	if kind == TypePrivate {
+		n, err = r.q.DeletePrivateMessage(ctx, database.DeletePrivateMessageParams{ID: msgID, At: pgTime(at)})
+	} else {
+		n, err = r.q.DeleteGroupMessage(ctx, database.DeleteGroupMessageParams{ID: msgID, At: pgTime(at)})
+	}
+	return n > 0, err
 }

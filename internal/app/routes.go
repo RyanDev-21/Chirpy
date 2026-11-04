@@ -32,6 +32,7 @@ var (
 	// verification, reset and Google sign-in; codes also die after 5 wrong tries
 	limitAccount = limitPolicy{"account", 10, time.Minute}
 	limitReact   = limitPolicy{"react", 60, time.Minute}
+	limitEdit    = limitPolicy{"edit_message", 60, time.Minute}
 	// every authenticated route also shares one per-user budget, so routes
 	// without a tighter policy (reads, seen markers) can't be hammered
 	limitAPI = limitPolicy{"api", 300, time.Minute}
@@ -128,6 +129,8 @@ func (a *App) Router() http.Handler {
 				r.With(limit(limitReact)).Put("/messages/{msg_id}/reaction", a.handlers.chat.React)
 				r.With(limit(limitReact)).Delete("/messages/{msg_id}/reaction", a.handlers.chat.Unreact)
 				r.Get("/messages/{msg_id}/reactions", a.handlers.chat.Reactors)
+				r.With(limit(limitEdit)).Patch("/messages/{msg_id}", a.handlers.chat.EditMessage)
+				r.With(limit(limitEdit)).Delete("/messages/{msg_id}", a.handlers.chat.DeleteMessage)
 			})
 		})
 	})

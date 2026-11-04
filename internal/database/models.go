@@ -62,6 +62,7 @@ type Groupmessage struct {
 	CreatedAt pgtype.Timestamp
 	UpdatedAt pgtype.Timestamp
 	DeletedAt pgtype.Timestamp
+	EditedAt  pgtype.Timestamp
 }
 
 type MemberTable struct {
@@ -81,6 +82,7 @@ type Message struct {
 	DeletedAt pgtype.Timestamp
 	CreatedAt pgtype.Timestamp
 	UpdatedAt pgtype.Timestamp
+	EditedAt  pgtype.Timestamp
 }
 
 type MessageReaction struct {

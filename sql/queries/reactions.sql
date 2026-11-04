@@ -1,8 +1,8 @@
 -- name: PrivateMessageParticipants :one
-SELECT from_id, to_id FROM message WHERE id = $1 AND deleted_at IS NULL;
+SELECT from_id, to_id, created_at FROM message WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: GroupMessageGroup :one
-SELECT group_id FROM GroupMessage WHERE id = $1 AND deleted_at IS NULL;
+SELECT group_id, from_id, created_at FROM GroupMessage WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: SetPrivateReaction :exec
 INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)

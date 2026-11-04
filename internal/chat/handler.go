@@ -28,7 +28,8 @@ func (h *ChatHandler) writeErr(w http.ResponseWriter, r *http.Request, err error
 	switch {
 	case errors.Is(err, ErrMessageNotFound):
 		httpx.Error(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, ErrNotAuthorized), errors.Is(err, ErrNotFriends):
+	case errors.Is(err, ErrNotAuthorized), errors.Is(err, ErrNotFriends), errors.Is(err, ErrNotYourMessage),
+		errors.Is(err, ErrEditWindowClosed):
 		httpx.Error(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrNotValidToID), errors.Is(err, ErrNotValidParentID), errors.Is(err, ErrNotSupportedTypeMsg),
 		errors.Is(err, ErrEmptyMessage), errors.Is(err, ErrNotValidTimeFmt), errors.Is(err, ErrNotValidUUID),
@@ -241,4 +242,38 @@ func (h *ChatHandler) Reactors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string][]Reactor{"reactions": list})
+}
+
+// EditMessage handles PATCH /api/chat/messages/{msg_id} {"msg":"new text"}.
+func (h *ChatHandler) EditMessage(w http.ResponseWriter, r *http.Request) {
+	me, msgID, ok := h.messageTarget(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Content string `json:"msg"`
+	}
+	if err := httpx.Decode(w, r, &body); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid parameters")
+		return
+	}
+	res, err := h.svc.EditMessage(r.Context(), me, msgID, body.Content)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, res)
+}
+
+// DeleteMessage handles DELETE /api/chat/messages/{msg_id}.
+func (h *ChatHandler) DeleteMessage(w http.ResponseWriter, r *http.Request) {
+	me, msgID, ok := h.messageTarget(w, r)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteMessage(r.Context(), me, msgID); err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
