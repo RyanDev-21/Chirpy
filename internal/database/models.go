@@ -30,6 +30,7 @@ type ChatGroup struct {
 	UpdatedAt     pgtype.Timestamp
 	CurrentMember int16
 	InviteCode    string
+	AvatarAt      pgtype.Timestamp
 }
 
 type ChatMute struct {
@@ -54,6 +55,13 @@ type EmailCode struct {
 	Attempts  int32
 	ExpiresAt pgtype.Timestamp
 	CreatedAt pgtype.Timestamp
+	NewEmail  pgtype.Text
+}
+
+type GroupAvatar struct {
+	GroupID   uuid.UUID
+	Image     []byte
+	UpdatedAt pgtype.Timestamp
 }
 
 type GroupMessageReaction struct {

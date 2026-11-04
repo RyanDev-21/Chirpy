@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"RyanDev-21.com/Chirpy/internal/testutil"
 	"github.com/google/uuid"
@@ -125,6 +126,14 @@ func (f *fakeRepo) TransferLeader(context.Context, uuid.UUID, uuid.UUID, uuid.UU
 }
 func (f *fakeRepo) Delete(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
 	return nil, nil
+}
+func (f *fakeRepo) AddMember(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error { return nil }
+func (f *fakeRepo) SetAvatar(context.Context, uuid.UUID, uuid.UUID, []byte, time.Time) error {
+	return nil
+}
+func (f *fakeRepo) DeleteAvatar(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+func (f *fakeRepo) Avatar(context.Context, uuid.UUID, uuid.UUID) ([]byte, time.Time, error) {
+	return nil, time.Time{}, ErrNoAvatar
 }
 
 func newSvc(t *testing.T) (GroupService, *fakeRepo) {

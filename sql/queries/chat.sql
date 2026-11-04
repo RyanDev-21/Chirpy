@@ -105,7 +105,7 @@ ORDER BY l.created_at DESC, l.id DESC;
 -- name: ListGroupConversations :many
 -- every group the caller is in, with its latest message (if any) and how
 -- many messages from others arrived after the caller's read marker
-SELECT g.id AS group_id, g.name AS group_name,
+SELECT g.id AS group_id, g.name AS group_name, g.avatar_at AS group_avatar_at,
        -- zero uuid when the group has no messages yet (last_at is then NULL)
        COALESCE(lm.id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS last_id, lm.content AS last_content, lm.from_id AS last_from, lm.created_at AS last_at,
        COALESCE(lm.deleted_at IS NOT NULL, false)::bool AS last_deleted,

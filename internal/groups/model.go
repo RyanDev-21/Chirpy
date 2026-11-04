@@ -2,8 +2,10 @@ package groups
 
 import (
 	"errors"
+	"strconv"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var (
@@ -19,6 +21,8 @@ var (
 	ErrAlreadyLeader     = errors.New("that member is already the leader")
 	ErrNothingToUpdate   = errors.New("send group_name and/or description")
 	ErrInvalidGroupInfo  = errors.New("group_name must be 1-30 characters, description at most 1000")
+	ErrNotFriend         = errors.New("you can only add your friends")
+	ErrNoAvatar          = errors.New("no group picture")
 )
 
 // RoleMember is the role of everyone but the leader.
@@ -69,6 +73,7 @@ type GroupSummary struct {
 	MaxMembers  int16     `json:"max_members"`
 	Members     int16     `json:"member_count"`
 	Role        string    `json:"role"` // the caller's role: "Leader" or "member"
+	AvatarURL   *string   `json:"avatar_url"`
 }
 
 type GroupMember struct {
@@ -82,11 +87,23 @@ type GroupMember struct {
 // GroupDetail is GET /api/chats/groups/{group_id}. Members is only filled
 // in for members of the group.
 type GroupDetail struct {
-	ID          uuid.UUID     `json:"id"`
-	Name        string        `json:"name"`
-	Description string        `json:"description"`
-	MaxMembers  int16         `json:"max_members"`
-	MemberCount int16         `json:"member_count"`
-	IsMember    bool          `json:"is_member"`
-	Members     []GroupMember `json:"members,omitempty"`
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	MaxMembers  int16     `json:"max_members"`
+	MemberCount int16     `json:"member_count"`
+	IsMember    bool      `json:"is_member"`
+	// AvatarURL is only shown to members (null otherwise or without one).
+	AvatarURL *string       `json:"avatar_url"`
+	Members   []GroupMember `json:"members,omitempty"`
+}
+
+// AvatarURL is where a group's picture is served, versioned by upload time
+// (nil: no picture).
+func AvatarURL(id uuid.UUID, at pgtype.Timestamp) *string {
+	if !at.Valid {
+		return nil
+	}
+	u := "/api/chats/groups/" + id.String() + "/avatar?v=" + strconv.FormatInt(at.Time.UnixMilli(), 10)
+	return &u
 }

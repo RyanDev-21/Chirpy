@@ -112,13 +112,22 @@ func validateRegister(name, email, password string) error {
 	if err := ValidateName(name); err != nil {
 		return err
 	}
+	if err := ValidateEmail(email); err != nil {
+		return err
+	}
+	return ValidatePassword(password)
+}
+
+// ValidateEmail accepts a plain address (no display name), at most 125
+// bytes; ErrInvalidInput otherwise.
+func ValidateEmail(email string) error {
 	if len(email) > maxEmailLen {
 		return ErrInvalidInput
 	}
 	if addr, err := mail.ParseAddress(email); err != nil || addr.Address != email {
 		return ErrInvalidInput
 	}
-	return ValidatePassword(password)
+	return nil
 }
 
 func (s *userService) Register(ctx context.Context, name, email, password string) (*User, error) {

@@ -63,3 +63,14 @@ WHERE id = $1;
 
 -- name: DeleteExpiredEmailCodes :execrows
 DELETE FROM email_codes WHERE expires_at < @now::timestamp;
+
+-- name: UpsertEmailChangeCode :exec
+INSERT INTO email_codes (user_id, purpose, code_hash, expires_at, created_at, new_email)
+VALUES (@user_id, 'change_email', @code_hash, @expires_at, @created_at::timestamp, @new_email)
+ON CONFLICT (user_id, purpose)
+DO UPDATE SET code_hash = EXCLUDED.code_hash, attempts = 0, expires_at = EXCLUDED.expires_at,
+              created_at = EXCLUDED.created_at, new_email = EXCLUDED.new_email;
+
+-- name: ChangeEmail :exec
+-- the new address was just proven with a code
+UPDATE users SET email = @email, email_verified_at = NOW(), updated_at = NOW() WHERE id = @id;

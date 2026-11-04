@@ -5,10 +5,14 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"RyanDev-21.com/Chirpy/internal/push"
+	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/internal/ws"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type GroupService interface {
@@ -37,6 +41,21 @@ type GroupService interface {
 	OnDelete(fn func(ctx context.Context, groupID uuid.UUID))
 	// GroupName is the group's display name (cached).
 	GroupName(ctx context.Context, groupID uuid.UUID) (string, error)
+
+	// AddFriend: the leader adds one of their friends directly.
+	AddFriend(ctx context.Context, groupID, leader, target uuid.UUID) error
+	// SetAvatar (leader) stores raw as a 256x256 JPEG; Avatar is for members.
+	SetAvatar(ctx context.Context, groupID, leader uuid.UUID, raw []byte) (*string, error)
+	DeleteAvatar(ctx context.Context, groupID, leader uuid.UUID) error
+	Avatar(ctx context.Context, groupID, viewer uuid.UUID) ([]byte, time.Time, error)
+	// SetFriends and SetNotifier must be called before AddFriend is used.
+	SetFriends(f FriendChecker)
+	SetNotifier(n push.Notifier)
+}
+
+// FriendChecker is implemented by friends.Service.
+type FriendChecker interface {
+	AreFriends(ctx context.Context, a, b uuid.UUID) (bool, error)
 }
 
 // Pusher delivers realtime events (implemented by *ws.Hub).
@@ -45,6 +64,8 @@ type Pusher interface {
 }
 
 type groupService struct {
+	friends  FriendChecker
+	notify   push.Notifier // nil: no push notifications
 	repo     GroupRepo
 	store    Store
 	push     Pusher
@@ -277,4 +298,66 @@ func (s *groupService) pushTo(ctx context.Context, to []uuid.UUID, event string,
 func (s *groupService) GroupName(ctx context.Context, groupID uuid.UUID) (string, error) {
 	snap, err := s.snapshot(ctx, groupID)
 	return snap.Name, err
+}
+
+func (s *groupService) SetFriends(f FriendChecker)  { s.friends = f }
+func (s *groupService) SetNotifier(n push.Notifier) { s.notify = n }
+
+func (s *groupService) AddFriend(ctx context.Context, groupID, leader, target uuid.UUID) error {
+	// leadership first, so outsiders learn nothing (404) whoever they name
+	snap, err := s.snapshot(ctx, groupID)
+	if err != nil {
+		return err
+	}
+	if snap.LeaderID != leader {
+		if slices.Contains(snap.Members, leader) {
+			return ErrNotLeader
+		}
+		return ErrNotFoundGroup
+	}
+	if slices.Contains(snap.Members, target) {
+		return ErrAlreadyMember
+	}
+	ok, err := s.friends.AreFriends(ctx, leader, target)
+	if err != nil {
+		return err
+	}
+	if !ok { // blocking ends a friendship, so blocks are covered too
+		return ErrNotFriend
+	}
+	if err := s.repo.AddMember(ctx, groupID, leader, target); err != nil {
+		return err
+	}
+	s.invalidate(ctx, groupID)
+	s.pushTo(ctx, []uuid.UUID{target}, ws.EventGroupAdded, ws.OutGroupAdded{GroupID: groupID.String(), ByID: leader.String()})
+	s.pushMembers(ctx, groupID, leader, "joined", target)
+	if s.notify != nil {
+		s.notify.Notify(ctx, push.Job{Kind: push.KindGroupAdded, To: []uuid.UUID{target}, From: leader, Group: groupID})
+	}
+	return nil
+}
+
+func (s *groupService) SetAvatar(ctx context.Context, groupID, leader uuid.UUID, raw []byte) (*string, error) {
+	img, err := users.ProcessAvatar(raw)
+	if err != nil {
+		return nil, err
+	}
+	at := time.Now().UTC().Truncate(time.Millisecond)
+	if err := s.repo.SetAvatar(ctx, groupID, leader, img, at); err != nil {
+		return nil, err
+	}
+	s.pushMembers(ctx, groupID, leader, "info", uuid.Nil)
+	return AvatarURL(groupID, pgtype.Timestamp{Time: at, Valid: true}), nil
+}
+
+func (s *groupService) DeleteAvatar(ctx context.Context, groupID, leader uuid.UUID) error {
+	if err := s.repo.DeleteAvatar(ctx, groupID, leader); err != nil {
+		return err
+	}
+	s.pushMembers(ctx, groupID, leader, "info", uuid.Nil)
+	return nil
+}
+
+func (s *groupService) Avatar(ctx context.Context, groupID, viewer uuid.UUID) ([]byte, time.Time, error) {
+	return s.repo.Avatar(ctx, groupID, viewer)
 }

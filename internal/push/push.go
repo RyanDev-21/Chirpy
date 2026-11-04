@@ -30,6 +30,7 @@ const (
 	KindFriendRequest = "friend_request" // someone sent me a request
 	KindFriendAccept  = "friend_accept"  // someone accepted my request
 	KindReaction      = "reaction"       // someone reacted to my message
+	KindGroupAdded    = "group_added"    // a group leader added me
 )
 
 // Job describes something to tell users about.
@@ -107,6 +108,8 @@ func prefKind(kind string) string {
 		return "friends"
 	case KindReaction:
 		return "reactions"
+	case KindGroupAdded:
+		return KindGroup
 	}
 	return kind
 }
@@ -185,6 +188,8 @@ func (s *Service) render(ctx context.Context, j Job) (Message, error) {
 		m.Title, m.Body, m.Tag = "Friend request", from+" sent you a friend request", "friends"
 	case KindFriendAccept:
 		m.Title, m.Body, m.Tag = "Friend request accepted", from+" accepted your friend request", "friends"
+	case KindGroupAdded:
+		m.Title, m.Body, m.Tag = group, from+" added you to the group", "group:"+j.Group.String()
 	case KindReaction:
 		m.Title, m.Body, m.Tag = from, "reacted "+j.Preview+" to your message", "reaction:"+j.MsgID.String()
 		if group != "" {

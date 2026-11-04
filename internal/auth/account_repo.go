@@ -16,6 +16,7 @@ import (
 
 type storedCode struct {
 	Hash      string
+	NewEmail  string // change_email only
 	ExpiresAt time.Time
 	CreatedAt time.Time
 }
@@ -25,6 +26,10 @@ type AccountRepo interface {
 	PutCode(ctx context.Context, userID uuid.UUID, purpose, hash string, created, expires time.Time) error
 	BumpAttempts(ctx context.Context, userID uuid.UUID, purpose string) (int32, error)
 	DeleteCode(ctx context.Context, userID uuid.UUID, purpose string) error
+	// PutEmailChange stores a change_email code for newEmail.
+	PutEmailChange(ctx context.Context, userID uuid.UUID, hash, newEmail string, created, expires time.Time) error
+	// ChangeEmail sets a new, verified address (users.ErrDuplicateEmail).
+	ChangeEmail(ctx context.Context, userID uuid.UUID, email string) error
 	MarkVerified(ctx context.Context, userID uuid.UUID) error
 	// SetPassword stores a hash; "" removes password sign-in.
 	SetPassword(ctx context.Context, userID uuid.UUID, hash string) error
@@ -52,7 +57,7 @@ func (r *accountRepo) GetCode(ctx context.Context, userID uuid.UUID, purpose str
 	if err != nil {
 		return storedCode{}, err
 	}
-	return storedCode{Hash: c.CodeHash, ExpiresAt: c.ExpiresAt.Time, CreatedAt: c.CreatedAt.Time}, nil
+	return storedCode{Hash: c.CodeHash, NewEmail: c.NewEmail.String, ExpiresAt: c.ExpiresAt.Time, CreatedAt: c.CreatedAt.Time}, nil
 }
 
 func (r *accountRepo) PutCode(ctx context.Context, userID uuid.UUID, purpose, hash string, created, expires time.Time) error {
@@ -65,6 +70,20 @@ func (r *accountRepo) BumpAttempts(ctx context.Context, userID uuid.UUID, purpos
 
 func (r *accountRepo) DeleteCode(ctx context.Context, userID uuid.UUID, purpose string) error {
 	return r.q.DeleteEmailCode(ctx, database.DeleteEmailCodeParams{UserID: userID, Purpose: purpose})
+}
+
+func (r *accountRepo) PutEmailChange(ctx context.Context, userID uuid.UUID, hash, newEmail string, created, expires time.Time) error {
+	return r.q.UpsertEmailChangeCode(ctx, database.UpsertEmailChangeCodeParams{UserID: userID, CodeHash: hash,
+		NewEmail: pgtype.Text{String: newEmail, Valid: true}, ExpiresAt: ts(expires), CreatedAt: ts(created)})
+}
+
+func (r *accountRepo) ChangeEmail(ctx context.Context, userID uuid.UUID, email string) error {
+	err := r.q.ChangeEmail(ctx, database.ChangeEmailParams{ID: userID, Email: email})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return users.ErrDuplicateEmail
+	}
+	return err
 }
 
 func (r *accountRepo) MarkVerified(ctx context.Context, userID uuid.UUID) error {

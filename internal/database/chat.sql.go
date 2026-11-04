@@ -496,7 +496,7 @@ func (q *Queries) GroupReadBy(ctx context.Context, arg GroupReadByParams) ([]Gro
 }
 
 const listGroupConversations = `-- name: ListGroupConversations :many
-SELECT g.id AS group_id, g.name AS group_name,
+SELECT g.id AS group_id, g.name AS group_name, g.avatar_at AS group_avatar_at,
        -- zero uuid when the group has no messages yet (last_at is then NULL)
        COALESCE(lm.id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS last_id, lm.content AS last_content, lm.from_id AS last_from, lm.created_at AS last_at,
        COALESCE(lm.deleted_at IS NOT NULL, false)::bool AS last_deleted,
@@ -520,14 +520,15 @@ ORDER BY lm.created_at DESC NULLS LAST, lower(g.name)
 `
 
 type ListGroupConversationsRow struct {
-	GroupID     uuid.UUID
-	GroupName   string
-	LastID      uuid.UUID
-	LastContent pgtype.Text
-	LastFrom    pgtype.UUID
-	LastAt      pgtype.Timestamp
-	LastDeleted bool
-	Unread      int32
+	GroupID       uuid.UUID
+	GroupName     string
+	GroupAvatarAt pgtype.Timestamp
+	LastID        uuid.UUID
+	LastContent   pgtype.Text
+	LastFrom      pgtype.UUID
+	LastAt        pgtype.Timestamp
+	LastDeleted   bool
+	Unread        int32
 }
 
 // every group the caller is in, with its latest message (if any) and how
@@ -544,6 +545,7 @@ func (q *Queries) ListGroupConversations(ctx context.Context, me uuid.UUID) ([]L
 		if err := rows.Scan(
 			&i.GroupID,
 			&i.GroupName,
+			&i.GroupAvatarAt,
 			&i.LastID,
 			&i.LastContent,
 			&i.LastFrom,

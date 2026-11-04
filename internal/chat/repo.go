@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"RyanDev-21.com/Chirpy/internal/groups"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"context"
 	"errors"
@@ -294,7 +295,7 @@ func (r *chatRepo) Conversations(ctx context.Context, me uuid.UUID) ([]Conversat
 			LastMessage: lastMessage(p.LastID, p.LastContent, p.LastFrom, p.LastAt, p.LastDeleted), Unread: int(p.Unread)})
 	}
 	for _, g := range grp {
-		out = append(out, Conversation{Type: TypePublic, ID: g.GroupID, Name: g.GroupName, DisplayName: g.GroupName,
+		out = append(out, Conversation{Type: TypePublic, ID: g.GroupID, Name: g.GroupName, DisplayName: g.GroupName, AvatarURL: groups.AvatarURL(g.GroupID, g.GroupAvatarAt),
 			LastMessage: lastMessage(g.LastID, g.LastContent, g.LastFrom, g.LastAt, g.LastDeleted), Unread: int(g.Unread)})
 	}
 	slices.SortStableFunc(out, func(a, b Conversation) int {

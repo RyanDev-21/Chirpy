@@ -192,6 +192,66 @@ func (h *AccountHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// StartEmailChange handles POST /api/users/me/email
+// {"email", "password" | "google_id_token"} → 202: a code goes to the new
+// address.
+func (h *AccountHandler) StartEmailChange(w http.ResponseWriter, r *http.Request) {
+	userID, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var b struct {
+		Email         string `json:"email"`
+		Password      string `json:"password"`
+		GoogleIDToken string `json:"google_id_token"`
+	}
+	if err := httpx.Decode(w, r, &b); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid params")
+		return
+	}
+	err = h.svc.StartEmailChange(r.Context(), userID, b.Email, b.Password, b.GoogleIDToken)
+	switch {
+	case err == nil:
+		httpx.JSON(w, http.StatusAccepted, accepted)
+	case errors.Is(err, users.ErrInvalidInput):
+		httpx.Error(w, http.StatusBadRequest, "email must be a valid address")
+	case errors.Is(err, ErrSameEmail):
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrCodeTooSoon):
+		w.Header().Set("Retry-After", "60")
+		httpx.Error(w, http.StatusTooManyRequests, err.Error())
+	default:
+		h.writeErr(w, r, err)
+	}
+}
+
+// ConfirmEmailChange handles POST /api/users/me/email/confirm {"code"}:
+// returns new tokens (like login); other devices are signed out.
+func (h *AccountHandler) ConfirmEmailChange(w http.ResponseWriter, r *http.Request) {
+	userID, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var b struct {
+		Code string `json:"code"`
+	}
+	if err := httpx.Decode(w, r, &b); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid params")
+		return
+	}
+	sess, err := h.svc.ConfirmEmailChange(r.Context(), userID, b.Code)
+	switch {
+	case err == nil:
+		writeSession(w, sess)
+	case errors.Is(err, ErrEmailTaken):
+		httpx.Error(w, http.StatusConflict, err.Error())
+	default:
+		h.writeErr(w, r, err)
+	}
+}
+
 // AdminLogin handles POST /api/admin/login {"email","password"}: emails an
 // admin sign-in code. Wrong passwords and non-admins get the same 401.
 func (h *AccountHandler) AdminLogin(w http.ResponseWriter, r *http.Request) {
