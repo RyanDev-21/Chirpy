@@ -119,6 +119,8 @@ type User struct {
 	IsChirpyRed     pgtype.Bool
 	Name            string
 	EmailVerifiedAt pgtype.Timestamp
+	Bio             string
+	NameChangedAt   pgtype.Timestamp
 }
 
 type UserBlock struct {

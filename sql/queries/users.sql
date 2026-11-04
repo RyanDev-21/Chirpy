@@ -27,3 +27,23 @@ WHERE u.name % @q::text
   )
 ORDER BY similarity DESC, u.name
 LIMIT 20;
+
+-- name: RenameUser :one
+-- only if the last rename is older than the cutoff (checked again here so
+-- two concurrent renames can't both pass)
+UPDATE users SET name = @name, name_changed_at = @now::timestamp, updated_at = @now::timestamp
+WHERE id = @id AND (name_changed_at IS NULL OR name_changed_at < @cutoff::timestamp)
+RETURNING *;
+
+-- name: SetBio :one
+UPDATE users SET bio = @bio, updated_at = NOW() WHERE id = @id RETURNING *;
+
+-- name: GetPublicProfile :one
+-- hidden (no row) when either user blocked the other
+SELECT u.id, u.name, u.bio FROM users u
+WHERE u.id = @id
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks b
+      WHERE (b.blocker_id = u.id AND b.blocked_id = @viewer::uuid)
+         OR (b.blocker_id = @viewer::uuid AND b.blocked_id = u.id)
+  );

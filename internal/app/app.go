@@ -146,6 +146,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	a.chat = chat.NewChatService(chat.NewChatRepo(queries), chat.NewCache(rdb), a.groups, a.friends, a.hub, a.queue, logger)
 	a.hub.SetPolicy(a.chat)
 	a.groups.OnDelete(a.chat.ForgetGroup)
+	a.users.OnRename(a.friends.ForgetNames)
 	a.auth = authsvc.NewAuthService(users.NewUserRepo(queries), authsvc.NewAuthRepo(queries), cfg.JWTSecret,
 		cfg.AccessTokenTTL, cfg.RefreshTokenTTL, logger)
 	sender := o.mailer

@@ -177,6 +177,34 @@ profile (same shape as the register response). Use it on app start when a
 saved token exists. `401` if the token is invalid or the account no longer
 exists.
 
+```json
+{"id":"uuid","name":"alice","email":"alice@example.com","email_verified":true,
+ "bio":"hello","name_change_available_at":null,
+ "created_at":"…","updated_at":"…","is_chirpy_red":false}
+```
+
+`name_change_available_at` is when the username may next be changed (`null`
+when it can be changed now).
+
+### Edit profile
+
+`PATCH /api/users/me` with `{"name":"alice2"}`, `{"bio":"…"}` or both →
+`200` with the same shape as **Current user**. A missing field stays as it
+is. Maximum 10 requests/minute.
+
+- `name`: same rules as sign-up (3–25 characters, no spaces; `400`), unique
+  (`409 username taken`). It can be changed **once every 30 days**: earlier is
+  `403` with the date in the message (also in `name_change_available_at`).
+  Sending your current name changes nothing. Signing in is by email, so a new
+  name doesn't affect login.
+- `bio`: trimmed, at most 150 characters (`400`); can be changed any time,
+  `""` clears it.
+
+### View a profile
+
+`GET /api/users/{user_id}` → `200 {"id":"uuid","name":"bob","bio":"…"}`.
+No email. `404` for unknown users, and when either of you blocked the other.
+
 ### Change password
 
 `POST /api/users/password` — authenticated.

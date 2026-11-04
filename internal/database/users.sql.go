@@ -15,7 +15,7 @@ import (
 const createUser = `-- name: CreateUser :one
 INSERT INTO users(id, name, created_at, updated_at, email, password)
 VALUES (gen_random_uuid(), $1, NOW(), NOW(), $2, $3)
-RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at
+RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at
 `
 
 type CreateUserParams struct {
@@ -36,6 +36,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.IsChirpyRed,
 		&i.Name,
 		&i.EmailVerifiedAt,
+		&i.Bio,
+		&i.NameChangedAt,
 	)
 	return i, err
 }
@@ -49,8 +51,37 @@ func (q *Queries) DeleteUser(ctx context.Context) error {
 	return err
 }
 
+const getPublicProfile = `-- name: GetPublicProfile :one
+SELECT u.id, u.name, u.bio FROM users u
+WHERE u.id = $1
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks b
+      WHERE (b.blocker_id = u.id AND b.blocked_id = $2::uuid)
+         OR (b.blocker_id = $2::uuid AND b.blocked_id = u.id)
+  )
+`
+
+type GetPublicProfileParams struct {
+	ID     uuid.UUID
+	Viewer uuid.UUID
+}
+
+type GetPublicProfileRow struct {
+	ID   uuid.UUID
+	Name string
+	Bio  string
+}
+
+// hidden (no row) when either user blocked the other
+func (q *Queries) GetPublicProfile(ctx context.Context, arg GetPublicProfileParams) (GetPublicProfileRow, error) {
+	row := q.db.QueryRow(ctx, getPublicProfile, arg.ID, arg.Viewer)
+	var i GetPublicProfileRow
+	err := row.Scan(&i.ID, &i.Name, &i.Bio)
+	return i, err
+}
+
 const getUserInfoByEmail = `-- name: GetUserInfoByEmail :one
-SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at FROM users WHERE email = $1
+SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, error) {
@@ -65,12 +96,14 @@ func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, e
 		&i.IsChirpyRed,
 		&i.Name,
 		&i.EmailVerifiedAt,
+		&i.Bio,
+		&i.NameChangedAt,
 	)
 	return i, err
 }
 
 const getUserInfoByID = `-- name: GetUserInfoByID :one
-SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at FROM users WHERE id = $1
+SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, error) {
@@ -85,6 +118,46 @@ func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, erro
 		&i.IsChirpyRed,
 		&i.Name,
 		&i.EmailVerifiedAt,
+		&i.Bio,
+		&i.NameChangedAt,
+	)
+	return i, err
+}
+
+const renameUser = `-- name: RenameUser :one
+UPDATE users SET name = $1, name_changed_at = $2::timestamp, updated_at = $2::timestamp
+WHERE id = $3 AND (name_changed_at IS NULL OR name_changed_at < $4::timestamp)
+RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at
+`
+
+type RenameUserParams struct {
+	Name   string
+	Now    pgtype.Timestamp
+	ID     uuid.UUID
+	Cutoff pgtype.Timestamp
+}
+
+// only if the last rename is older than the cutoff (checked again here so
+// two concurrent renames can't both pass)
+func (q *Queries) RenameUser(ctx context.Context, arg RenameUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, renameUser,
+		arg.Name,
+		arg.Now,
+		arg.ID,
+		arg.Cutoff,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Email,
+		&i.Password,
+		&i.IsChirpyRed,
+		&i.Name,
+		&i.EmailVerifiedAt,
+		&i.Bio,
+		&i.NameChangedAt,
 	)
 	return i, err
 }
@@ -132,6 +205,33 @@ func (q *Queries) SearchNameSiml(ctx context.Context, arg SearchNameSimlParams) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const setBio = `-- name: SetBio :one
+UPDATE users SET bio = $1, updated_at = NOW() WHERE id = $2 RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at
+`
+
+type SetBioParams struct {
+	Bio string
+	ID  uuid.UUID
+}
+
+func (q *Queries) SetBio(ctx context.Context, arg SetBioParams) (User, error) {
+	row := q.db.QueryRow(ctx, setBio, arg.Bio, arg.ID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Email,
+		&i.Password,
+		&i.IsChirpyRed,
+		&i.Name,
+		&i.EmailVerifiedAt,
+		&i.Bio,
+		&i.NameChangedAt,
+	)
+	return i, err
 }
 
 const updatePassword = `-- name: UpdatePassword :exec

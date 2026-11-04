@@ -35,6 +35,9 @@ type Service interface {
 	Block(ctx context.Context, me, other uuid.UUID) error
 	Unblock(ctx context.Context, me, other uuid.UUID) error
 	Blocked(ctx context.Context, me uuid.UUID) ([]BlockedUser, error)
+	// ForgetNames drops cached relationship lists that show userID's name
+	// (theirs, their friends' and their requests'), after a rename.
+	ForgetNames(ctx context.Context, userID uuid.UUID)
 }
 
 type service struct {
@@ -153,6 +156,25 @@ func (s *service) Unblock(ctx context.Context, me, other uuid.UUID) error {
 
 func (s *service) Blocked(ctx context.Context, me uuid.UUID) ([]BlockedUser, error) {
 	return s.repo.Blocked(ctx, me)
+}
+
+func (s *service) ForgetNames(ctx context.Context, userID uuid.UUID) {
+	snap, err := s.repo.Snapshot(ctx, userID)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "failed to load relationships after rename", "error", err)
+		s.invalidate(ctx, userID)
+		return
+	}
+	ids := []uuid.UUID{userID}
+	for _, f := range snap.Friends {
+		ids = append(ids, f.UserID)
+	}
+	for _, m := range []map[uuid.UUID]FriendMetaData{snap.Incoming, snap.Outgoing} {
+		for _, f := range m {
+			ids = append(ids, f.UserID)
+		}
+	}
+	s.invalidate(ctx, ids...)
 }
 
 func (s *service) Relationships(ctx context.Context, me uuid.UUID) (Snapshot, error) {
