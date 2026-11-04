@@ -42,6 +42,11 @@ services:
             sync: false
           - key: R2_SECRET_ACCESS_KEY
             sync: false
+          # metrics to Grafana Cloud (see monitoring/README.md)
+          - key: OTEL_EXPORTER_OTLP_ENDPOINT
+            sync: false
+          - key: OTEL_EXPORTER_OTLP_HEADERS
+            sync: false
           # free Upstash is billed per command; Redis Streams polling would
           # use the monthly allowance while idle
           - key: QUEUE_BACKEND

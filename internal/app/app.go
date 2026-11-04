@@ -3,6 +3,7 @@
 package app
 
 import (
+	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -259,6 +260,12 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 func (a *App) Start(ctx context.Context) error {
 	go a.hub.Run()
 	go a.runJanitor(ctx)
+	if err := telemetry.ObserveGauges(a.hub.Count, func() telemetry.DBStats {
+		s := a.db.Stat()
+		return telemetry.DBStats{Acquired: int64(s.AcquiredConns()), Idle: int64(s.IdleConns()), Max: int64(s.MaxConns())}
+	}); err != nil {
+		a.logger.Warn("failed to register gauges", "error", err)
+	}
 	return a.startWorkers(ctx)
 }
 

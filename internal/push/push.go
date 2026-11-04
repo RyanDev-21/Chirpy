@@ -5,6 +5,7 @@
 package push
 
 import (
+	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
 	"errors"
 	"log/slog"
@@ -143,8 +144,12 @@ func (s *Service) Handle(ctx context.Context, j Job) error {
 		switch err := s.send.Send(ctx, m); {
 		case errors.Is(err, ErrDeadToken):
 			dead = append(dead, t.Token)
+			telemetry.Push(ctx, j.Kind, "dead_token")
 		case err != nil:
 			s.logger.WarnContext(ctx, "push failed", "kind", j.Kind, "error", err)
+			telemetry.Push(ctx, j.Kind, "failed")
+		default:
+			telemetry.Push(ctx, j.Kind, "sent")
 		}
 	}
 	if len(dead) > 0 {

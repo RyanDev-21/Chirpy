@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
 	"log/slog"
 	"net"
@@ -66,6 +67,7 @@ func Middleware(l Limiter, name string, logger *slog.Logger) func(http.Handler) 
 			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(res.Limit))
 			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(max(res.Remaining, 0)))
 			if !res.Allowed {
+				telemetry.RateLimited(r.Context(), name)
 				logger.WarnContext(r.Context(), "rate limit exceeded", "policy", name, "route", httpx.RoutePattern(r))
 				httpx.Error(w, http.StatusTooManyRequests, "too many requests, please try again later")
 				return

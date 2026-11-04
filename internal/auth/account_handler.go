@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
 	"errors"
 	"net/http"
@@ -82,6 +83,7 @@ func (h *AccountHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, r, err)
 		return
 	}
+	telemetry.Auth(r.Context(), "signup", "ok")
 	writeSession(w, s)
 }
 
@@ -134,9 +136,11 @@ func (h *AccountHandler) Google(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.svc.Google(r.Context(), b.IDToken)
 	if err != nil {
+		telemetry.Auth(r.Context(), "google", "failed")
 		h.writeErr(w, r, err)
 		return
 	}
+	telemetry.Auth(r.Context(), "google", "ok")
 	if res.Session == nil {
 		httpx.JSON(w, http.StatusOK, map[string]string{"status": "username_required", "signup_token": res.SignupToken})
 		return
@@ -159,6 +163,7 @@ func (h *AccountHandler) CompleteGoogle(w http.ResponseWriter, r *http.Request) 
 		h.writeErr(w, r, err)
 		return
 	}
+	telemetry.Auth(r.Context(), "signup", "google")
 	writeSession(w, s)
 }
 
