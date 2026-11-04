@@ -27,8 +27,8 @@ SELECT * FROM user_identities WHERE provider = $1 AND subject = $2;
 INSERT INTO user_identities (provider, subject, user_id, email) VALUES ($1, $2, $3, $4);
 
 -- name: CreateUserVerifiedNoPassword :one
-INSERT INTO users (id, name, created_at, updated_at, email, password, email_verified_at)
-VALUES (gen_random_uuid(), $1, NOW(), NOW(), $2, NULL, NOW())
+INSERT INTO users (id, name, display_name, created_at, updated_at, email, password, email_verified_at)
+VALUES (gen_random_uuid(), $1, $3, NOW(), NOW(), $2, NULL, NOW())
 RETURNING *;
 
 -- name: GroupsLedBy :many

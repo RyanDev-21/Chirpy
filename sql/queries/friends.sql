@@ -24,21 +24,21 @@ WHERE id = $1 AND user_id = $2 AND status = 'pending'
 RETURNING otherUser_id;
 
 -- name: ListIncomingFriendRequests :many
-SELECT ur.id, ur.user_id AS from_id, u.name AS from_name, u.avatar_at AS from_avatar_at
+SELECT ur.id, ur.user_id AS from_id, u.name AS from_name, u.display_name AS from_display, u.avatar_at AS from_avatar_at
 FROM user_relationships ur
 JOIN users u ON u.id = ur.user_id
 WHERE ur.otherUser_id = $1 AND ur.status = 'pending'
 ORDER BY ur.created_at;
 
 -- name: ListOutgoingFriendRequests :many
-SELECT ur.id, ur.otherUser_id AS to_id, u.name AS to_name, u.avatar_at AS to_avatar_at
+SELECT ur.id, ur.otherUser_id AS to_id, u.name AS to_name, u.display_name AS to_display, u.avatar_at AS to_avatar_at
 FROM user_relationships ur
 JOIN users u ON u.id = ur.otherUser_id
 WHERE ur.user_id = $1 AND ur.status = 'pending'
 ORDER BY ur.created_at;
 
 -- name: ListFriends :many
-SELECT u.id AS friend_id, u.name AS friend_name, u.avatar_at AS friend_avatar_at
+SELECT u.id AS friend_id, u.name AS friend_name, u.display_name AS friend_display, u.avatar_at AS friend_avatar_at
 FROM users u
 WHERE u.id IN (
     SELECT r1.otherUser_id FROM user_relationships r1 WHERE r1.user_id = $1 AND r1.status = 'confirm'

@@ -25,7 +25,7 @@ func (e *env) profile(u user, body map[string]any) {
 
 func TestDiscoverRanking(t *testing.T) {
 	e := newEnv(t)
-	me := e.seedUser("me")
+	me := e.seedUser("meuser")
 	friend := e.seedUser("friend")
 	mutual := e.seedUser("mutual")       // friend of my friend
 	local := e.seedUser("local")         // same city + shared interest

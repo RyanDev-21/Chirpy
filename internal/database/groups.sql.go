@@ -191,7 +191,7 @@ func (q *Queries) GetMemberRole(ctx context.Context, arg GetMemberRoleParams) (s
 }
 
 const listGroupMembers = `-- name: ListGroupMembers :many
-SELECT m.member_id, u.name, u.avatar_at, m.role
+SELECT m.member_id, u.name, u.display_name, u.avatar_at, m.role
 FROM member_table m
 JOIN users u ON u.id = m.member_id
 WHERE m.group_id = $1
@@ -199,10 +199,11 @@ ORDER BY (m.role = 'Leader') DESC, m.joined_at
 `
 
 type ListGroupMembersRow struct {
-	MemberID uuid.UUID
-	Name     string
-	AvatarAt pgtype.Timestamp
-	Role     string
+	MemberID    uuid.UUID
+	Name        string
+	DisplayName string
+	AvatarAt    pgtype.Timestamp
+	Role        string
 }
 
 func (q *Queries) ListGroupMembers(ctx context.Context, groupID uuid.UUID) ([]ListGroupMembersRow, error) {
@@ -217,6 +218,7 @@ func (q *Queries) ListGroupMembers(ctx context.Context, groupID uuid.UUID) ([]Li
 		if err := rows.Scan(
 			&i.MemberID,
 			&i.Name,
+			&i.DisplayName,
 			&i.AvatarAt,
 			&i.Role,
 		); err != nil {

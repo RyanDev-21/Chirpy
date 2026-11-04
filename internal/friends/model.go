@@ -27,9 +27,10 @@ type BlockedUser struct {
 }
 
 type FriendMetaData struct {
-	UserID    uuid.UUID `json:"user_id"`
-	Name      string    `json:"name"`
-	AvatarURL *string   `json:"avatar_url"`
+	UserID      uuid.UUID `json:"user_id"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"display_name"`
+	AvatarURL   *string   `json:"avatar_url"`
 }
 
 // Snapshot is everything cached about one user's relationships.

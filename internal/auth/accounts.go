@@ -342,10 +342,11 @@ func (s *accountService) CompleteGoogleSignup(ctx context.Context, signupToken, 
 	if sub == "" || email == "" {
 		return nil, ErrInvalidGoogle
 	}
+	name = users.NormalizeUsername(name)
 	if err := users.ValidateName(name); err != nil {
 		return nil, err
 	}
-	u, err := s.repo.CreateGoogleUser(ctx, strings.TrimSpace(name), email, sub)
+	u, err := s.repo.CreateGoogleUser(ctx, name, email, sub)
 	if errors.Is(err, users.ErrDuplicateEmail) {
 		// the token was already used, or the email got an account meanwhile:
 		// signing in with Google again will log in or link instead

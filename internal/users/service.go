@@ -3,8 +3,10 @@ package users
 import (
 	"RyanDev-21.com/Chirpy/internal/catalog"
 	"context"
+	"errors"
 	"log/slog"
 	"net/mail"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -42,6 +44,8 @@ type UserService interface {
 	OnRename(fn func(ctx context.Context, userID uuid.UUID))
 	// LogoutAll ends every session of the user (tokens, sockets, phones).
 	LogoutAll(ctx context.Context, me uuid.UUID) error
+	// DisplayName is what others see (the username if none was set).
+	DisplayName(ctx context.Context, id uuid.UUID) (string, error)
 	// SetAvatar stores raw (a JPEG, PNG or WebP upload) as a 256x256 JPEG.
 	SetAvatar(ctx context.Context, me uuid.UUID, raw []byte) (*User, error)
 	DeleteAvatar(ctx context.Context, me uuid.UUID) error
@@ -68,19 +72,37 @@ func ValidatePassword(p string) error {
 }
 
 // ValidateName enforces the username rules (3-25 characters, no spaces).
+// usernamePattern: lowercase letters, digits, "_" and ".", 3-25 long
+// (users.name CHECK). Only ASCII, so no look-alike letters from other
+// alphabets can imitate someone.
+var usernamePattern = regexp.MustCompile(`^[a-z0-9_.]{3,25}$`)
+
+// NormalizeUsername is how a typed username is stored and compared.
+func NormalizeUsername(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
+
+// ValidateName checks a username (after NormalizeUsername).
 func ValidateName(name string) error {
-	name = strings.TrimSpace(name)
-	n := utf8.RuneCountInString(name)
-	if n < minNameLen || n > maxNameLen {
+	if !usernamePattern.MatchString(name) {
 		return ErrInvalidInput
 	}
+	return nil
+}
+
+const maxDisplayNameLen = 50 // users.display_name VARCHAR(50)
+
+// ErrBadDisplayName: empty, too long, or with invisible characters.
+var ErrBadDisplayName = errors.New("display name must be 1-50 characters without line breaks or invisible characters")
+
+// ValidateDisplayName allows spaces and emoji, but not control or invisible
+// formatting characters (zero-width space, direction overrides, ...).
+func ValidateDisplayName(name string) error {
+	if n := utf8.RuneCountInString(name); n == 0 || n > maxDisplayNameLen {
+		return ErrBadDisplayName
+	}
 	for _, r := range name {
-		// spaces, control and invisible formatting characters (zero-width
-		// space, soft hyphen, right-to-left override, ...) would let one
-		// name look like another
-		if unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) ||
+		if (unicode.IsSpace(r) && r != ' ') || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) ||
 			unicode.In(r, unicode.Zl, unicode.Zp) || r == utf8.RuneError {
-			return ErrInvalidInput
+			return ErrBadDisplayName
 		}
 	}
 	return nil
@@ -100,7 +122,7 @@ func validateRegister(name, email, password string) error {
 }
 
 func (s *userService) Register(ctx context.Context, name, email, password string) (*User, error) {
-	name = strings.TrimSpace(name)
+	name = NormalizeUsername(name)
 	email = strings.ToLower(strings.TrimSpace(email))
 	if err := validateRegister(name, email, password); err != nil {
 		return nil, err
@@ -109,7 +131,7 @@ func (s *userService) Register(ctx context.Context, name, email, password string
 	if err != nil {
 		return nil, err
 	}
-	user, err := s.repo.Create(ctx, CreateUserInput{Name: name, Email: email, Password: hash})
+	user, err := s.repo.Create(ctx, CreateUserInput{Name: name, DisplayName: name, Email: email, Password: hash})
 	if err != nil {
 		return nil, err
 	}
@@ -197,8 +219,15 @@ func (s *userService) GetName(ctx context.Context, userID uuid.UUID) (string, er
 }
 
 func (s *userService) UpdateProfile(ctx context.Context, me uuid.UUID, req UpdateProfileRequest) (*User, error) {
-	if req.Name == nil && req.Bio == nil && req.Location == nil && req.Interests == nil && req.Discoverable == nil {
+	if req.Name == nil && req.DisplayName == nil && req.Bio == nil && req.Location == nil && req.Interests == nil && req.Discoverable == nil {
 		return nil, ErrInvalidInput
+	}
+	if req.DisplayName != nil {
+		d := strings.TrimSpace(*req.DisplayName)
+		if err := ValidateDisplayName(d); err != nil {
+			return nil, err
+		}
+		req.DisplayName = &d
 	}
 	// validate everything before changing anything
 	if req.Bio != nil {
@@ -210,7 +239,7 @@ func (s *userService) UpdateProfile(ctx context.Context, me uuid.UUID, req Updat
 	}
 	var name string
 	if req.Name != nil {
-		name = strings.TrimSpace(*req.Name)
+		name = NormalizeUsername(*req.Name)
 		if err := ValidateName(name); err != nil {
 			return nil, err
 		}
@@ -257,6 +286,12 @@ func (s *userService) UpdateProfile(ctx context.Context, me uuid.UUID, req Updat
 				fn(ctx, me)
 			}
 		}
+	}
+	if req.DisplayName != nil {
+		if err := s.repo.SetDisplayName(ctx, me, *req.DisplayName); err != nil {
+			return nil, err
+		}
+		s.profileChanged(ctx, me)
 	}
 	if req.Bio != nil {
 		if _, err := s.repo.SetBio(ctx, me, *req.Bio); err != nil {
@@ -324,4 +359,8 @@ func (s *userService) profileChanged(ctx context.Context, id uuid.UUID) {
 // ends access tokens, closes the socket and forgets the user's phones.
 func (s *userService) LogoutAll(ctx context.Context, me uuid.UUID) error {
 	return s.repo.RevokeAllRefreshTokens(ctx, me)
+}
+
+func (s *userService) DisplayName(ctx context.Context, id uuid.UUID) (string, error) {
+	return s.repo.DisplayName(ctx, id)
 }

@@ -16,5 +16,5 @@ type Store = *redisx.Versioned[Snapshot]
 const socialTTL = 7 * 24 * time.Hour
 
 func NewStore(rdb redis.UniversalClient) Store {
-	return redisx.NewVersioned[Snapshot](rdb, "user:social:", socialTTL)
+	return redisx.NewVersioned[Snapshot](rdb, "user:social:v2:", socialTTL) // v2: display names (migration 038)
 }

@@ -5,6 +5,13 @@ backend. It is intended for a frontend client (web or native).
 
 ## Environments and conventions
 
+**People have two names.** `name` is the **username**: a unique handle
+(`a-z 0-9 _ .`), shown as `@name`, used to find and add people.
+`display_name` is what to show in chats, lists and notifications; it isn't
+unique, so profiles should show `@name` too. Every object describing a person
+(friends, requests, search, group members, conversation list, reactions,
+discovery, profiles, `/users/me`) has both. Search matches either one.
+
 - Production base URL: `https://api.ponypigeon.com`.
 - Render fallback host: `https://chirpy-api.onrender.com`.
 - Local default: `http://localhost:8080`.
@@ -70,9 +77,9 @@ Request:
 {"name":"alice","email":"alice@example.com","password":"Pw-example!"}
 ```
 
-Rules: name is 3–25 characters with no whitespace, control or invisible
-characters (zero-width spaces, direction overrides and the like); email must be valid and is
-normalized to lowercase; password is 8–128 characters and must contain at
+Rules: `name` is the **username**: 3–25 characters of `a-z`, `0-9`, `_` and
+`.`, stored lowercase (`Alice` becomes `alice`) and unique ignoring case; email
+must be valid and is normalized to lowercase; password is 8–128 characters and must contain at
 least one of `@$!%*?&`.
 
 Success: `202 {"status":"check_your_email"}`. A 6-digit code is emailed;
@@ -214,7 +221,12 @@ when it can be changed now).
 `200` with the same shape as **Current user**. A missing field stays as it
 is. Maximum 10 requests/minute.
 
-- `name`: same rules as sign-up (3–25 characters, no spaces; `400`), unique
+- `display_name`: what people see (1–50 characters; spaces and emoji are
+  fine; no line breaks or invisible characters, `400`). Not unique, change it
+  any time. New accounts start with their username as display name; ask for
+  one right after sign-up.
+- `name`: the username, same rules as sign-up (`a-z 0-9 _ .`, 3–25, stored
+  lowercase; `400`), unique
   (`409 username taken`). It can be changed **once every 30 days**: earlier is
   `403` with the date in the message (also in `name_change_available_at`).
   Sending your current name changes nothing. Signing in is by email, so a new
@@ -296,7 +308,7 @@ offer this.
 `q` is trimmed and must be 1–25 characters. Success: `200`:
 
 ```json
-{"UserList":[{"id":"uuid","name":"alice","avatar_url":"/api/users/uuid/avatar?v=…"}]}
+{"UserList":[{"id":"uuid","name":"alice","display_name":"Alice Wong","avatar_url":"/api/users/uuid/avatar?v=…"}]}
 ```
 
 The key is intentionally `UserList` (capital U/L), and search results never
@@ -368,7 +380,7 @@ All friend endpoints require authentication.
 `GET /api/friends` → `200`:
 
 ```json
-{"id_list":[{"user_id":"uuid","name":"bob","avatar_url":null}]}
+{"id_list":[{"user_id":"uuid","name":"bob","display_name":"Bob","avatar_url":null}]}
 ```
 
 ### List pending requests
@@ -884,7 +896,7 @@ search, view and action is written to an audit log.
 - Treat `204` and `201` responses with no body as success; do not JSON-decode
   them.
 - Handle `429` with backoff; read `X-RateLimit-Remaining` to slow down early.
-  The backend does not currently send `Retry-After`.
+  Every `429` carries `Retry-After` (seconds) for when to try again.
 - Refresh proactively shortly before the access token's `exp` claim instead of
   only after a `401`: refreshes share the 10/minute auth budget with logins.
 - Open the WebSocket after authentication, but do not put credentials in the
