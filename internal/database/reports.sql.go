@@ -111,7 +111,7 @@ func (q *Queries) GetReport(ctx context.Context, id uuid.UUID) (GetReportRow, er
 const groupEvidence = `-- name: GroupEvidence :many
 SELECT gm.id, gm.content, gm.from_id, gm.group_id, gm.created_at FROM GroupMessage gm
 JOIN member_table m ON m.group_id = gm.group_id AND m.member_id = $1::uuid
-WHERE gm.id = ANY($2::uuid[]) AND gm.deleted_at IS NULL
+WHERE gm.id = ANY($2::uuid[]) AND gm.deleted_at IS NULL AND gm.created_at >= m.joined_at
 `
 
 type GroupEvidenceParams struct {
@@ -127,7 +127,8 @@ type GroupEvidenceRow struct {
 	CreatedAt pgtype.Timestamp
 }
 
-// messages of groups the reporter is a member of
+// messages of groups the reporter is a member of, sent since they joined
+// (what they can see)
 func (q *Queries) GroupEvidence(ctx context.Context, arg GroupEvidenceParams) ([]GroupEvidenceRow, error) {
 	rows, err := q.db.Query(ctx, groupEvidence, arg.Reporter, arg.Ids)
 	if err != nil {

@@ -220,3 +220,25 @@ func (e *env) groupTexts(u user, g, query string) []string {
 	e.expect(e.do("GET", "/api/chat/groups/"+g+"/messages"+query, u.Token, nil), 200).json(e.t, &p)
 	return p.texts()
 }
+
+func TestOldMediaAndEvidenceStayHidden(t *testing.T) {
+	e := newEnv(t)
+	admin, newbie := e.signup("admin"), e.signup("newbie")
+	g := e.adminGroup("crew", admin)
+	photo := e.uploadFile(admin, "image", "image/jpeg", []byte{0xFF, 0xD8, 0xFF, 1, 2, 3})
+	var sent struct {
+		MsgID string `json:"msg_id"`
+	}
+	e.expect(e.do("POST", "/api/chats/message", admin.Token, map[string]any{"to_id": g, "type": "public", "media": []string{photo}}), 200).json(t, &sent)
+	e.expect(e.join(newbie.Token, e.invite(admin.Token, g)), 201)
+
+	e.expect(e.do("GET", "/api/media/"+photo, newbie.Token, nil), 404)
+	e.expect(e.do("GET", "/api/media/"+photo, admin.Token, nil), 200)
+	// a report can only attach messages the reporter could see
+	e.expect(e.do("POST", "/api/reports", newbie.Token, map[string]any{"user_id": admin.ID, "reason": "spam", "messages": []string{sent.MsgID}}), 400)
+
+	// media sent after joining is fine
+	later := e.uploadFile(admin, "image", "image/jpeg", []byte{0xFF, 0xD8, 0xFF, 4, 5, 6})
+	e.expect(e.do("POST", "/api/chats/message", admin.Token, map[string]any{"to_id": g, "type": "public", "media": []string{later}}), 200)
+	e.expect(e.do("GET", "/api/media/"+later, newbie.Token, nil), 200)
+}

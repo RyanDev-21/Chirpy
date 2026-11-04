@@ -13,10 +13,11 @@ WHERE id = ANY(@ids::uuid[]) AND deleted_at IS NULL
   AND ((from_id = @reporter::uuid AND to_id = @reported::uuid) OR (from_id = @reported::uuid AND to_id = @reporter::uuid));
 
 -- name: GroupEvidence :many
--- messages of groups the reporter is a member of
+-- messages of groups the reporter is a member of, sent since they joined
+-- (what they can see)
 SELECT gm.id, gm.content, gm.from_id, gm.group_id, gm.created_at FROM GroupMessage gm
 JOIN member_table m ON m.group_id = gm.group_id AND m.member_id = @reporter::uuid
-WHERE gm.id = ANY(@ids::uuid[]) AND gm.deleted_at IS NULL;
+WHERE gm.id = ANY(@ids::uuid[]) AND gm.deleted_at IS NULL AND gm.created_at >= m.joined_at;
 
 -- name: AddReportMessage :exec
 INSERT INTO report_messages (report_id, message_id, chat_type, group_id, sender_id, content, sent_at)

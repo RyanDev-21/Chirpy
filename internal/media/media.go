@@ -390,6 +390,11 @@ func (s *Service) access(ctx context.Context, viewer, id uuid.UUID) (database.Me
 		if err != nil || !slices.Contains(members, viewer) {
 			return none, uuid.Nil, nil, ErrNotFound // also for a deleted group
 		}
+		// like messages, media sent before the viewer joined isn't theirs to see
+		ok, err := s.q.GroupMediaVisible(ctx, database.GroupMediaVisibleParams{MessageID: m.MessageID, GroupID: chatID, Viewer: viewer, UploadedAt: m.CreatedAt})
+		if err != nil || !ok {
+			return none, uuid.Nil, nil, ErrNotFound
+		}
 		if len(members) <= trackGroupsUpTo {
 			recipients = slices.DeleteFunc(members, func(u uuid.UUID) bool { return u == owner })
 		}
