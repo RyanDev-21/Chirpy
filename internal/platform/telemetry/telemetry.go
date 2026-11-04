@@ -72,6 +72,7 @@ var (
 	pushes       = counter("chirpy.push.sent", "push notifications by result")
 	mediaEvents  = counter("chirpy.media.events", "media uploads, downloads and deletions")
 	jobs         = counter("chirpy.queue.jobs", "background jobs by topic and result")
+	reportsC     = counter("chirpy.reports", "user reports by reason")
 	neonBytes    atomic.Int64
 	r2Bytes      atomic.Int64
 	gaugesActive atomic.Bool
@@ -177,3 +178,6 @@ func ObserveGauges(ws func() int, db func() DBStats) error {
 	}, wsG, poolG, storeG)
 	return err
 }
+
+// Report counts a user report by reason.
+func Report(ctx context.Context, reason string) { add(ctx, reportsC, "reason", reason) }

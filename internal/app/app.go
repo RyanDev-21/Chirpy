@@ -5,6 +5,7 @@ package app
 import (
 	"RyanDev-21.com/Chirpy/internal/admin"
 	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
+	"RyanDev-21.com/Chirpy/internal/reports"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -71,6 +72,7 @@ type handlers struct {
 	discover *discover.Handler
 	push     *push.Handler
 	admin2   *admin.Handler
+	reports  *reports.Handler
 	media    *media.Handler
 }
 
@@ -262,6 +264,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		discover: discover.NewHandler(discover.NewService(queries)),
 		push:     push.NewHandler(a.pushSvc),
 		admin2:   admin.NewHandler(a.admin),
+		reports:  reports.NewHandler(reports.NewService(db, logger)),
 		media:    media.NewHandler(a.media),
 	}
 	return a, nil

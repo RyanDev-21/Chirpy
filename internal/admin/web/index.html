@@ -29,12 +29,34 @@
   <section id="app" hidden>
     <nav>
       <button data-tab="overview" class="active">Overview</button>
+      <button data-tab="reports">Reports</button>
       <button data-tab="users">Users</button>
       <button data-tab="groups">Groups</button>
       <button data-tab="audit">Audit log</button>
     </nav>
     <p class="note">Metadata only: message content and media are never shown here. Every search and action is logged.</p>
     <div id="tab-overview" class="tab"><dl id="stats"></dl></div>
+    <div id="tab-reports" class="tab" hidden>
+      <form id="report-filter">
+        <label>Status
+          <select id="report-status"><option value="open" selected>Open</option><option value="resolved">Resolved</option><option value="dismissed">Dismissed</option><option value="">All</option></select>
+        </label>
+      </form>
+      <table><thead><tr><th>When</th><th>Reported</th><th>Reason</th><th>By</th><th>Evidence</th><th>Total reports</th></tr></thead><tbody id="reports"></tbody></table>
+      <div id="report-detail" hidden>
+        <h3 id="r-title"></h3>
+        <dl id="r-fields"></dl>
+        <h4>Messages the reporter attached</h4>
+        <ol id="r-messages" class="evidence"></ol>
+        <form id="resolve-form">
+          <label>Note <input id="r-note" maxlength="1000"></label>
+          <button type="submit" data-status="resolved">Mark resolved</button>
+          <button type="submit" data-status="dismissed">Dismiss</button>
+          <button type="button" id="r-open-user">Open user (ban)</button>
+        </form>
+        <p id="report-msg" role="status"></p>
+      </div>
+    </div>
     <div id="tab-users" class="tab" hidden>
       <form id="user-search"><input id="user-q" placeholder="Name or email"><button>Search</button></form>
       <table><thead><tr><th>Name</th><th>Email</th><th>Joined</th><th>Last active</th><th>Status</th></tr></thead><tbody id="users"></tbody></table>

@@ -74,9 +74,10 @@ func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, ErrNotFound):
+	case errors.Is(err, ErrNotFound), errors.Is(err, ErrReportNotFound):
 		httpx.Error(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, ErrBanSelf), errors.Is(err, ErrBanAdmin), errors.Is(err, ErrBadBan), errors.Is(err, ErrNotBanned):
+	case errors.Is(err, ErrBanSelf), errors.Is(err, ErrBanAdmin), errors.Is(err, ErrBadBan), errors.Is(err, ErrNotBanned),
+		errors.Is(err, ErrBadResolution), errors.Is(err, ErrReportClosed):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	default:
 		httpx.ServerError(w, r, err)
@@ -201,4 +202,51 @@ func Page() http.Handler {
 		}
 		files.ServeHTTP(w, r)
 	}))
+}
+
+// Reports handles GET /api/admin/reports?status=open|resolved|dismissed.
+func (h *Handler) Reports(w http.ResponseWriter, r *http.Request) {
+	list, err := h.svc.Reports(r.Context(), r.URL.Query().Get("status"), intParam(r, "limit"), intParam(r, "offset"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string][]ReportSummary{"reports": list})
+}
+
+// Report handles GET /api/admin/reports/{report_id}.
+func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, "report_id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid report id")
+		return
+	}
+	d, err := h.svc.Report(r.Context(), adminID(r), id)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, d)
+}
+
+// Resolve handles POST /api/admin/reports/{report_id}/resolve {"status","note"}.
+func (h *Handler) Resolve(w http.ResponseWriter, r *http.Request) {
+	id, err := httpx.PathUUID(r, "report_id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid report id")
+		return
+	}
+	var b struct {
+		Status string `json:"status"`
+		Note   string `json:"note"`
+	}
+	if err := httpx.Decode(w, r, &b); err != nil {
+		httpx.Error(w, http.StatusBadRequest, ErrBadResolution.Error())
+		return
+	}
+	if err := h.svc.Resolve(r.Context(), adminID(r), id, b.Status, b.Note); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
