@@ -22,16 +22,17 @@ kinds and results only.
 
 ## Alerts (email)
 
-1. **Alerts & IRM → Contact points**: the default email contact point should
-   use your address.
-2. Load the rules (needs Docker; token with `rules:write`, from **Access
-   policies**):
-   ```
-   GRAFANA_PROM_URL=https://prometheus-prod-XX-….grafana.net \
-   GRAFANA_PROM_USER=123456 \
-   monitoring/load-alerts.sh
-   ```
-   (`URL` and `User` are on the stack's **Prometheus → Details** page.)
+1. **Alerts & IRM → Notification configuration → + New contact point**:
+   name `email-me`, integration **Email**, your address, **Test**, save. Then
+   **Notification policies → Default policy → Edit**: contact point `email-me`.
+2. **Alerts & IRM → Alert rules → More → Import alert rules → Prometheus YAML
+   file** → upload `alerts-import.yaml`, target folder `Chirpy`, and turn
+   **"Pause imported alerting rules" off**. The 8 rules then appear under
+   Grafana-managed → Chirpy and email through `email-me`.
+
+(`alerts.yaml` + `load-alerts.sh` load the same rules into the Prometheus
+ruler with mimirtool instead; on Grafana Cloud the built-in Prometheus data
+source is locked, so those don't show in the UI. Prefer the import above.)
 
 | Alert | When |
 |---|---|
