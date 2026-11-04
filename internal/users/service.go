@@ -1,6 +1,7 @@
 package users
 
 import (
+	"RyanDev-21.com/Chirpy/internal/catalog"
 	"context"
 	"log/slog"
 	"net/mail"
@@ -157,7 +158,15 @@ func (s *userService) SearchUser(ctx context.Context, me uuid.UUID, q string) ([
 
 func (s *userService) Me(ctx context.Context, userID uuid.UUID) (*User, error) {
 	u, _, err := s.repo.GetUserByID(ctx, userID)
-	return u, err
+	if err != nil {
+		return nil, err
+	}
+	ids, err := s.repo.Interests(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	u.Interests = &ids
+	return u, nil
 }
 
 func (s *userService) GetName(ctx context.Context, userID uuid.UUID) (string, error) {
@@ -179,9 +188,10 @@ func (s *userService) GetName(ctx context.Context, userID uuid.UUID) (string, er
 }
 
 func (s *userService) UpdateProfile(ctx context.Context, me uuid.UUID, req UpdateProfileRequest) (*User, error) {
-	if req.Name == nil && req.Bio == nil {
+	if req.Name == nil && req.Bio == nil && req.Location == nil && req.Interests == nil && req.Discoverable == nil {
 		return nil, ErrInvalidInput
 	}
+	// validate everything before changing anything
 	if req.Bio != nil {
 		bio := strings.TrimSpace(*req.Bio)
 		if utf8.RuneCountInString(bio) > maxBioLen {
@@ -189,22 +199,46 @@ func (s *userService) UpdateProfile(ctx context.Context, me uuid.UUID, req Updat
 		}
 		req.Bio = &bio
 	}
-	var (
-		u   *User
-		err error
-	)
+	var name string
 	if req.Name != nil {
-		name := strings.TrimSpace(*req.Name)
+		name = strings.TrimSpace(*req.Name)
 		if err := ValidateName(name); err != nil {
 			return nil, err
 		}
+	}
+	var country string
+	if req.Location != nil && *req.Location != "" {
+		p, ok := catalog.LookupPlace(*req.Location)
+		if !ok {
+			return nil, ErrBadPlace
+		}
+		country = p.Country
+	}
+	var interests []string
+	if req.Interests != nil {
+		seen := map[string]bool{}
+		for _, id := range *req.Interests {
+			if !catalog.ValidInterest(id) {
+				return nil, ErrBadInterests
+			}
+			if !seen[id] {
+				seen[id] = true
+				interests = append(interests, id)
+			}
+		}
+		if len(interests) > catalog.MaxInterests {
+			return nil, ErrBadInterests
+		}
+	}
+
+	if req.Name != nil {
 		cur, _, err := s.repo.GetUserByID(ctx, me)
 		if err != nil {
 			return nil, err
 		}
 		if name != cur.Name {
 			now := time.Now().UTC()
-			if u, err = s.repo.Rename(ctx, me, name, now, now.Add(-RenameEvery)); err != nil {
+			if _, err := s.repo.Rename(ctx, me, name, now, now.Add(-RenameEvery)); err != nil {
 				return nil, err
 			}
 			if err := s.store.SetNames(ctx, PublicUser{ID: me, Name: name}); err != nil {
@@ -216,14 +250,26 @@ func (s *userService) UpdateProfile(ctx context.Context, me uuid.UUID, req Updat
 		}
 	}
 	if req.Bio != nil {
-		if u, err = s.repo.SetBio(ctx, me, *req.Bio); err != nil {
+		if _, err := s.repo.SetBio(ctx, me, *req.Bio); err != nil {
 			return nil, err
 		}
 	}
-	if u == nil { // same name as before, no bio
-		u, _, err = s.repo.GetUserByID(ctx, me)
+	if req.Location != nil {
+		if err := s.repo.SetLocation(ctx, me, *req.Location, country); err != nil {
+			return nil, err
+		}
 	}
-	return u, err
+	if req.Interests != nil {
+		if err := s.repo.SetInterests(ctx, me, interests); err != nil {
+			return nil, err
+		}
+	}
+	if req.Discoverable != nil {
+		if err := s.repo.SetDiscoverable(ctx, me, *req.Discoverable); err != nil {
+			return nil, err
+		}
+	}
+	return s.Me(ctx, me)
 }
 
 func (s *userService) Profile(ctx context.Context, viewer, id uuid.UUID) (Profile, error) {

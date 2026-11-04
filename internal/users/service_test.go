@@ -16,10 +16,11 @@ import (
 var testPassword = "Pw-" + uuid.NewString()[:8] + "!"
 
 type fakeRepo struct {
-	users   map[uuid.UUID]*User
-	hashes  map[uuid.UUID]string
-	revoked int
-	lookups int
+	interests map[uuid.UUID][]string
+	users     map[uuid.UUID]*User
+	hashes    map[uuid.UUID]string
+	revoked   int
+	lookups   int
 }
 
 func newFakeRepo() *fakeRepo {
@@ -81,6 +82,25 @@ func (f *fakeRepo) SetAvatar(context.Context, uuid.UUID, []byte, time.Time) erro
 func (f *fakeRepo) DeleteAvatar(context.Context, uuid.UUID) error                 { return nil }
 func (f *fakeRepo) Avatar(context.Context, uuid.UUID, uuid.UUID) ([]byte, time.Time, error) {
 	return nil, time.Time{}, ErrUserNotFound
+}
+
+func (f *fakeRepo) SetLocation(_ context.Context, id uuid.UUID, place, _ string) error {
+	f.users[id].Location = PlaceOf(place)
+	return nil
+}
+func (f *fakeRepo) SetDiscoverable(_ context.Context, id uuid.UUID, on bool) error {
+	f.users[id].Discoverable = on
+	return nil
+}
+func (f *fakeRepo) SetInterests(_ context.Context, id uuid.UUID, ids []string) error {
+	if f.interests == nil {
+		f.interests = map[uuid.UUID][]string{}
+	}
+	f.interests[id] = ids
+	return nil
+}
+func (f *fakeRepo) Interests(_ context.Context, id uuid.UUID) ([]string, error) {
+	return append([]string{}, f.interests[id]...), nil
 }
 
 func newSvc(t *testing.T) (UserService, *fakeRepo) {
@@ -189,5 +209,42 @@ func TestUpdateProfile(t *testing.T) {
 	}
 	if name, _ := svc.GetName(ctx, u.ID); name != "after" {
 		t.Fatalf("cached name %q", name)
+	}
+}
+
+func TestUpdateDiscoveryProfile(t *testing.T) {
+	svc, repo := newSvc(t)
+	ctx := context.Background()
+	u, _ := repo.Create(ctx, CreateUserInput{Name: "finder", Email: "f@x.io"})
+	str := func(s string) *string { return &s }
+	list := func(ids ...string) *[]string { return &ids }
+	on := true
+
+	if _, err := svc.UpdateProfile(ctx, u.ID, UpdateProfileRequest{Location: str("atlantis")}); !errors.Is(err, ErrBadPlace) {
+		t.Fatalf("unknown place: %v", err)
+	}
+	if _, err := svc.UpdateProfile(ctx, u.ID, UpdateProfileRequest{Interests: list("gaming", "knitting-cats")}); !errors.Is(err, ErrBadInterests) {
+		t.Fatalf("unknown interest: %v", err)
+	}
+	eleven := list("gaming", "football", "music", "kpop", "anime", "coding", "travel", "food", "pets", "reading", "art")
+	if _, err := svc.UpdateProfile(ctx, u.ID, UpdateProfileRequest{Interests: eleven}); !errors.Is(err, ErrBadInterests) {
+		t.Fatalf("eleven interests: %v", err)
+	}
+	// an invalid field means nothing is changed
+	if _, err := svc.UpdateProfile(ctx, u.ID, UpdateProfileRequest{Bio: str("kept?"), Location: str("atlantis")}); err == nil || repo.users[u.ID].Bio != "" {
+		t.Fatalf("partial update applied: %v %q", err, repo.users[u.ID].Bio)
+	}
+
+	got, err := svc.UpdateProfile(ctx, u.ID, UpdateProfileRequest{
+		Location: str("mm-yangon"), Interests: list("gaming", "kpop", "gaming"), Discoverable: &on,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Location == nil || got.Location.Name != "Yangon" || !got.Discoverable || got.Interests == nil || len(*got.Interests) != 2 {
+		t.Fatalf("profile %+v", got)
+	}
+	if got, _ = svc.UpdateProfile(ctx, u.ID, UpdateProfileRequest{Location: str("")}); got.Location != nil {
+		t.Fatalf("location not cleared: %+v", got.Location)
 	}
 }

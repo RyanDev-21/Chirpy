@@ -40,7 +40,7 @@ UPDATE users SET bio = @bio, updated_at = NOW() WHERE id = @id RETURNING *;
 
 -- name: GetPublicProfile :one
 -- hidden (no row) when either user blocked the other
-SELECT u.id, u.name, u.bio, u.avatar_at FROM users u
+SELECT u.id, u.name, u.bio, u.avatar_at, u.location_id, u.discoverable FROM users u
 WHERE u.id = @id
   AND NOT EXISTS (
       SELECT 1 FROM user_blocks b
@@ -68,3 +68,28 @@ WHERE a.user_id = @id
       WHERE (b.blocker_id = a.user_id AND b.blocked_id = @viewer::uuid)
          OR (b.blocker_id = @viewer::uuid AND b.blocked_id = a.user_id)
   );
+
+-- name: SetLocation :exec
+UPDATE users SET location_id = sqlc.narg(location_id), location_country = @country, updated_at = NOW() WHERE id = @id;
+
+-- name: SetDiscoverable :exec
+UPDATE users SET discoverable = @discoverable, updated_at = NOW() WHERE id = @id;
+
+-- name: RemoveOtherInterests :exec
+DELETE FROM user_interests WHERE user_id = @user_id AND NOT (interest_id = ANY(@keep::text[]));
+
+-- name: AddInterests :exec
+INSERT INTO user_interests (user_id, interest_id)
+SELECT @user_id, unnest(@ids::text[])
+ON CONFLICT DO NOTHING;
+
+-- name: GetInterests :many
+SELECT interest_id FROM user_interests WHERE user_id = $1 ORDER BY interest_id;
+
+-- name: AreFriendsSQL :one
+SELECT EXISTS (
+    SELECT 1 FROM user_relationships
+    WHERE status = 'confirm'
+      AND LEAST(user_id, otherUser_id) = LEAST(@a::uuid, @b::uuid)
+      AND GREATEST(user_id, otherUser_id) = GREATEST(@a::uuid, @b::uuid)
+);
