@@ -16,7 +16,7 @@ import (
 
 // public routes: everything else must refuse unauthenticated callers
 var publicRoutes = map[string]bool{
-	"GET /": true, "GET /livez": true, "GET /readyz": true, "GET /healthz": true,
+	"GET /": true, "GET /api/app/version": true, "GET /livez": true, "GET /readyz": true, "GET /healthz": true,
 	"POST /api/users": true, "POST /api/login": true, "POST /api/refresh": true, "POST /api/revoke": true,
 	"POST /api/auth/verify-email": true, "POST /api/auth/resend-verification": true,
 	"POST /api/auth/password-reset": true, "POST /api/auth/password-reset/confirm": true,

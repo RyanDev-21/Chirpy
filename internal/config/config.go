@@ -57,6 +57,10 @@ type Config struct {
 	// FirebaseServiceAccount is the service account key JSON for push
 	// notifications (FCM). Empty disables push.
 	FirebaseServiceAccount string
+	// App release info for GET /api/app/version (the Android APK is
+	// downloaded from the website, so the app checks for updates itself).
+	// AppMinVersion forces an update below it.
+	AppLatestVersion, AppMinVersion, AppDownloadURL, AppSHA256, AppReleaseNotes string
 	// Cloudflare R2 for photos and videos; all four are needed, otherwise
 	// media is off.
 	R2AccountID, R2Bucket, R2AccessKeyID, R2SecretAccessKey string
@@ -116,6 +120,11 @@ func Load() (Config, error) {
 		MailFrom:               getenv("MAIL_FROM", "Chirpy <no-reply@mail.ponypigeon.com>"),
 		GoogleClientIDs:        splitList(os.Getenv("GOOGLE_CLIENT_IDS")),
 		FirebaseServiceAccount: os.Getenv("FIREBASE_SERVICE_ACCOUNT"),
+		AppLatestVersion:       os.Getenv("APP_LATEST_VERSION"),
+		AppMinVersion:          os.Getenv("APP_MIN_VERSION"),
+		AppDownloadURL:         os.Getenv("APP_DOWNLOAD_URL"),
+		AppSHA256:              os.Getenv("APP_SHA256"),
+		AppReleaseNotes:        os.Getenv("APP_RELEASE_NOTES"),
 		R2AccountID:            os.Getenv("R2_ACCOUNT_ID"),
 		R2Bucket:               os.Getenv("R2_BUCKET"),
 		R2AccessKeyID:          os.Getenv("R2_ACCESS_KEY_ID"),
