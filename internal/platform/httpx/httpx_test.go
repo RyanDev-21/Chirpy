@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -48,7 +49,7 @@ func TestAuthenticate(t *testing.T) {
 				req.Header.Set("Authorization", tt.header)
 			}
 			rec := httptest.NewRecorder()
-			Authenticate(secret)(echoUser).ServeHTTP(rec, req)
+			Authenticate(secret, nil, slog.Default())(echoUser).ServeHTTP(rec, req)
 			if rec.Code != tt.wantCode {
 				t.Fatalf("code = %d, want %d", rec.Code, tt.wantCode)
 			}

@@ -42,6 +42,11 @@ func BurnPasswordCheck(password string) {
 	_, _ = argon2id.ComparePasswordAndHash(password, dummyPasswordHash)
 }
 
+// Token times are written to the millisecond (iat 1767225600.123), so a
+// revocation can tell a token issued just before it from one issued just
+// after, such as a login right after a password reset.
+func init() { jwt.TimePrecision = time.Millisecond }
+
 func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
 	now := time.Now()
 	claims := jwt.RegisteredClaims{
@@ -54,6 +59,13 @@ func MakeJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 }
 
 func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
+	id, _, err := ValidateJWTIssued(tokenString, tokenSecret)
+	return id, err
+}
+
+// ValidateJWTIssued also returns when the token was issued (zero if the
+// token has no iat claim).
+func ValidateJWTIssued(tokenString, tokenSecret string) (uuid.UUID, time.Time, error) {
 	claims := &jwt.RegisteredClaims{}
 	_, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -63,15 +75,19 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	}, jwt.WithIssuer(issuer), jwt.WithExpirationRequired())
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
-			return uuid.Nil, ErrExpiredToken
+			return uuid.Nil, time.Time{}, ErrExpiredToken
 		}
-		return uuid.Nil, ErrInvalidToken
+		return uuid.Nil, time.Time{}, ErrInvalidToken
 	}
 	userID, err := uuid.Parse(claims.Subject)
 	if err != nil {
-		return uuid.Nil, ErrInvalidToken
+		return uuid.Nil, time.Time{}, ErrInvalidToken
 	}
-	return userID, nil
+	var issued time.Time
+	if claims.IssuedAt != nil {
+		issued = claims.IssuedAt.Time
+	}
+	return userID, issued, nil
 }
 
 // GetBearerToken extracts the token from an "Authorization: Bearer <token>" header.
