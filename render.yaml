@@ -42,6 +42,17 @@ services:
             sync: false
           - key: R2_SECRET_ACCESS_KEY
             sync: false
+          # APK release info for GET /api/app/version (see DEPLOY.md)
+          - key: APP_LATEST_VERSION
+            sync: false
+          - key: APP_MIN_VERSION
+            sync: false
+          - key: APP_DOWNLOAD_URL
+            sync: false
+          - key: APP_SHA256
+            sync: false
+          - key: APP_RELEASE_NOTES
+            sync: false
           # metrics to Grafana Cloud (see monitoring/README.md)
           - key: OTEL_EXPORTER_OTLP_ENDPOINT
             sync: false

@@ -56,6 +56,15 @@ shared budget of **300 requests/minute per user**, on top of any route limit
 listed below. `/readyz` and `/healthz` allow 30 requests/minute per IP;
 `/livez` is not limited.
 
+## App updates
+
+`GET /api/app/version` (public) →
+`200 {"latest":"1.2.0","minimum":"1.0.0","download_url":"https://…","sha256":"…","notes":"…"}`.
+The APK is downloaded from the website, so the app checks this at start:
+below `minimum`, block with "please update"; below `latest`, offer the
+update. Verify the downloaded file's SHA-256 against `sha256` before
+installing. `latest` is `""` before the first release. Cached for 5 minutes.
+
 ## Health endpoints
 
 | Method | Path | Auth | Success |

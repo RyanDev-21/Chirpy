@@ -117,3 +117,21 @@ A `docker-compose.prod.yml` for this stage comes with the move.
 ## Environment reference
 
 See `.env.example` for every variable and its default.
+
+## Website (chirpy.ponypigeon.com, Cloudflare Pages)
+
+The download page, privacy policy and terms are static files in `website/`.
+
+1. Cloudflare dashboard → **Workers & Pages → Create → Pages → Connect to Git** → `RyanDev-21/Chirpy`.
+2. **Production branch:** `main`. **Build command:** empty. **Build output directory:** `website`.
+3. After the first deploy: the project → **Custom domains → Set up a custom domain** → `chirpy.ponypigeon.com`.
+4. Render → chirpy-api → Environment: add `https://chirpy.ponypigeon.com` to
+   `CORS_ALLOWED_ORIGINS` (the download button reads `/api/app/version`).
+5. Releasing an APK: upload it (e.g. a GitHub Release asset), then set
+   `APP_LATEST_VERSION`, `APP_DOWNLOAD_URL`, `APP_SHA256` (`shasum -a 256 app.apk`),
+   optionally `APP_MIN_VERSION` (forces older apps to update) and
+   `APP_RELEASE_NOTES` on Render. No website change needed.
+6. Google sign-in for everyone: Google Cloud → Google Auth Platform → **Branding**:
+   homepage `https://chirpy.ponypigeon.com`, privacy policy
+   `https://chirpy.ponypigeon.com/privacy.html`, terms
+   `https://chirpy.ponypigeon.com/terms.html`; then **Audience → Publish app**.

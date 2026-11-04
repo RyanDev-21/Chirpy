@@ -79,6 +79,7 @@ func (a *App) Router() http.Handler {
 		httpx.JSON(w, http.StatusOK, map[string]string{"name": "Chirpy API"})
 	})
 	r.With(limit(limitHealth)).Get("/readyz", a.health)
+	r.With(limit(limitHealth)).Get("/api/app/version", a.appVersion)
 	r.With(limit(limitHealth)).Get("/healthz", a.health)
 
 	r.Route("/api", func(r chi.Router) {
@@ -226,4 +227,18 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 		status["redis"], code = "down", http.StatusServiceUnavailable
 	}
 	httpx.JSON(w, code, status)
+}
+
+// appVersion handles GET /api/app/version: what the Android app compares
+// itself with. Public, so the website's download button can use it too.
+func (a *App) appVersion(w http.ResponseWriter, _ *http.Request) {
+	c := a.cfg
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"latest":       c.AppLatestVersion, // e.g. "1.2.0"; "" before the first release
+		"minimum":      c.AppMinVersion,    // older versions must update
+		"download_url": c.AppDownloadURL,
+		"sha256":       c.AppSHA256,
+		"notes":        c.AppReleaseNotes,
+	})
 }

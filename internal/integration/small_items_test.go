@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"RyanDev-21.com/Chirpy/internal/config"
 	"strings"
 	"testing"
 )
@@ -63,5 +64,21 @@ func TestRootAnswers(t *testing.T) {
 	r := e.expect(e.do("GET", "/", "", nil), 200)
 	if !strings.Contains(string(r.body), "Chirpy API") {
 		t.Fatalf("root: %s", r.body)
+	}
+}
+
+func TestAppVersion(t *testing.T) {
+	e := newEnv(t, func(c *config.Config) {
+		c.AppLatestVersion, c.AppMinVersion = "1.2.0", "1.0.0"
+		c.AppDownloadURL, c.AppSHA256 = "https://chirpy.ponypigeon.com/chirpy-1.2.0.apk", "ab12"
+	})
+	var v map[string]string
+	r := e.expect(e.do("GET", "/api/app/version", "", nil), 200)
+	r.json(t, &v)
+	if v["latest"] != "1.2.0" || v["minimum"] != "1.0.0" || v["sha256"] != "ab12" || !strings.HasPrefix(v["download_url"], "https://") {
+		t.Fatalf("version %v", v)
+	}
+	if r.header.Get("Cache-Control") != "public, max-age=300" {
+		t.Fatalf("cache %q", r.header.Get("Cache-Control"))
 	}
 }
