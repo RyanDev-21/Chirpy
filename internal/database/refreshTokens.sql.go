@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createARefreshToken = `-- name: CreateARefreshToken :one
@@ -43,6 +44,25 @@ func (q *Queries) CreateARefreshToken(ctx context.Context, arg CreateARefreshTok
 		&i.RevokedAt,
 	)
 	return i, err
+}
+
+const deleteStaleRefreshTokens = `-- name: DeleteStaleRefreshTokens :execrows
+DELETE FROM refresh_tokens WHERE expire_at < $1::timestamp OR revoked_at < $2::timestamp
+`
+
+type DeleteStaleRefreshTokensParams struct {
+	Now           pgtype.Timestamp
+	RevokedBefore pgtype.Timestamp
+}
+
+// expired tokens, and revoked ones (each refresh revokes the old token)
+// once they are older than the cutoff
+func (q *Queries) DeleteStaleRefreshTokens(ctx context.Context, arg DeleteStaleRefreshTokensParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteStaleRefreshTokens, arg.Now, arg.RevokedBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getRefreshToken = `-- name: GetRefreshToken :one

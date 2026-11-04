@@ -90,6 +90,18 @@ func (q *Queries) DeleteEmailCode(ctx context.Context, arg DeleteEmailCodeParams
 	return err
 }
 
+const deleteExpiredEmailCodes = `-- name: DeleteExpiredEmailCodes :execrows
+DELETE FROM email_codes WHERE expires_at < $1::timestamp
+`
+
+func (q *Queries) DeleteExpiredEmailCodes(ctx context.Context, now pgtype.Timestamp) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredEmailCodes, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteGroup = `-- name: DeleteGroup :exec
 DELETE FROM chat_groups WHERE id = $1
 `

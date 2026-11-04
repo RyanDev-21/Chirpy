@@ -19,3 +19,8 @@ UPDATE refresh_tokens SET revoked_at = NOW(),updated_at = NOW() WHERE token = $1
 -- name: RevokeAllUserRefreshTokens :exec
 UPDATE refresh_tokens SET revoked_at = NOW(), updated_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL;
 
+
+-- name: DeleteStaleRefreshTokens :execrows
+-- expired tokens, and revoked ones (each refresh revokes the old token)
+-- once they are older than the cutoff
+DELETE FROM refresh_tokens WHERE expire_at < @now::timestamp OR revoked_at < @revoked_before::timestamp;

@@ -1,0 +1,58 @@
+package app
+
+import (
+	"context"
+	"time"
+
+	"RyanDev-21.com/Chirpy/internal/database"
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+const (
+	janitorEvery = time.Hour
+	// revoked refresh tokens are kept this long so a "refresh rejected"
+	// log line can still be matched to a row when investigating
+	revokedKeep = 24 * time.Hour
+)
+
+// runJanitor deletes rows nothing will read again: expired or revoked
+// refresh tokens (every refresh revokes one, so they pile up) and expired
+// email codes. Access tokens are stateless JWTs and are never stored.
+// Deletes are idempotent, so several instances can run this at once.
+func (a *App) runJanitor(ctx context.Context) {
+	wait := time.Minute // first pass shortly after start
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		if err := a.Cleanup(ctx); err != nil && ctx.Err() == nil {
+			a.logger.ErrorContext(ctx, "cleanup failed", "error", err)
+		}
+		wait = janitorEvery
+	}
+}
+
+// Cleanup runs one janitor pass.
+func (a *App) Cleanup(ctx context.Context) error {
+	q := database.New(a.db)
+	now := time.Now().UTC()
+	tokens, err := q.DeleteStaleRefreshTokens(ctx, database.DeleteStaleRefreshTokensParams{
+		Now:           ts(now),
+		RevokedBefore: ts(now.Add(-revokedKeep)),
+	})
+	if err != nil {
+		return err
+	}
+	codes, err := q.DeleteExpiredEmailCodes(ctx, ts(now))
+	if err != nil {
+		return err
+	}
+	if tokens > 0 || codes > 0 {
+		a.logger.InfoContext(ctx, "cleanup", "refresh_tokens", tokens, "email_codes", codes)
+	}
+	return nil
+}
+
+func ts(t time.Time) pgtype.Timestamp { return pgtype.Timestamp{Time: t, Valid: true} }
