@@ -1,0 +1,57 @@
+# Same rules in plain Prometheus format: Alerts & IRM -> Alert rules -> More -> Import alert rules -> Prometheus YAML file.
+# Metric names are the OTLP ones converted by Grafana Cloud
+# (chirpy.http.requests -> chirpy_http_requests_total, ...).
+groups:
+  - name: chirpy
+    rules:
+      - alert: ChirpyNotReporting
+        # no metrics for 10 minutes: the server is down (or can't export)
+        expr: absent_over_time(chirpy_ws_connections{job="chirpy-api"}[10m])
+        labels: {severity: critical}
+        annotations:
+          summary: "Chirpy API sent no metrics for 10 minutes - is it down?"
+      - alert: ChirpyHighErrorRate
+        expr: |
+          sum(rate(chirpy_http_requests_total{job="chirpy-api",status="5xx"}[5m]))
+            / sum(rate(chirpy_http_requests_total{job="chirpy-api"}[5m])) > 0.02
+          and sum(rate(chirpy_http_requests_total{job="chirpy-api"}[5m])) > 0.05
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "More than 2% of requests are failing (5xx)"
+      - alert: ChirpySlow
+        # the websocket route is excluded: its "duration" is the whole connection
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(chirpy_http_duration_seconds_bucket{job="chirpy-api",route!="/api/chats/ws"}[10m]))) > 1
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "95% of requests take longer than 1 s"
+      - alert: ChirpyNeonStorageHigh
+        expr: max(chirpy_storage_bytes{job="chirpy-api",store="neon"}) > 400e6
+        labels: {severity: warning}
+        annotations:
+          summary: "Neon database over 400 MB (free plan: 0.5 GB)"
+      - alert: ChirpyMediaStorageHigh
+        expr: max(chirpy_storage_bytes{job="chirpy-api",store="r2"}) > 8.5e9
+        labels: {severity: warning}
+        annotations:
+          summary: "R2 media over 8.5 GB (cleanup starts at 9 GB, uploads stop at 9.5 GB)"
+      - alert: ChirpyLoginAttack
+        expr: sum(increase(chirpy_auth_events_total{job="chirpy-api",event="login",result="failed"}[5m])) > 50
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 50 failed logins in 5 minutes (password guessing?)"
+      - alert: ChirpyPushFailing
+        expr: |
+          sum(rate(chirpy_push_sent_total{job="chirpy-api",result="failed"}[15m]))
+            / sum(rate(chirpy_push_sent_total{job="chirpy-api"}[15m])) > 0.2
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 20% of push notifications are failing"
+      - alert: ChirpyJobsFailing
+        expr: sum(increase(chirpy_queue_jobs_total{job="chirpy-api",result="error"}[15m])) > 10
+        labels: {severity: warning}
+        annotations:
+          summary: "Background jobs keep failing"
