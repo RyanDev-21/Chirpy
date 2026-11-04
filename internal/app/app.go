@@ -23,6 +23,7 @@ import (
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
 	"RyanDev-21.com/Chirpy/internal/platform/redisx"
 	"RyanDev-21.com/Chirpy/internal/platform/revoke"
+	"RyanDev-21.com/Chirpy/internal/push"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/internal/ws"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -41,6 +42,7 @@ type App struct {
 	queue      queue.Broker
 	// revoked ends access tokens early (password change, account deletion)
 	revoked *revoke.Store
+	pushSvc *push.Service
 	hub     *ws.Hub
 
 	users   users.UserService
@@ -61,6 +63,7 @@ type handlers struct {
 	groups   *groups.GroupHandler
 	admin    *adminHandler
 	discover *discover.Handler
+	push     *push.Handler
 }
 
 // New connects to Postgres and Redis and builds all services.
@@ -70,7 +73,11 @@ type Option func(*options)
 type options struct {
 	mailer mail.Sender
 	google authsvc.GoogleVerifier
+	push   push.Sender
 }
+
+// WithPushSender replaces the FCM client (tests).
+func WithPushSender(s push.Sender) Option { return func(o *options) { o.push = s } }
 
 // WithMailer replaces the email sender.
 func WithMailer(m mail.Sender) Option { return func(o *options) { o.mailer = m } }
@@ -151,7 +158,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	a.revoked = revoke.New(rdb, accessTTL)
 	// every "sign out everywhere" (password change or reset, takeover of an
 	// unverified account) also ends the access tokens already issued
-	userRepo := sessionEnder{UserRepo: users.NewUserRepo(queries), revoked: a.revoked, hub: a.hub}
+	userRepo := &sessionEnder{UserRepo: users.NewUserRepo(queries), revoked: a.revoked, hub: a.hub}
 
 	a.users = users.NewUserService(userRepo, users.NewStore(rdb), logger)
 	a.friends = friends.NewService(friends.NewRepo(queries), friends.NewStore(rdb), a.users, a.hub, logger)
@@ -160,6 +167,35 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	a.hub.SetPolicy(a.chat)
 	a.groups.OnDelete(a.chat.ForgetGroup)
 	a.users.OnRename(a.friends.ForgetNames)
+
+	// push notifications: only with a Firebase key (or a test sender)
+	pushSender := o.push
+	if pushSender == nil && cfg.FirebaseServiceAccount != "" {
+		fcm, err := push.NewFCM(ctx, []byte(cfg.FirebaseServiceAccount))
+		if err != nil {
+			a.Close()
+			return nil, err
+		}
+		pushSender = fcm
+		go func() { // proves the key works; the result is in the logs
+			cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+			defer cancel()
+			if err := fcm.Check(cctx); err != nil {
+				logger.Error("FCM credentials check failed: push notifications will not arrive", "error", err)
+			} else {
+				logger.Info("FCM credentials OK", "project", fcm.Project())
+			}
+		}()
+	}
+	a.pushSvc = push.NewService(queries, pushSender, a.hub, pushNames{users: a.users, groups: a.groups}, logger)
+	if pushSender != nil {
+		d := push.NewDispatcher(a.queue, logger)
+		a.chat.SetNotifier(d)
+		a.friends.SetNotifier(d)
+	} else {
+		logger.Warn("FIREBASE_SERVICE_ACCOUNT not set: push notifications disabled")
+	}
+	userRepo.devices = a.pushSvc
 	a.auth = authsvc.NewAuthService(users.NewUserRepo(queries), authsvc.NewAuthRepo(queries), cfg.JWTSecret,
 		cfg.AccessTokenTTL, cfg.RefreshTokenTTL, logger)
 	sender := o.mailer
@@ -175,6 +211,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	google := o.google
 	if google == nil {
 		google = authsvc.NewGoogleVerifier(cfg.GoogleClientIDs)
+		if google == nil {
+			logger.Warn("GOOGLE_CLIENT_IDS not set: Google sign-in answers 503")
+		}
 	}
 	friendStore, groupStore, userStore := friends.NewStore(rdb), groups.NewStore(rdb), users.NewStore(rdb)
 	accounts := authsvc.NewAccountService(a.users, userRepo, authsvc.NewAccountRepo(db), sender,
@@ -190,6 +229,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		groups:   groups.NewGroupHandler(a.groups),
 		admin:    &adminHandler{queries: queries},
 		discover: discover.NewHandler(discover.NewService(queries)),
+		push:     push.NewHandler(a.pushSvc),
 	}
 	return a, nil
 }

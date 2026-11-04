@@ -54,6 +54,9 @@ type Config struct {
 	// issued to. For Android sign-in this is the *Web* client ID the app
 	// passes as serverClientId. Empty disables Google sign-in.
 	GoogleClientIDs []string
+	// FirebaseServiceAccount is the service account key JSON for push
+	// notifications (FCM). Empty disables push.
+	FirebaseServiceAccount string
 
 	TLSCertFile string // empty: serve plain HTTP (e.g. behind a TLS proxy)
 	TLSKeyFile  string
@@ -97,24 +100,25 @@ func Load() (Config, error) {
 	loadEnvFile()
 
 	c := Config{
-		Addr:            listenAddr(),
-		Platform:        getenv("PLATFORM", "prod"),
-		DatabaseURL:     os.Getenv("DB_URL"),
-		RedisURL:        os.Getenv("REDIS_URL"),
-		RedisAddr:       getenv("REDIS_ADDR", "localhost:6379"),
-		QueueBackend:    getenv("QUEUE_BACKEND", "redis"),
-		RedisUser:       os.Getenv("REDIS_USR"),
-		RedisPass:       os.Getenv("REDIS_PASS"),
-		JWTSecret:       os.Getenv("SECRET"),
-		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
-		MailFrom:        getenv("MAIL_FROM", "Chirpy <no-reply@mail.ponypigeon.com>"),
-		GoogleClientIDs: splitList(os.Getenv("GOOGLE_CLIENT_IDS")),
-		TLSCertFile:     os.Getenv("TLS_CERT_FILE"),
-		TLSKeyFile:      os.Getenv("TLS_KEY_FILE"),
-		CORSOrigins:     splitList(getenv("CORS_ALLOWED_ORIGINS", "")),
-		ShutdownTimeout: 15 * time.Second,
-		LogLevel:        getenv("LOG_LEVEL", "info"),
-		LogFormat:       getenv("LOG_FORMAT", "json"),
+		Addr:                   listenAddr(),
+		Platform:               getenv("PLATFORM", "prod"),
+		DatabaseURL:            os.Getenv("DB_URL"),
+		RedisURL:               os.Getenv("REDIS_URL"),
+		RedisAddr:              getenv("REDIS_ADDR", "localhost:6379"),
+		QueueBackend:           getenv("QUEUE_BACKEND", "redis"),
+		RedisUser:              os.Getenv("REDIS_USR"),
+		RedisPass:              os.Getenv("REDIS_PASS"),
+		JWTSecret:              os.Getenv("SECRET"),
+		ResendAPIKey:           os.Getenv("RESEND_API_KEY"),
+		MailFrom:               getenv("MAIL_FROM", "Chirpy <no-reply@mail.ponypigeon.com>"),
+		GoogleClientIDs:        splitList(os.Getenv("GOOGLE_CLIENT_IDS")),
+		FirebaseServiceAccount: os.Getenv("FIREBASE_SERVICE_ACCOUNT"),
+		TLSCertFile:            os.Getenv("TLS_CERT_FILE"),
+		TLSKeyFile:             os.Getenv("TLS_KEY_FILE"),
+		CORSOrigins:            splitList(getenv("CORS_ALLOWED_ORIGINS", "")),
+		ShutdownTimeout:        15 * time.Second,
+		LogLevel:               getenv("LOG_LEVEL", "info"),
+		LogFormat:              getenv("LOG_FORMAT", "json"),
 	}
 	var err error
 	if c.RedisPoolSize, err = atoi("REDIS_POOL_SIZE", 0); err != nil {

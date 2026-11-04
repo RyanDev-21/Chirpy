@@ -405,43 +405,6 @@ func (q *Queries) GetRecentPrivateMessages(ctx context.Context, arg GetRecentPri
 	return items, nil
 }
 
-const groupMessageChanges = `-- name: GroupMessageChanges :many
-SELECT id, content, edited_at, deleted_at FROM GroupMessage
-WHERE id = ANY($1::uuid[]) AND (edited_at IS NOT NULL OR deleted_at IS NOT NULL)
-`
-
-type GroupMessageChangesRow struct {
-	ID        uuid.UUID
-	Content   pgtype.Text
-	EditedAt  pgtype.Timestamp
-	DeletedAt pgtype.Timestamp
-}
-
-func (q *Queries) GroupMessageChanges(ctx context.Context, ids []uuid.UUID) ([]GroupMessageChangesRow, error) {
-	rows, err := q.db.Query(ctx, groupMessageChanges, ids)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GroupMessageChangesRow
-	for rows.Next() {
-		var i GroupMessageChangesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Content,
-			&i.EditedAt,
-			&i.DeletedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const groupMessageCursor = `-- name: GroupMessageCursor :one
 SELECT created_at FROM GroupMessage WHERE id = $1 AND group_id = $2
 `
@@ -629,44 +592,6 @@ type MarkGroupReadParams struct {
 func (q *Queries) MarkGroupRead(ctx context.Context, arg MarkGroupReadParams) error {
 	_, err := q.db.Exec(ctx, markGroupRead, arg.GroupID, arg.UserID, arg.MessageID)
 	return err
-}
-
-const privateMessageChanges = `-- name: PrivateMessageChanges :many
-SELECT id, content, edited_at, deleted_at FROM message
-WHERE id = ANY($1::uuid[]) AND (edited_at IS NOT NULL OR deleted_at IS NOT NULL)
-`
-
-type PrivateMessageChangesRow struct {
-	ID        uuid.UUID
-	Content   pgtype.Text
-	EditedAt  pgtype.Timestamp
-	DeletedAt pgtype.Timestamp
-}
-
-// edit/delete state for a page of messages (overlaid on cached copies)
-func (q *Queries) PrivateMessageChanges(ctx context.Context, ids []uuid.UUID) ([]PrivateMessageChangesRow, error) {
-	rows, err := q.db.Query(ctx, privateMessageChanges, ids)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []PrivateMessageChangesRow
-	for rows.Next() {
-		var i PrivateMessageChangesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Content,
-			&i.EditedAt,
-			&i.DeletedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const privateMessageCursor = `-- name: PrivateMessageCursor :one

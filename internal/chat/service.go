@@ -11,6 +11,7 @@ import (
 
 	"RyanDev-21.com/Chirpy/internal/groups"
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
+	"RyanDev-21.com/Chirpy/internal/push"
 	"RyanDev-21.com/Chirpy/internal/ws"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -18,7 +19,7 @@ import (
 
 const (
 	streamCap = 200
-	pageSize  = 50
+	pageSize  = 30 // default history page: fits Render free's CPU slice
 	maxPage   = 100
 )
 
@@ -53,6 +54,8 @@ type ChatService interface {
 	// EditWindow of sending; DeleteMessage deletes it for everyone.
 	EditMessage(ctx context.Context, me, msgID uuid.UUID, content string) (EditedMessage, error)
 	DeleteMessage(ctx context.Context, me, msgID uuid.UUID) error
+	// SetNotifier enables push notifications for messages and reactions.
+	SetNotifier(n push.Notifier)
 	// ForgetGroup is retained for the group lifecycle hook; group messages are
 	// no longer cached.
 	ForgetGroup(ctx context.Context, groupID uuid.UUID)
@@ -72,6 +75,7 @@ type chatService struct {
 	friends FriendChecker
 	push    Pusher
 	queue   queue.Publisher
+	notify  push.Notifier // nil: no push notifications
 	logger  *slog.Logger
 }
 
@@ -161,6 +165,13 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 	}
 	if err := s.push.WriteToUsers(targets, ws.Event{Event: ws.EventMessage, Payload: out}); err != nil {
 		s.logger.WarnContext(ctx, "failed to push message", "error", err)
+	}
+	if s.notify != nil {
+		j := push.Job{Kind: push.KindPrivate, To: targets, From: from, MsgID: msgID, Preview: in.Content}
+		if in.Type == TypePublic {
+			j.Kind, j.Group = push.KindGroup, to
+		}
+		s.notify.Notify(ctx, j)
 	}
 	return msgID, nil
 }
@@ -320,18 +331,12 @@ func (s *chatService) MarkSeen(ctx context.Context, me, other uuid.UUID, msgIDSt
 
 // --- current state of a page ---
 
-// withState brings a page of messages up to date from postgres: edits and
-// deletions (cached copies are written once, at send time, so a cache
-// reseeded concurrently with an edit can't serve stale text) and reaction
-// counts. Two indexed queries per page, whatever its source.
+// withState attaches reaction counts to a page of messages (one indexed
+// query); edits and deletions are already in the rows read from postgres.
 func (s *chatService) withState(ctx context.Context, kind string, me uuid.UUID, msgs []MessageMetaDataRes) ([]MessageMetaDataRes, error) {
 	ids := make([]uuid.UUID, len(msgs))
 	for i, m := range msgs {
 		ids[i] = m.ID
-	}
-	changes, err := s.repo.MessageChanges(ctx, kind, ids)
-	if err != nil {
-		return nil, err
 	}
 	counts, err := s.repo.ReactionCounts(ctx, kind, me, ids)
 	if err != nil {
@@ -339,9 +344,6 @@ func (s *chatService) withState(ctx context.Context, kind string, me uuid.UUID, 
 	}
 	for i := range msgs {
 		m := &msgs[i]
-		if c, ok := changes[m.ID]; ok {
-			m.MsgInfo.Msg.Content, m.EditedAt, m.Deleted = c.Content, c.EditedAt, c.Deleted
-		}
 		if m.Deleted {
 			m.MsgInfo.Msg.Content = ""
 		}
@@ -472,8 +474,18 @@ func (s *chatService) React(ctx context.Context, me, msgID uuid.UUID, emoji stri
 		return err
 	}
 	s.pushReaction(ctx, ref, others, me, msgID, emoji)
+	// the author hears about reactions to their message (not their own)
+	if s.notify != nil && ref.From != me && ref.From != uuid.Nil {
+		j := push.Job{Kind: push.KindReaction, To: []uuid.UUID{ref.From}, From: me, MsgID: msgID, Preview: emoji}
+		if ref.Kind == TypePublic {
+			j.Group = ref.Group
+		}
+		s.notify.Notify(ctx, j)
+	}
 	return nil
 }
+
+func (s *chatService) SetNotifier(n push.Notifier) { s.notify = n }
 
 func (s *chatService) Unreact(ctx context.Context, me, msgID uuid.UUID) error {
 	ref, others, err := s.authorizeMessage(ctx, me, msgID, false)

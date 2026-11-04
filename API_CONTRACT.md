@@ -154,6 +154,7 @@ Use Android's Credential Manager "Sign in with Google" with the server's
 username, `409` username taken, `401` expired/used token (start again).
 
 Invalid tokens and Google accounts with an unverified email return `401`.
+`503` means Google sign-in isn't configured on the server (offer email sign-in).
 
 ### Refresh
 
@@ -572,7 +573,7 @@ deleted", and keep replies pointing at it working.
 Query parameters (use `since` or `before`, not both):
 
 - none: the most recent page.
-- `limit=1..100`: page size (default 50).
+- `limit=1..100`: page size (default 30).
 - `before=<message_id>`: the page just older than that message, for "load
   more" while scrolling up. Pass the `message_id` of the oldest message you
   have; an empty list means you reached the start. A message from another
@@ -667,6 +668,50 @@ deleted their account. If the last message was deleted for everyone,
 Success is `201` with an empty body. The message must belong to this private
 chat; otherwise the endpoint returns `400`. The other user receives a `Seen`
 event only if you are friends.
+
+## Push notifications
+
+Sent through Firebase Cloud Messaging to phones that **aren't connected**
+over the WebSocket (when the app is open, the live events are enough).
+
+### Register the phone
+
+- After login (and whenever Firebase gives the app a new token):
+  `POST /api/devices` with `{"token":"<FCM registration token>","platform":"android"}`
+  → `204`. `platform` is `android` (default) or `ios`. The token goes in the
+  body, never the URL. A phone that signs in as another user moves to that
+  user.
+- On logout: `DELETE /api/devices` with `{"token":"…"}` → `204`.
+- A password change or reset removes all of the user's phones (register again
+  after signing in). Tokens Firebase reports as invalid are removed.
+
+### What is sent
+
+| Kind (`data.type`) | Title | Body | `data` | Grouping (`tag`) |
+|---|---|---|---|---|
+| `private` | sender name | message text (≤120 chars) | `from_id`, `msg_id` | one per chat |
+| `public` | group name | `sender: text` | `from_id`, `group_id`, `msg_id` | one per group |
+| `friend_request` | Friend request | `bob sent you a friend request` | `from_id` | |
+| `friend_accept` | Friend request accepted | `bob accepted your friend request` | `from_id` | |
+| `reaction` | reactor (`in <group>`) | `reacted ❤️ to your message` | `from_id`, `msg_id`, `group_id`? | one per message |
+
+Android channel id: `messages`. Tapping should open the chat from `data`.
+
+### Settings
+
+- `GET /api/users/me/notifications` →
+  `{"private":true,"groups":true,"friends":true,"reactions":true}` (all on by
+  default); `PUT` the same object to change them → `200`.
+- Mute a chat: `PUT /api/mutes` with
+  `{"type":"private","id":"<other user>"}` or `{"type":"public","id":"<group>"}`,
+  plus `"until":"<RFC3339>"` for a timed mute (8 hours, a week…) or nothing to
+  mute until unmuted → `204`; a past `until` is `400`. Muting a person also
+  silences their friend requests and reactions.
+- `DELETE /api/mutes` with `{"type","id"}` → `204`.
+- `GET /api/mutes` → `{"mutes":[{"type":"public","id":"…","until":null}]}`
+  (active mutes only).
+
+Maximum 30 changes per minute across these routes.
 
 ## WebSocket
 

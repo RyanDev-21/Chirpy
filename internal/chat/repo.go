@@ -41,9 +41,6 @@ type ChatRepo interface {
 	ReactionCounts(ctx context.Context, kind string, me uuid.UUID, ids []uuid.UUID) (map[uuid.UUID][]ReactionCount, error)
 	Reactors(ctx context.Context, kind string, msgID uuid.UUID) ([]Reactor, error)
 
-	// MessageChanges returns edit/delete state for the edited or deleted
-	// messages among ids.
-	MessageChanges(ctx context.Context, kind string, ids []uuid.UUID) (map[uuid.UUID]messageChange, error)
 	// EditMessage / DeleteMessage report false if the message is already
 	// deleted. Deleting also removes its reactions.
 	EditMessage(ctx context.Context, kind string, msgID uuid.UUID, content string, at time.Time) (bool, error)
@@ -365,34 +362,6 @@ func (r *chatRepo) Reactors(ctx context.Context, kind string, msgID uuid.UUID) (
 	}
 	for _, x := range rows {
 		out = append(out, Reactor{UserID: x.UserID, Name: x.Name, Emoji: x.Emoji, CreatedAt: x.CreatedAt.Time.UTC()})
-	}
-	return out, nil
-}
-
-func (r *chatRepo) MessageChanges(ctx context.Context, kind string, ids []uuid.UUID) (map[uuid.UUID]messageChange, error) {
-	out := make(map[uuid.UUID]messageChange)
-	if len(ids) == 0 {
-		return out, nil
-	}
-	add := func(id uuid.UUID, content pgtype.Text, edited, deleted pgtype.Timestamp) {
-		out[id] = messageChange{Content: content.String, EditedAt: optTime(edited), Deleted: deleted.Valid}
-	}
-	if kind == TypePrivate {
-		rows, err := r.q.PrivateMessageChanges(ctx, ids)
-		if err != nil {
-			return nil, err
-		}
-		for _, x := range rows {
-			add(x.ID, x.Content, x.EditedAt, x.DeletedAt)
-		}
-		return out, nil
-	}
-	rows, err := r.q.GroupMessageChanges(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	for _, x := range rows {
-		add(x.ID, x.Content, x.EditedAt, x.DeletedAt)
 	}
 	return out, nil
 }
