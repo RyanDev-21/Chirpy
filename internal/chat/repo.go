@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"RyanDev-21.com/Chirpy/internal/users"
 	"context"
 	"errors"
 	"slices"
@@ -259,7 +260,7 @@ func (r *chatRepo) Conversations(ctx context.Context, me uuid.UUID) ([]Conversat
 	}
 	out := make([]Conversation, 0, len(priv)+len(grp))
 	for _, p := range priv {
-		out = append(out, Conversation{Type: TypePrivate, ID: p.OtherID, Name: p.OtherName,
+		out = append(out, Conversation{Type: TypePrivate, ID: p.OtherID, Name: p.OtherName, AvatarURL: users.AvatarURLFrom(p.OtherID, p.OtherAvatarAt),
 			LastMessage: lastMessage(p.LastID, p.LastContent, p.LastFrom, p.LastAt, p.LastDeleted), Unread: int(p.Unread)})
 	}
 	for _, g := range grp {

@@ -50,9 +50,10 @@ func RequestLogger(logger *slog.Logger, trustedProxies int) func(http.Handler) h
 			switch route := RoutePattern(r); {
 			case status >= 500:
 				level = slog.LevelError
-			case route == "/livez":
-				// the platform health check and keep-alive ping hit this
-				// every few seconds; keep it out of production logs
+			case route == "/livez" || route == "/" || route == "unmatched":
+				// health checks, keep-alive pings, crawlers and scanners
+				// probing random paths: counted in metrics, not logged in
+				// production
 				level = slog.LevelDebug
 			}
 			logger.LogAttrs(ctx, level, "request",

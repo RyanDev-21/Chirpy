@@ -72,9 +72,10 @@ type GroupSummary struct {
 }
 
 type GroupMember struct {
-	UserID uuid.UUID `json:"user_id"`
-	Name   string    `json:"name"`
-	Role   string    `json:"role"`
+	UserID    uuid.UUID `json:"user_id"`
+	Name      string    `json:"name"`
+	Role      string    `json:"role"`
+	AvatarURL *string   `json:"avatar_url"`
 }
 
 // GroupDetail is GET /api/chats/groups/{group_id}. Members is only filled

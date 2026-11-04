@@ -1,6 +1,7 @@
 package groups
 
 import (
+	"RyanDev-21.com/Chirpy/internal/users"
 	"context"
 	"errors"
 	"time"
@@ -228,7 +229,7 @@ func (r *groupRepo) Detail(ctx context.Context, groupID, viewer uuid.UUID) (Grou
 	}
 	members := make([]GroupMember, 0, len(rows))
 	for _, m := range rows {
-		members = append(members, GroupMember{UserID: m.MemberID, Name: m.Name, Role: m.Role})
+		members = append(members, GroupMember{UserID: m.MemberID, Name: m.Name, Role: m.Role, AvatarURL: users.AvatarURLFrom(m.MemberID, m.AvatarAt)})
 		if m.MemberID == viewer {
 			d.IsMember = true
 		}

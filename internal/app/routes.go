@@ -70,6 +70,10 @@ func (a *App) Router() http.Handler {
 	// external keep-alive ping does not keep the database awake. readyz
 	// checks dependencies (healthz is kept as an alias).
 	r.Get("/livez", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	// probes and crawlers ask for "/"; answer instead of logging a 404
+	r.Get("/", func(w http.ResponseWriter, _ *http.Request) {
+		httpx.JSON(w, http.StatusOK, map[string]string{"name": "Chirpy API"})
+	})
 	r.With(limit(limitHealth)).Get("/readyz", a.health)
 	r.With(limit(limitHealth)).Get("/healthz", a.health)
 
@@ -103,6 +107,7 @@ func (a *App) Router() http.Handler {
 
 			r.Get("/users/me", a.handlers.users.Me)
 			r.With(limit(limitAccount)).Patch("/users/me", a.handlers.users.UpdateMe)
+			r.With(limit(limitAccount)).Post("/users/me/logout-all", a.handlers.users.LogoutAll)
 			r.With(limit(limitAccount)).Delete("/users/me", a.handlers.account.DeleteAccount)
 			r.With(limit(limitPassword)).Post("/users/password", a.handlers.users.UpdatePassword)
 			r.With(limit(limitSearch)).Get("/users/search", a.handlers.users.SearchUser)

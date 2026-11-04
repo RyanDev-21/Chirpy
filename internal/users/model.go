@@ -2,6 +2,7 @@ package users
 
 import (
 	"errors"
+	"github.com/jackc/pgx/v5/pgtype"
 	"strconv"
 	"time"
 
@@ -71,6 +72,14 @@ type Profile struct {
 // AvatarURL is where a user's picture is served (see avatarURL).
 func AvatarURL(id uuid.UUID, at time.Time) *string { return avatarURL(id, at) }
 
+// AvatarURLFrom is AvatarURL for a nullable database column (nil: no picture).
+func AvatarURLFrom(id uuid.UUID, at pgtype.Timestamp) *string {
+	if !at.Valid {
+		return nil
+	}
+	return avatarURL(id, at.Time)
+}
+
 // PlaceOf resolves a stored location id (nil if unset or no longer listed).
 func PlaceOf(id string) *catalog.Place {
 	if p, ok := catalog.LookupPlace(id); ok {
@@ -97,8 +106,9 @@ type UpdateProfileRequest struct {
 
 // PublicUser is what other users may see (no email).
 type PublicUser struct {
-	ID   uuid.UUID `json:"id"`
-	Name string    `json:"name"`
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	AvatarURL *string   `json:"avatar_url"`
 }
 
 type CreateUserInput struct {

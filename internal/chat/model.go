@@ -128,6 +128,7 @@ type Conversation struct {
 	Type        string       `json:"type"` // "private" or "public"
 	ID          uuid.UUID    `json:"id"`   // the other user, or the group
 	Name        string       `json:"name"`
+	AvatarURL   *string      `json:"avatar_url"`   // the other user's picture (private chats only)
 	LastMessage *LastMessage `json:"last_message"` // null for a group with no messages
 	Unread      int          `json:"unread"`
 }

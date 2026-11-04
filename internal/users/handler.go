@@ -218,3 +218,18 @@ func (h *UserHandler) Avatar(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(img)
 }
+
+// LogoutAll handles POST /api/users/me/logout-all: signs the user out on
+// every device.
+func (h *UserHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := h.svc.LogoutAll(r.Context(), me); err != nil {
+		httpx.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

@@ -302,7 +302,7 @@ func (q *Queries) RenameUser(ctx context.Context, arg RenameUserParams) (User, e
 }
 
 const searchNameSiml = `-- name: SearchNameSiml :many
-SELECT u.id, u.name, similarity(u.name, $1::text) AS similarity
+SELECT u.id, u.name, u.avatar_at, similarity(u.name, $1::text) AS similarity
 FROM users u
 WHERE u.name % $1::text
   AND NOT EXISTS (
@@ -322,6 +322,7 @@ type SearchNameSimlParams struct {
 type SearchNameSimlRow struct {
 	ID         uuid.UUID
 	Name       string
+	AvatarAt   pgtype.Timestamp
 	Similarity float32
 }
 
@@ -335,7 +336,12 @@ func (q *Queries) SearchNameSiml(ctx context.Context, arg SearchNameSimlParams) 
 	var items []SearchNameSimlRow
 	for rows.Next() {
 		var i SearchNameSimlRow
-		if err := rows.Scan(&i.ID, &i.Name, &i.Similarity); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.AvatarAt,
+			&i.Similarity,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
