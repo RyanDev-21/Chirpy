@@ -40,10 +40,31 @@ UPDATE users SET bio = @bio, updated_at = NOW() WHERE id = @id RETURNING *;
 
 -- name: GetPublicProfile :one
 -- hidden (no row) when either user blocked the other
-SELECT u.id, u.name, u.bio FROM users u
+SELECT u.id, u.name, u.bio, u.avatar_at FROM users u
 WHERE u.id = @id
   AND NOT EXISTS (
       SELECT 1 FROM user_blocks b
       WHERE (b.blocker_id = u.id AND b.blocked_id = @viewer::uuid)
          OR (b.blocker_id = @viewer::uuid AND b.blocked_id = u.id)
+  );
+
+-- name: SetAvatar :exec
+WITH a AS (
+    INSERT INTO user_avatars (user_id, image, updated_at) VALUES (@user_id, @image, @at::timestamp)
+    ON CONFLICT (user_id) DO UPDATE SET image = EXCLUDED.image, updated_at = EXCLUDED.updated_at
+)
+UPDATE users SET avatar_at = @at::timestamp WHERE id = @user_id;
+
+-- name: DeleteAvatar :exec
+WITH a AS (DELETE FROM user_avatars WHERE user_id = @user_id)
+UPDATE users SET avatar_at = NULL WHERE id = @user_id;
+
+-- name: GetAvatar :one
+-- hidden (no row) when either user blocked the other
+SELECT a.image, a.updated_at FROM user_avatars a
+WHERE a.user_id = @id
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks b
+      WHERE (b.blocker_id = a.user_id AND b.blocked_id = @viewer::uuid)
+         OR (b.blocker_id = @viewer::uuid AND b.blocked_id = a.user_id)
   );

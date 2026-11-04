@@ -15,7 +15,7 @@ import (
 const createUser = `-- name: CreateUser :one
 INSERT INTO users(id, name, created_at, updated_at, email, password)
 VALUES (gen_random_uuid(), $1, NOW(), NOW(), $2, $3)
-RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at
+RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at
 `
 
 type CreateUserParams struct {
@@ -38,8 +38,19 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.EmailVerifiedAt,
 		&i.Bio,
 		&i.NameChangedAt,
+		&i.AvatarAt,
 	)
 	return i, err
+}
+
+const deleteAvatar = `-- name: DeleteAvatar :exec
+WITH a AS (DELETE FROM user_avatars WHERE user_id = $1)
+UPDATE users SET avatar_at = NULL WHERE id = $1
+`
+
+func (q *Queries) DeleteAvatar(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteAvatar, userID)
+	return err
 }
 
 const deleteUser = `-- name: DeleteUser :exec
@@ -51,8 +62,36 @@ func (q *Queries) DeleteUser(ctx context.Context) error {
 	return err
 }
 
+const getAvatar = `-- name: GetAvatar :one
+SELECT a.image, a.updated_at FROM user_avatars a
+WHERE a.user_id = $1
+  AND NOT EXISTS (
+      SELECT 1 FROM user_blocks b
+      WHERE (b.blocker_id = a.user_id AND b.blocked_id = $2::uuid)
+         OR (b.blocker_id = $2::uuid AND b.blocked_id = a.user_id)
+  )
+`
+
+type GetAvatarParams struct {
+	ID     uuid.UUID
+	Viewer uuid.UUID
+}
+
+type GetAvatarRow struct {
+	Image     []byte
+	UpdatedAt pgtype.Timestamp
+}
+
+// hidden (no row) when either user blocked the other
+func (q *Queries) GetAvatar(ctx context.Context, arg GetAvatarParams) (GetAvatarRow, error) {
+	row := q.db.QueryRow(ctx, getAvatar, arg.ID, arg.Viewer)
+	var i GetAvatarRow
+	err := row.Scan(&i.Image, &i.UpdatedAt)
+	return i, err
+}
+
 const getPublicProfile = `-- name: GetPublicProfile :one
-SELECT u.id, u.name, u.bio FROM users u
+SELECT u.id, u.name, u.bio, u.avatar_at FROM users u
 WHERE u.id = $1
   AND NOT EXISTS (
       SELECT 1 FROM user_blocks b
@@ -67,21 +106,27 @@ type GetPublicProfileParams struct {
 }
 
 type GetPublicProfileRow struct {
-	ID   uuid.UUID
-	Name string
-	Bio  string
+	ID       uuid.UUID
+	Name     string
+	Bio      string
+	AvatarAt pgtype.Timestamp
 }
 
 // hidden (no row) when either user blocked the other
 func (q *Queries) GetPublicProfile(ctx context.Context, arg GetPublicProfileParams) (GetPublicProfileRow, error) {
 	row := q.db.QueryRow(ctx, getPublicProfile, arg.ID, arg.Viewer)
 	var i GetPublicProfileRow
-	err := row.Scan(&i.ID, &i.Name, &i.Bio)
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Bio,
+		&i.AvatarAt,
+	)
 	return i, err
 }
 
 const getUserInfoByEmail = `-- name: GetUserInfoByEmail :one
-SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at FROM users WHERE email = $1
+SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, error) {
@@ -98,12 +143,13 @@ func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, e
 		&i.EmailVerifiedAt,
 		&i.Bio,
 		&i.NameChangedAt,
+		&i.AvatarAt,
 	)
 	return i, err
 }
 
 const getUserInfoByID = `-- name: GetUserInfoByID :one
-SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at FROM users WHERE id = $1
+SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, error) {
@@ -120,6 +166,7 @@ func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, erro
 		&i.EmailVerifiedAt,
 		&i.Bio,
 		&i.NameChangedAt,
+		&i.AvatarAt,
 	)
 	return i, err
 }
@@ -127,7 +174,7 @@ func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, erro
 const renameUser = `-- name: RenameUser :one
 UPDATE users SET name = $1, name_changed_at = $2::timestamp, updated_at = $2::timestamp
 WHERE id = $3 AND (name_changed_at IS NULL OR name_changed_at < $4::timestamp)
-RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at
+RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at
 `
 
 type RenameUserParams struct {
@@ -158,6 +205,7 @@ func (q *Queries) RenameUser(ctx context.Context, arg RenameUserParams) (User, e
 		&i.EmailVerifiedAt,
 		&i.Bio,
 		&i.NameChangedAt,
+		&i.AvatarAt,
 	)
 	return i, err
 }
@@ -207,8 +255,27 @@ func (q *Queries) SearchNameSiml(ctx context.Context, arg SearchNameSimlParams) 
 	return items, nil
 }
 
+const setAvatar = `-- name: SetAvatar :exec
+WITH a AS (
+    INSERT INTO user_avatars (user_id, image, updated_at) VALUES ($2, $3, $1::timestamp)
+    ON CONFLICT (user_id) DO UPDATE SET image = EXCLUDED.image, updated_at = EXCLUDED.updated_at
+)
+UPDATE users SET avatar_at = $1::timestamp WHERE id = $2
+`
+
+type SetAvatarParams struct {
+	At     pgtype.Timestamp
+	UserID uuid.UUID
+	Image  []byte
+}
+
+func (q *Queries) SetAvatar(ctx context.Context, arg SetAvatarParams) error {
+	_, err := q.db.Exec(ctx, setAvatar, arg.At, arg.UserID, arg.Image)
+	return err
+}
+
 const setBio = `-- name: SetBio :one
-UPDATE users SET bio = $1, updated_at = NOW() WHERE id = $2 RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at
+UPDATE users SET bio = $1, updated_at = NOW() WHERE id = $2 RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at
 `
 
 type SetBioParams struct {
@@ -230,6 +297,7 @@ func (q *Queries) SetBio(ctx context.Context, arg SetBioParams) (User, error) {
 		&i.EmailVerifiedAt,
 		&i.Bio,
 		&i.NameChangedAt,
+		&i.AvatarAt,
 	)
 	return i, err
 }

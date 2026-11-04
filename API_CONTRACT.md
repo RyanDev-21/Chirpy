@@ -179,7 +179,7 @@ exists.
 
 ```json
 {"id":"uuid","name":"alice","email":"alice@example.com","email_verified":true,
- "bio":"hello","name_change_available_at":null,
+ "bio":"hello","name_change_available_at":null,"avatar_url":null,
  "created_at":"…","updated_at":"…","is_chirpy_red":false}
 ```
 
@@ -202,8 +202,25 @@ is. Maximum 10 requests/minute.
 
 ### View a profile
 
-`GET /api/users/{user_id}` → `200 {"id":"uuid","name":"bob","bio":"…"}`.
+`GET /api/users/{user_id}` →
+`200 {"id":"uuid","name":"bob","bio":"…","avatar_url":"/api/users/uuid/avatar?v=…"}`.
 No email. `404` for unknown users, and when either of you blocked the other.
+
+### Profile picture
+
+- `PUT /api/users/me/avatar` with the image file itself as the request body
+  (JPEG, PNG or WebP; not multipart) → `200` with the same shape as
+  **Current user**, including the new `avatar_url`. At most 5 MB (`413`) and
+  40 megapixels; anything else is `400`. The server crops the centre square,
+  scales it to 256×256 and stores it as JPEG; photo metadata (EXIF, GPS) is
+  removed. Shrink large photos on the phone first (e.g. to 1024 px): uploads
+  must finish within 15 seconds. Maximum 10 uploads/deletes per minute.
+- `DELETE /api/users/me/avatar` → `204`; `avatar_url` becomes `null`.
+- `GET <avatar_url>` (authenticated, prefix the API host) → the JPEG.
+  `avatar_url` changes with every upload, so cache it forever (the response
+  says `Cache-Control: private, max-age=31536000, immutable`); `ETag` /
+  `If-None-Match` → `304` also works. `404` without a picture or across a
+  block. With Coil/Glide, add the `Authorization` header to image requests.
 
 ### Change password
 

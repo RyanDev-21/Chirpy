@@ -13,6 +13,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/pressly/goose/v3 v3.26.0
 	github.com/redis/go-redis/v9 v9.17.2
+	golang.org/x/image v0.33.0
 	google.golang.org/api v0.310.0
 )
 

@@ -2,7 +2,9 @@ package users
 
 import (
 	"errors"
+	"io"
 	"net/http"
+	"strconv"
 
 	"RyanDev-21.com/Chirpy/internal/platform/httpx"
 	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
@@ -134,4 +136,85 @@ func (h *UserHandler) Profile(w http.ResponseWriter, r *http.Request) {
 	default:
 		httpx.ServerError(w, r, err)
 	}
+}
+
+// UploadAvatar handles PUT /api/users/me/avatar; the body is the image
+// itself (JPEG, PNG or WebP, at most 5 MB).
+func (h *UserHandler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxAvatarUpload))
+	var tooBig *http.MaxBytesError
+	switch {
+	case errors.As(err, &tooBig):
+		httpx.Error(w, http.StatusRequestEntityTooLarge, ErrImageTooLarge.Error())
+		return
+	case err != nil:
+		httpx.Error(w, http.StatusBadRequest, "could not read the upload")
+		return
+	}
+	u, err := h.svc.SetAvatar(r.Context(), me, raw)
+	switch {
+	case err == nil:
+		httpx.JSON(w, http.StatusOK, u)
+	case errors.Is(err, ErrBadImage):
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrImageTooLarge):
+		httpx.Error(w, http.StatusRequestEntityTooLarge, err.Error())
+	default:
+		httpx.ServerError(w, r, err)
+	}
+}
+
+// DeleteAvatar handles DELETE /api/users/me/avatar.
+func (h *UserHandler) DeleteAvatar(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if err := h.svc.DeleteAvatar(r.Context(), me); err != nil {
+		httpx.ServerError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Avatar handles GET /api/users/{user_id}/avatar: the JPEG itself.
+func (h *UserHandler) Avatar(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	id, err := httpx.PathUUID(r, "user_id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	img, at, err := h.svc.Avatar(r.Context(), me, id)
+	if errors.Is(err, ErrUserNotFound) {
+		httpx.Error(w, http.StatusNotFound, "no avatar")
+		return
+	}
+	if err != nil {
+		httpx.ServerError(w, r, err)
+		return
+	}
+	etag := `"` + strconv.FormatInt(at.UnixMilli(), 10) + `"`
+	w.Header().Set("ETag", etag)
+	// the URL carries the version, so a cached copy never goes stale; it is
+	// private because it is only served to signed-in users
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Content-Length", strconv.Itoa(len(img)))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(img)
 }

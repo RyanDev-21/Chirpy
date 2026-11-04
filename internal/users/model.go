@@ -2,6 +2,7 @@ package users
 
 import (
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,13 +43,23 @@ type User struct {
 	// NameChangeAvailableAt is when the username may next be changed; null
 	// when it can be changed now.
 	NameChangeAvailableAt *time.Time `json:"name_change_available_at"`
+	// AvatarURL is null without a picture; it changes with every upload,
+	// so clients can cache the image for as long as they like.
+	AvatarURL *string `json:"avatar_url"`
 }
 
 // Profile is another user's public profile.
 type Profile struct {
-	ID   uuid.UUID `json:"id"`
-	Name string    `json:"name"`
-	Bio  string    `json:"bio"`
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	Bio       string    `json:"bio"`
+	AvatarURL *string   `json:"avatar_url"`
+}
+
+// avatarURL is where a user's picture is served, versioned by upload time.
+func avatarURL(id uuid.UUID, at time.Time) *string {
+	u := "/api/users/" + id.String() + "/avatar?v=" + strconv.FormatInt(at.UnixMilli(), 10)
+	return &u
 }
 
 // UpdateProfileRequest is PATCH /api/users/me; absent fields stay.
