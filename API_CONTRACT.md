@@ -53,6 +53,7 @@ listed below. `/readyz` and `/healthz` allow 30 requests/minute per IP;
 
 | Method | Path | Auth | Success |
 |---|---|---|---|
+| GET | `/` | No | `200 {"name":"Chirpy API"}` |
 | GET | `/livez` | No | `204 No Content`; process liveness only |
 | GET | `/readyz` | No | `200` or `503`; `{"postgres":"ok","redis":"ok"}` |
 | GET | `/healthz` | No | Alias of `/readyz` |
@@ -168,6 +169,13 @@ Success: `200`:
 {"access_token":"<new-access-token>","refresh_token":"<new-refresh-token>"}
 ```
 
+### Log out all devices
+
+`POST /api/users/me/logout-all` (authenticated) → `204`. Ends every session
+of the account: all refresh and access tokens stop working, open WebSockets
+close and registered phones are removed (no more push until they sign in
+again). Maximum 10 requests/minute.
+
 ### Revoke
 
 `POST /api/revoke` (log out) — send the **refresh token** (not the access
@@ -217,6 +225,11 @@ is. Maximum 10 requests/minute.
 
 Everything is validated first: if one field is invalid, nothing changes.
 
+Everywhere a person is listed (friends, friend requests, search, group
+members, conversation list, discovery) they come with `avatar_url`, `null`
+without a picture. It changes when the picture changes, so cache images by
+URL.
+
 ### View a profile
 
 `GET /api/users/{user_id}` →
@@ -235,7 +248,7 @@ unknown users, and when either of you blocked the other.
   removed. Shrink large photos on the phone first (e.g. to 1024 px): uploads
   must finish within 15 seconds. Maximum 10 uploads/deletes per minute.
 - `DELETE /api/users/me/avatar` → `204`; `avatar_url` becomes `null`.
-- `GET <avatar_url>` (authenticated, prefix the API host) → the JPEG.
+- `GET /api/users/{user_id}/avatar?v=…`, i.e. `GET <avatar_url>` (authenticated, prefix the API host) → the JPEG.
   `avatar_url` changes with every upload, so cache it forever (the response
   says `Cache-Control: private, max-age=31536000, immutable`); `ETag` /
   `If-None-Match` → `304` also works. `404` without a picture or across a
@@ -277,7 +290,7 @@ offer this.
 `q` is trimmed and must be 1–25 characters. Success: `200`:
 
 ```json
-{"UserList":[{"id":"uuid","name":"alice"}]}
+{"UserList":[{"id":"uuid","name":"alice","avatar_url":"/api/users/uuid/avatar?v=…"}]}
 ```
 
 The key is intentionally `UserList` (capital U/L), and search results never
@@ -349,7 +362,7 @@ All friend endpoints require authentication.
 `GET /api/friends` → `200`:
 
 ```json
-{"id_list":[{"user_id":"uuid","name":"bob"}]}
+{"id_list":[{"user_id":"uuid","name":"bob","avatar_url":null}]}
 ```
 
 ### List pending requests
@@ -358,8 +371,8 @@ All friend endpoints require authentication.
 
 ```json
 {
-  "pending_ids":{"request-uuid":{"user_id":"sender-uuid","name":"alice"}},
-  "request_ids":{"request-uuid":{"user_id":"receiver-uuid","name":"bob"}}
+  "pending_ids":{"request-uuid":{"user_id":"sender-uuid","name":"alice","avatar_url":null}},
+  "request_ids":{"request-uuid":{"user_id":"receiver-uuid","name":"bob","avatar_url":null}}
 }
 ```
 
@@ -435,7 +448,7 @@ role: `Leader` or `member`.
 ```json
 {"id":"group-uuid","name":"devs","description":"Team chat","max_members":20,
  "member_count":3,"is_member":true,
- "members":[{"user_id":"uuid","name":"alice","role":"Leader"}]}
+ "members":[{"user_id":"uuid","name":"alice","role":"Leader","avatar_url":null}]}
 ```
 
 Members only: groups are private, so a non-member gets `404`, the same as an
@@ -646,7 +659,7 @@ is `400`.
   {"type":"public","id":"group-uuid","name":"devs",
    "last_message":{"id":"msg-uuid","msg":"standup?","from_id":"uuid","created_at":"…"},
    "unread":2},
-  {"type":"private","id":"other-user-uuid","name":"alice",
+  {"type":"private","id":"other-user-uuid","name":"alice","avatar_url":"/api/users/uuid/avatar?v=…",
    "last_message":{"id":"…","msg":"hi","from_id":"…","created_at":"…","deleted":false},
    "unread":0},
   {"type":"public","id":"group-uuid","name":"quiet","last_message":null,"unread":0}

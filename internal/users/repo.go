@@ -131,7 +131,7 @@ func (r *userRepo) SearchByName(ctx context.Context, me uuid.UUID, q string) ([]
 	}
 	out := make([]PublicUser, 0, len(rows))
 	for _, v := range rows {
-		out = append(out, PublicUser{ID: v.ID, Name: v.Name})
+		out = append(out, PublicUser{ID: v.ID, Name: v.Name, AvatarURL: AvatarURLFrom(v.ID, v.AvatarAt)})
 	}
 	return out, nil
 }

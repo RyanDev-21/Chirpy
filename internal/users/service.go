@@ -37,9 +37,11 @@ type UserService interface {
 	UpdateProfile(ctx context.Context, me uuid.UUID, req UpdateProfileRequest) (*User, error)
 	// Profile is another user's public profile (hidden when blocked).
 	Profile(ctx context.Context, viewer, id uuid.UUID) (Profile, error)
-	// OnRename registers cleanup after a username change (friend lists
-	// cache names).
+	// OnRename registers cleanup after a username or avatar change (friend
+	// lists cache names and avatar links).
 	OnRename(fn func(ctx context.Context, userID uuid.UUID))
+	// LogoutAll ends every session of the user (tokens, sockets, phones).
+	LogoutAll(ctx context.Context, me uuid.UUID) error
 	// SetAvatar stores raw (a JPEG, PNG or WebP upload) as a 256x256 JPEG.
 	SetAvatar(ctx context.Context, me uuid.UUID, raw []byte) (*User, error)
 	DeleteAvatar(ctx context.Context, me uuid.UUID) error
@@ -296,13 +298,30 @@ func (s *userService) SetAvatar(ctx context.Context, me uuid.UUID, raw []byte) (
 	if err := s.repo.SetAvatar(ctx, me, img, time.Now().UTC().Truncate(time.Millisecond)); err != nil {
 		return nil, err
 	}
+	s.profileChanged(ctx, me)
 	return s.Me(ctx, me)
 }
 
 func (s *userService) DeleteAvatar(ctx context.Context, me uuid.UUID) error {
-	return s.repo.DeleteAvatar(ctx, me)
+	if err := s.repo.DeleteAvatar(ctx, me); err != nil {
+		return err
+	}
+	s.profileChanged(ctx, me)
+	return nil
 }
 
 func (s *userService) Avatar(ctx context.Context, viewer, id uuid.UUID) ([]byte, time.Time, error) {
 	return s.repo.Avatar(ctx, id, viewer)
+}
+
+func (s *userService) profileChanged(ctx context.Context, id uuid.UUID) {
+	for _, fn := range s.onRename {
+		fn(ctx, id)
+	}
+}
+
+// LogoutAll revokes the refresh tokens; the repository wrapper in app also
+// ends access tokens, closes the socket and forgets the user's phones.
+func (s *userService) LogoutAll(ctx context.Context, me uuid.UUID) error {
+	return s.repo.RevokeAllRefreshTokens(ctx, me)
 }

@@ -17,7 +17,7 @@ UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2;
 
 -- name: SearchNameSiml :many
 -- people who blocked the caller, or whom the caller blocked, are left out
-SELECT u.id, u.name, similarity(u.name, @q::text) AS similarity
+SELECT u.id, u.name, u.avatar_at, similarity(u.name, @q::text) AS similarity
 FROM users u
 WHERE u.name % @q::text
   AND NOT EXISTS (
