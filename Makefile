@@ -3,7 +3,7 @@ TEST_DATABASE_URL ?= postgres://chirpy:chirpy@localhost:5432/chirpy_test?sslmode
 TEST_REDIS_ADDR ?= localhost:6379
 GOOSE = go run github.com/pressly/goose/v3/cmd/goose@v3.26.0
 
-.PHONY: run build docker test test-integration lint sqlc migrate deps
+.PHONY: run build docker test test-integration lint sqlc migrate deps bench
 
 deps: ## start postgres and redis
 	docker compose up -d --wait
@@ -35,3 +35,6 @@ lint:
 
 sqlc:
 	sqlc generate
+
+bench: ## load test at Render free size (BENCH_CPUS=1 for a 1-CPU VPS)
+	bash bench/run.sh
