@@ -83,13 +83,37 @@ func ClientIP(r *http.Request, trustedProxies int) string {
 			}
 		}
 	}
-	if len(hops) < trustedProxies {
-		return peer // not behind the expected proxies (e.g. a direct health check)
+	// Walk from the right. Private and loopback hops are the hosting
+	// provider's own load balancers (Render adds one or more 10.x hops after
+	// the client's address) and are skipped; each public hop counts as one
+	// trusted proxy's view of the client. Client-written entries sit to the
+	// left of what the outermost proxy appended, so they are never reached
+	// before it.
+	seen := 0
+	for i := len(hops) - 1; i >= 0; i-- {
+		ip := net.ParseIP(hops[i])
+		if ip == nil {
+			return peer // garbage from a proxy we trust: don't guess
+		}
+		if isInternal(ip) {
+			continue
+		}
+		seen++
+		if seen == trustedProxies {
+			return ip.String()
+		}
 	}
-	if ip := net.ParseIP(hops[len(hops)-trustedProxies]); ip != nil {
-		return ip.String()
+	return peer // not behind the expected proxies (e.g. a direct health check)
+}
+
+// isInternal reports addresses that can only belong to infrastructure:
+// private ranges, loopback, link-local and carrier-grade NAT.
+func isInternal(ip net.IP) bool {
+	if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+		return true
 	}
-	return peer
+	cgnat := net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+	return cgnat.Contains(ip)
 }
 
 // RoutePattern is the matched chi route (e.g. /api/chat/{otherUser_id}/messages),

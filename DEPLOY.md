@@ -67,7 +67,7 @@ Render service.
 | `QUEUE_BACKEND` | `memory` | Upstash bills per command; idle stream polling alone would exceed 500K/month. Only seen receipts and UI config are queued, so losing them on a restart is harmless. |
 | `DB_MAX_CONNS` | `5` | Small pool for a small database. |
 | `DB_MAX_IDLE_TIME` | `2m` | Close idle connections so Neon can scale to zero. |
-| `TRUSTED_PROXIES` | `1` | Render's load balancer is one proxy; the real client IP is the last `X-Forwarded-For` entry. Without it every anonymous user shares one rate-limit budget. |
+| `TRUSTED_PROXIES` | `1` | One public proxy (Render's edge) in front of the app. Render also adds internal `10.x` load-balancer hops after the client's address; private/internal hops are always skipped, so the client IP is the last *public* `X-Forwarded-For` entry. Without it every anonymous user shares one rate-limit budget. |
 
 ## Email (Resend) and Google sign-in
 
