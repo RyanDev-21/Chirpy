@@ -34,6 +34,9 @@ jobs:
           go vet -tags integration ./...
       - name: staticcheck
         run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+      # fails only on known vulnerabilities the code can actually reach
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
       - uses: sqlc-dev/setup-sqlc@v4
         with:
           sqlc-version: "1.31.1"
