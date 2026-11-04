@@ -52,7 +52,7 @@ func (q *Queries) CreateIdentity(ctx context.Context, arg CreateIdentityParams) 
 const createUserVerifiedNoPassword = `-- name: CreateUserVerifiedNoPassword :one
 INSERT INTO users (id, name, created_at, updated_at, email, password, email_verified_at)
 VALUES (gen_random_uuid(), $1, NOW(), NOW(), $2, NULL, NOW())
-RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable
+RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at
 `
 
 type CreateUserVerifiedNoPasswordParams struct {
@@ -78,6 +78,11 @@ func (q *Queries) CreateUserVerifiedNoPassword(ctx context.Context, arg CreateUs
 		&i.LocationID,
 		&i.LocationCountry,
 		&i.Discoverable,
+		&i.IsAdmin,
+		&i.BannedAt,
+		&i.BannedUntil,
+		&i.BanReason,
+		&i.LastSeenAt,
 	)
 	return i, err
 }

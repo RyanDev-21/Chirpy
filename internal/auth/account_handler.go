@@ -39,6 +39,8 @@ func (h *AccountHandler) writeErr(w http.ResponseWriter, r *http.Request, err er
 		httpx.Error(w, http.StatusConflict, "the user name already exists")
 	case errors.Is(err, ErrInvalidCode):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrSuspended):
+		httpx.Error(w, http.StatusForbidden, "account suspended")
 	case errors.Is(err, ErrInvalidGoogle), errors.Is(err, ErrReauthRequired):
 		httpx.Error(w, http.StatusUnauthorized, err.Error())
 	case errors.Is(err, ErrMailUnavailable), errors.Is(err, ErrGoogleUnavailable):

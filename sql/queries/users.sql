@@ -20,6 +20,7 @@ UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2;
 SELECT u.id, u.name, u.avatar_at, similarity(u.name, @q::text) AS similarity
 FROM users u
 WHERE u.name % @q::text
+  AND u.banned_at IS NULL
   AND NOT EXISTS (
       SELECT 1 FROM user_blocks b
       WHERE (b.blocker_id = u.id AND b.blocked_id = @me::uuid)
@@ -42,6 +43,7 @@ UPDATE users SET bio = @bio, updated_at = NOW() WHERE id = @id RETURNING *;
 -- hidden (no row) when either user blocked the other
 SELECT u.id, u.name, u.bio, u.avatar_at, u.location_id, u.discoverable FROM users u
 WHERE u.id = @id
+  AND u.banned_at IS NULL
   AND NOT EXISTS (
       SELECT 1 FROM user_blocks b
       WHERE (b.blocker_id = u.id AND b.blocked_id = @viewer::uuid)
