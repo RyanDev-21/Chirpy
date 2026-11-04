@@ -48,7 +48,9 @@ const fcmScope = "https://www.googleapis.com/auth/firebase.messaging"
 // NewFCM reads a service account key (the JSON file from Firebase project
 // settings).
 func NewFCM(ctx context.Context, serviceAccountJSON []byte) (*FCM, error) {
-	creds, err := google.CredentialsFromJSON(ctx, serviceAccountJSON, fcmScope)
+	// only a service account key is accepted: other credential types in
+	// this variable could make the server fetch tokens from elsewhere
+	creds, err := google.CredentialsFromJSONWithType(ctx, serviceAccountJSON, google.ServiceAccount, fcmScope)
 	if err != nil {
 		return nil, fmt.Errorf("read FIREBASE_SERVICE_ACCOUNT: %w", err)
 	}

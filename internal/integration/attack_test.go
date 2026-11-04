@@ -205,7 +205,7 @@ func TestMalformedInputIsRejectedCleanly(t *testing.T) {
 func TestUsernamesRejectInvisibleCharacters(t *testing.T) {
 	e := newEnv(t)
 	alice := e.seedUser("alice")
-	for _, name := range []string{"ad​min", "alice‮", "⁦root", "bob­", "tab\tname", "ctl\u0007"} {
+	for _, name := range []string{"ad\u200bmin", "alice\u202e", "\u2066root", "bob\u00ad", "tab\tname", "ctl\u0007"} {
 		if got := e.do("PATCH", "/api/users/me", alice.Token, map[string]string{"name": name}); got.code != 400 {
 			t.Errorf("name %q: %d, want 400", name, got.code)
 		}
