@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
 	"log/slog"
 	"net"
@@ -44,6 +45,7 @@ func RequestLogger(logger *slog.Logger, trustedProxies int) func(http.Handler) h
 			if status == 0 {
 				status = http.StatusOK // hijacked (websocket) or no explicit WriteHeader
 			}
+			telemetry.HTTP(ctx, RoutePattern(r), status, time.Since(start))
 			level := slog.LevelInfo
 			switch route := RoutePattern(r); {
 			case status >= 500:

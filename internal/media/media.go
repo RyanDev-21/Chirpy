@@ -6,6 +6,7 @@
 package media
 
 import (
+	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
 	"errors"
 	"log/slog"
@@ -138,6 +139,7 @@ func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, kind, contentT
 	if err != nil {
 		return Upload{}, err
 	}
+	telemetry.Media(ctx, "upload", kind)
 	return Upload{ID: id, URL: u, Method: "PUT", ExpiresIn: int(uploadTTL.Seconds()),
 		Headers: map[string]string{"Content-Type": contentType, "If-None-Match": "*"}}, nil
 }
@@ -292,6 +294,7 @@ func (s *Service) Download(ctx context.Context, viewer, id uuid.UUID) (Download,
 	if err != nil {
 		return Download{}, err
 	}
+	telemetry.Media(ctx, "download", m.Kind)
 	return Download{URL: u, ContentType: m.ContentType, Size: m.Size, ExpiresIn: int(downloadTTL.Seconds())}, nil
 }
 
@@ -308,7 +311,7 @@ func (s *Service) Cleanup(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	deleted := s.remove(ctx, ids)
+	deleted := s.remove(ctx, ids, "expired")
 	stored, err := s.q.MediaStoredBytes(ctx)
 	if err != nil || stored <= lruHighBytes {
 		return deleted, err
@@ -326,10 +329,10 @@ func (s *Service) Cleanup(ctx context.Context) (int, error) {
 		stored -= r.Size
 	}
 	s.logger.WarnContext(ctx, "media storage above 9 GB: deleting least recently downloaded files", "files", len(lru))
-	return deleted + s.remove(ctx, lru), nil
+	return deleted + s.remove(ctx, lru, "lru"), nil
 }
 
-func (s *Service) remove(ctx context.Context, ids []uuid.UUID) int {
+func (s *Service) remove(ctx context.Context, ids []uuid.UUID, reason string) int {
 	var done []uuid.UUID
 	for _, id := range ids {
 		if err := s.store.Delete(ctx, key(id)); err != nil {
@@ -337,6 +340,7 @@ func (s *Service) remove(ctx context.Context, ids []uuid.UUID) int {
 			continue
 		}
 		done = append(done, id)
+		telemetry.Media(ctx, "delete", reason)
 	}
 	if len(done) > 0 {
 		if err := s.q.MarkMediaDeleted(ctx, database.MarkMediaDeletedParams{Ids: done, Now: ts(s.now())}); err != nil {

@@ -5,6 +5,7 @@
 package revoke
 
 import (
+	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
 	"strconv"
 	"sync"
@@ -50,6 +51,7 @@ func (s *Store) RevokeAll(ctx context.Context, userID uuid.UUID) error {
 	s.mu.Lock()
 	s.recent[userID] = entry{revokedAt: now, checked: time.Now()}
 	s.mu.Unlock()
+	telemetry.Auth(ctx, "revoke", "ok")
 	return nil
 }
 

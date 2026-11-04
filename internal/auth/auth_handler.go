@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -33,6 +34,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accessToken, refreshToken, user, err := h.authService.Login(r.Context(), params.Email, params.Password)
+	switch {
+	case err == nil:
+		telemetry.Auth(r.Context(), "login", "ok")
+	case errors.Is(err, ErrInvalidCredentials):
+		telemetry.Auth(r.Context(), "login", "failed") // a spike means password guessing
+	}
 	if err != nil {
 		if errors.Is(err, ErrEmailNotVerified) {
 			httpx.Error(w, http.StatusForbidden, "email not verified")

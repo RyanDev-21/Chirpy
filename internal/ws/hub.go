@@ -96,6 +96,13 @@ func (h *Hub) Run() {
 	}
 }
 
+// Count is how many users have a live connection to this server.
+func (h *Hub) Count() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.clients)
+}
+
 // Online reports whether userID has a live connection to this server.
 func (h *Hub) Online(userID uuid.UUID) bool {
 	h.mu.RLock()

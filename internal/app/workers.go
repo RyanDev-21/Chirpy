@@ -1,7 +1,9 @@
 package app
 
 import (
+	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
+	"encoding/json"
 
 	"RyanDev-21.com/Chirpy/internal/chat"
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
@@ -32,7 +34,17 @@ func (a *App) subscriptions() []subscription {
 
 func (a *App) startWorkers(ctx context.Context) error {
 	for _, s := range a.subscriptions() {
-		if err := a.queue.Subscribe(ctx, s.topic, s.workers, s.handler); err != nil {
+		topic, handle := s.topic, s.handler
+		counted := func(ctx context.Context, raw json.RawMessage) error {
+			err := handle(ctx, raw)
+			result := "ok"
+			if err != nil {
+				result = "error"
+			}
+			telemetry.Job(ctx, topic, result)
+			return err
+		}
+		if err := a.queue.Subscribe(ctx, s.topic, s.workers, counted); err != nil {
 			return err
 		}
 	}

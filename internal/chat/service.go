@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
 	"errors"
 	"fmt"
@@ -190,6 +191,7 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 	if err := s.push.WriteToUsers(targets, ws.Event{Event: ws.EventMessage, Payload: out}); err != nil {
 		s.logger.WarnContext(ctx, "failed to push message", "error", err)
 	}
+	telemetry.Message(ctx, in.Type, len(attached) > 0)
 	if s.notify != nil {
 		j := push.Job{Kind: push.KindPrivate, To: targets, From: from, MsgID: msgID, Preview: mediaPreview(in.Content, attached)}
 		if in.Type == TypePublic {
@@ -415,6 +417,7 @@ func (s *chatService) EditMessage(ctx context.Context, me, msgID uuid.UUID, cont
 	if !ok {
 		return EditedMessage{}, ErrMessageNotFound // deleted meanwhile
 	}
+	telemetry.ChatAction(ctx, "edit")
 	ev := ws.OutEditedEvent{MsgID: msgID.String(), FromID: me.String(), Type: ref.Kind, Content: content, EditedAt: now}
 	if ref.Kind == TypePublic {
 		ev.GroupID = ref.Group.String()
@@ -446,6 +449,7 @@ func (s *chatService) DeleteMessage(ctx context.Context, me, msgID uuid.UUID) er
 			s.logger.WarnContext(ctx, "failed to expire media of deleted message", "error", err)
 		}
 	}
+	telemetry.ChatAction(ctx, "delete")
 	ev := ws.OutDeletedEvent{MsgID: msgID.String(), FromID: me.String(), Type: ref.Kind}
 	if ref.Kind == TypePublic {
 		ev.GroupID = ref.Group.String()
@@ -513,6 +517,7 @@ func (s *chatService) React(ctx context.Context, me, msgID uuid.UUID, emoji stri
 		return err
 	}
 	s.pushReaction(ctx, ref, others, me, msgID, emoji)
+	telemetry.ChatAction(ctx, "react")
 	// the author hears about reactions to their message (not their own)
 	if s.notify != nil && ref.From != me && ref.From != uuid.Nil {
 		j := push.Job{Kind: push.KindReaction, To: []uuid.UUID{ref.From}, From: me, MsgID: msgID, Preview: emoji}
