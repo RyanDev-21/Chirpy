@@ -252,6 +252,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 			logger.WarnContext(ctx, "failed to invalidate group cache", "error", err)
 		}
 	}, logger)
+	a.admin.OnBanChange(a.chat.BansChanged)
 
 	a.handlers = handlers{
 		users:    users.NewUserHandler(a.users),

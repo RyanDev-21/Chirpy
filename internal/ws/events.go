@@ -117,7 +117,10 @@ type OutGoingMessage struct {
 	Content  string `json:"msg"`
 	ParentID string `json:"parent_id,omitempty"`
 	FromID   string `json:"from_id"`
-	Type     string `json:"type"`
+	// ToID is the recipient of a private message, so the sender's other
+	// devices know which chat it belongs to.
+	ToID string `json:"to_id,omitempty"`
+	Type string `json:"type"`
 	// GroupID is set for group ("public") messages so the client knows
 	// which group chat the message belongs to.
 	GroupID   string    `json:"group_id,omitempty"`

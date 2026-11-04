@@ -64,27 +64,64 @@ func TestSlowClientIsDisconnected(t *testing.T) {
 	}
 }
 
-func TestReconnectReplacesOldConnection(t *testing.T) {
+func TestSeveralDevicesAllReceive(t *testing.T) {
 	h := NewHub(slog.New(slog.DiscardHandler))
 	go h.Run()
-	old := newTestClient(h, 1)
-	register(t, h, old)
-	fresh := &Client{Hub: h, Send: make(chan []byte, 1), UserID: old.UserID}
-	h.Register <- fresh
-	// old connection's channel is closed
+	phone := newTestClient(h, 4)
+	register(t, h, phone)
+	tablet := &Client{Hub: h, Send: make(chan []byte, 4), UserID: phone.UserID}
+	h.Register <- tablet
+	time.Sleep(10 * time.Millisecond)
+	if err := h.WriteToUsers([]uuid.UUID{phone.UserID}, Event{Event: "msg"}); err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]*Client{"phone": phone, "tablet": tablet} {
+		select {
+		case <-c.Send:
+		case <-time.After(time.Second):
+			t.Fatalf("%s got nothing", name)
+		}
+	}
+	// one device leaving keeps the user online
+	h.Unregister <- phone
+	time.Sleep(10 * time.Millisecond)
+	if !h.Online(phone.UserID) {
+		t.Fatal("user offline although the tablet is connected")
+	}
+	if h.Count() != 1 {
+		t.Fatalf("count %d", h.Count())
+	}
+	// disconnecting the user closes every device
+	h.Disconnect(phone.UserID)
+	if _, ok := <-tablet.Send; ok || h.Online(phone.UserID) {
+		t.Fatal("tablet still connected after Disconnect")
+	}
+}
+
+func TestTooManyDevicesDropsTheOldest(t *testing.T) {
+	h := NewHub(slog.New(slog.DiscardHandler))
+	go h.Run()
+	first := newTestClient(h, 1)
+	register(t, h, first)
+	for range MaxDevices {
+		h.Register <- &Client{Hub: h, Send: make(chan []byte, 1), UserID: first.UserID}
+	}
 	select {
-	case _, ok := <-old.Send:
+	case _, ok := <-first.Send:
 		if ok {
-			t.Fatal("expected old Send to be closed")
+			t.Fatal("expected the oldest Send to be closed")
 		}
 	case <-time.After(time.Second):
-		t.Fatal("old connection not closed")
+		t.Fatal("oldest connection not closed")
 	}
-	// the old client unregistering must not remove the new one
-	h.Unregister <- old
+	// its late unregister must not touch the others
+	h.Unregister <- first
 	time.Sleep(10 * time.Millisecond)
-	if !h.CheckWsConnection(old.UserID) {
-		t.Fatal("stale unregister removed the new connection")
+	h.mu.RLock()
+	n := len(h.clients[first.UserID])
+	h.mu.RUnlock()
+	if n != MaxDevices {
+		t.Fatalf("%d connections, want %d", n, MaxDevices)
 	}
 }
 
