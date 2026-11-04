@@ -35,6 +35,8 @@ type GroupService interface {
 	// OnDelete registers cleanup to run after a group is deleted (the chat
 	// package drops its cached messages).
 	OnDelete(fn func(ctx context.Context, groupID uuid.UUID))
+	// GroupName is the group's display name (cached).
+	GroupName(ctx context.Context, groupID uuid.UUID) (string, error)
 }
 
 // Pusher delivers realtime events (implemented by *ws.Hub).
@@ -270,4 +272,9 @@ func (s *groupService) pushTo(ctx context.Context, to []uuid.UUID, event string,
 	if err := s.push.WriteToUsers(to, ws.Event{Event: event, Payload: payload}); err != nil {
 		s.logger.WarnContext(ctx, "failed to push group event", "event", event, "error", err)
 	}
+}
+
+func (s *groupService) GroupName(ctx context.Context, groupID uuid.UUID) (string, error) {
+	snap, err := s.snapshot(ctx, groupID)
+	return snap.Name, err
 }

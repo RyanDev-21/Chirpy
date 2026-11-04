@@ -11,6 +11,7 @@ import (
 
 	"RyanDev-21.com/Chirpy/internal/groups"
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
+	"RyanDev-21.com/Chirpy/internal/push"
 	"RyanDev-21.com/Chirpy/internal/ws"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -53,6 +54,8 @@ type ChatService interface {
 	// EditWindow of sending; DeleteMessage deletes it for everyone.
 	EditMessage(ctx context.Context, me, msgID uuid.UUID, content string) (EditedMessage, error)
 	DeleteMessage(ctx context.Context, me, msgID uuid.UUID) error
+	// SetNotifier enables push notifications for messages and reactions.
+	SetNotifier(n push.Notifier)
 	// ForgetGroup is retained for the group lifecycle hook; group messages are
 	// no longer cached.
 	ForgetGroup(ctx context.Context, groupID uuid.UUID)
@@ -72,6 +75,7 @@ type chatService struct {
 	friends FriendChecker
 	push    Pusher
 	queue   queue.Publisher
+	notify  push.Notifier // nil: no push notifications
 	logger  *slog.Logger
 }
 
@@ -161,6 +165,13 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 	}
 	if err := s.push.WriteToUsers(targets, ws.Event{Event: ws.EventMessage, Payload: out}); err != nil {
 		s.logger.WarnContext(ctx, "failed to push message", "error", err)
+	}
+	if s.notify != nil {
+		j := push.Job{Kind: push.KindPrivate, To: targets, From: from, MsgID: msgID, Preview: in.Content}
+		if in.Type == TypePublic {
+			j.Kind, j.Group = push.KindGroup, to
+		}
+		s.notify.Notify(ctx, j)
 	}
 	return msgID, nil
 }
@@ -463,8 +474,18 @@ func (s *chatService) React(ctx context.Context, me, msgID uuid.UUID, emoji stri
 		return err
 	}
 	s.pushReaction(ctx, ref, others, me, msgID, emoji)
+	// the author hears about reactions to their message (not their own)
+	if s.notify != nil && ref.From != me && ref.From != uuid.Nil {
+		j := push.Job{Kind: push.KindReaction, To: []uuid.UUID{ref.From}, From: me, MsgID: msgID, Preview: emoji}
+		if ref.Kind == TypePublic {
+			j.Group = ref.Group
+		}
+		s.notify.Notify(ctx, j)
+	}
 	return nil
 }
+
+func (s *chatService) SetNotifier(n push.Notifier) { s.notify = n }
 
 func (s *chatService) Unreact(ctx context.Context, me, msgID uuid.UUID) error {
 	ref, others, err := s.authorizeMessage(ctx, me, msgID, false)

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"RyanDev-21.com/Chirpy/internal/push"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/internal/ws"
 	"github.com/google/uuid"
@@ -38,6 +39,8 @@ type Service interface {
 	// ForgetNames drops cached relationship lists that show userID's name
 	// (theirs, their friends' and their requests'), after a rename.
 	ForgetNames(ctx context.Context, userID uuid.UUID)
+	// SetNotifier enables push notifications for requests and acceptances.
+	SetNotifier(n push.Notifier)
 }
 
 type service struct {
@@ -45,8 +48,11 @@ type service struct {
 	store  Store
 	names  NameLookup
 	notify Notifier
+	alerts push.Notifier // nil: no push notifications
 	logger *slog.Logger
 }
+
+func (s *service) SetNotifier(n push.Notifier) { s.alerts = n }
 
 func NewService(repo Repo, store Store, names NameLookup, notify Notifier, logger *slog.Logger) Service {
 	return &service{repo: repo, store: store, names: names, notify: notify, logger: logger}
@@ -84,6 +90,9 @@ func (s *service) Send(ctx context.Context, fromID, toID uuid.UUID) (uuid.UUID, 
 	}
 	s.invalidate(ctx, fromID, toID)
 	s.push(ctx, toID, ws.EventAddFriend, reqID, fromID)
+	if s.alerts != nil {
+		s.alerts.Notify(ctx, push.Job{Kind: push.KindFriendRequest, To: []uuid.UUID{toID}, From: fromID})
+	}
 	return reqID, nil
 }
 
@@ -95,6 +104,9 @@ func (s *service) Accept(ctx context.Context, me, reqID uuid.UUID) error {
 	}
 	s.invalidate(ctx, me, senderID)
 	s.push(ctx, senderID, ws.EventAccept, reqID, me)
+	if s.alerts != nil {
+		s.alerts.Notify(ctx, push.Job{Kind: push.KindFriendAccept, To: []uuid.UUID{senderID}, From: me})
+	}
 	return nil
 }
 

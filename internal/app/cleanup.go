@@ -30,9 +30,13 @@ type sessionEnder struct {
 	users.UserRepo
 	revoked *revoke.Store
 	hub     *ws.Hub
+	// devices: phones stop getting notifications until they sign in again
+	devices interface {
+		ForgetDevices(ctx context.Context, userID uuid.UUID) error
+	}
 }
 
-func (s sessionEnder) RevokeAllRefreshTokens(ctx context.Context, userID uuid.UUID) error {
+func (s *sessionEnder) RevokeAllRefreshTokens(ctx context.Context, userID uuid.UUID) error {
 	if err := s.UserRepo.RevokeAllRefreshTokens(ctx, userID); err != nil {
 		return err
 	}
@@ -40,6 +44,11 @@ func (s sessionEnder) RevokeAllRefreshTokens(ctx context.Context, userID uuid.UU
 		return err
 	}
 	s.hub.Disconnect(userID) // the socket was opened with an old token
+	if s.devices != nil {
+		if err := s.devices.ForgetDevices(ctx, userID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -69,4 +78,18 @@ func (c *cacheCleaner) AccountDeleted(ctx context.Context, userID uuid.UUID, fri
 		c.logger.ErrorContext(ctx, "failed to forget user cache", "error", err)
 	}
 	c.hub.Disconnect(userID)
+}
+
+// pushNames resolves the names shown in notifications.
+type pushNames struct {
+	users  users.UserService
+	groups groups.GroupService
+}
+
+func (p pushNames) GetName(ctx context.Context, id uuid.UUID) (string, error) {
+	return p.users.GetName(ctx, id)
+}
+
+func (p pushNames) GroupName(ctx context.Context, id uuid.UUID) (string, error) {
+	return p.groups.GroupName(ctx, id)
 }

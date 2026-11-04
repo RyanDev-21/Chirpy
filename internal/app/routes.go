@@ -37,6 +37,7 @@ var (
 	limitAvatar = limitPolicy{"avatar_upload", 10, time.Minute}
 	// the ranking query is the heaviest read; suggestions change slowly
 	limitDiscover = limitPolicy{"discover", 20, time.Minute}
+	limitDevices  = limitPolicy{"push_settings", 30, time.Minute}
 	// every authenticated route also shares one per-user budget, so routes
 	// without a tighter policy (reads, seen markers) can't be hammered
 	limitAPI = limitPolicy{"api", 300, time.Minute}
@@ -111,6 +112,14 @@ func (a *App) Router() http.Handler {
 			r.Get("/users/{user_id}/avatar", a.handlers.users.Avatar)
 			r.With(limit(limitAvatar)).Put("/users/me/avatar", a.handlers.users.UploadAvatar)
 			r.With(limit(limitAvatar)).Delete("/users/me/avatar", a.handlers.users.DeleteAvatar)
+
+			r.With(limit(limitDevices)).Post("/devices", a.handlers.push.RegisterDevice)
+			r.With(limit(limitDevices)).Delete("/devices", a.handlers.push.RemoveDevice)
+			r.Get("/users/me/notifications", a.handlers.push.GetPrefs)
+			r.With(limit(limitDevices)).Put("/users/me/notifications", a.handlers.push.SetPrefs)
+			r.Get("/mutes", a.handlers.push.ListMutes)
+			r.With(limit(limitDevices)).Put("/mutes", a.handlers.push.Mute)
+			r.With(limit(limitDevices)).Delete("/mutes", a.handlers.push.Unmute)
 
 			r.Get("/discover/options", a.handlers.discover.Options)
 			r.With(limit(limitDiscover)).Get("/discover", a.handlers.discover.Suggest)

@@ -5,6 +5,7 @@ import (
 
 	"RyanDev-21.com/Chirpy/internal/chat"
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
+	"RyanDev-21.com/Chirpy/internal/push"
 )
 
 type subscription struct {
@@ -25,6 +26,7 @@ type subscription struct {
 func (a *App) subscriptions() []subscription {
 	return []subscription{
 		{chat.TopicSeen, 2, queue.Typed(a.chat.HandleSeen)},
+		{push.TopicPush, 2, queue.Typed(a.pushSvc.Handle)},
 	}
 }
 

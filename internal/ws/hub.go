@@ -96,6 +96,14 @@ func (h *Hub) Run() {
 	}
 }
 
+// Online reports whether userID has a live connection to this server.
+func (h *Hub) Online(userID uuid.UUID) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	_, ok := h.clients[userID]
+	return ok
+}
+
 // Disconnect closes userID's live connection, if any (e.g. account deleted).
 func (h *Hub) Disconnect(userID uuid.UUID) {
 	h.mu.RLock()

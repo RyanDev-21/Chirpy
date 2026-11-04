@@ -30,6 +30,9 @@ services:
           # Google sign-in: the Web client ID(s) the Android app uses as serverClientId
           - key: GOOGLE_CLIENT_IDS
             sync: false
+          # Firebase service account key (JSON) for push; set in the dashboard
+          - key: FIREBASE_SERVICE_ACCOUNT
+            sync: false
           # free Upstash is billed per command; Redis Streams polling would
           # use the monthly allowance while idle
           - key: QUEUE_BACKEND

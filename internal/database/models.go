@@ -22,6 +22,13 @@ type ChatGroup struct {
 	InviteCode    string
 }
 
+type ChatMute struct {
+	UserID   uuid.UUID
+	ChatType string
+	ChatID   uuid.UUID
+	Until    pgtype.Timestamp
+}
+
 type Chirp struct {
 	ID        uuid.UUID
 	CreatedAt pgtype.Timestamp
@@ -92,6 +99,14 @@ type MessageReaction struct {
 	CreatedAt pgtype.Timestamp
 }
 
+type NotificationPref struct {
+	UserID    uuid.UUID
+	Private   bool
+	Groups    bool
+	Friends   bool
+	Reactions bool
+}
+
 type RefreshToken struct {
 	// hex SHA-256 of the refresh token; the token itself is never stored
 	Token     string
@@ -137,6 +152,14 @@ type UserBlock struct {
 	BlockerID uuid.UUID
 	BlockedID uuid.UUID
 	CreatedAt pgtype.Timestamp
+}
+
+type UserDevice struct {
+	Token      string
+	UserID     uuid.UUID
+	Platform   string
+	CreatedAt  pgtype.Timestamp
+	LastSeenAt pgtype.Timestamp
 }
 
 type UserIdentity struct {
