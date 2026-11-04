@@ -67,3 +67,12 @@ WHERE id = @id AND owner_id = @owner_id AND kind = 'video' AND deleted_at IS NUL
 
 -- name: ThumbnailsOf :many
 SELECT id FROM media WHERE id = ANY(@ids::uuid[]) AND has_thumbnail;
+
+-- name: GroupMediaVisible :one
+-- a member sees a group's media if its message was sent since they joined
+SELECT EXISTS (
+  SELECT 1 FROM member_table mt
+  LEFT JOIN GroupMessage gm ON gm.id = sqlc.narg(message_id)::uuid
+  WHERE mt.group_id = @group_id AND mt.member_id = @viewer
+    AND COALESCE(gm.created_at, @uploaded_at::timestamp) >= mt.joined_at
+)::bool;

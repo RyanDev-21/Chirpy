@@ -147,6 +147,35 @@ func (q *Queries) GetMedia(ctx context.Context, id uuid.UUID) (Medium, error) {
 	return i, err
 }
 
+const groupMediaVisible = `-- name: GroupMediaVisible :one
+SELECT EXISTS (
+  SELECT 1 FROM member_table mt
+  LEFT JOIN GroupMessage gm ON gm.id = $1::uuid
+  WHERE mt.group_id = $2 AND mt.member_id = $3
+    AND COALESCE(gm.created_at, $4::timestamp) >= mt.joined_at
+)::bool
+`
+
+type GroupMediaVisibleParams struct {
+	MessageID  pgtype.UUID
+	GroupID    uuid.UUID
+	Viewer     uuid.UUID
+	UploadedAt pgtype.Timestamp
+}
+
+// a member sees a group's media if its message was sent since they joined
+func (q *Queries) GroupMediaVisible(ctx context.Context, arg GroupMediaVisibleParams) (bool, error) {
+	row := q.db.QueryRow(ctx, groupMediaVisible,
+		arg.MessageID,
+		arg.GroupID,
+		arg.Viewer,
+		arg.UploadedAt,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const leastRecentlyUsedMedia = `-- name: LeastRecentlyUsedMedia :many
 SELECT id, size FROM media WHERE deleted_at IS NULL ORDER BY last_access_at, created_at LIMIT 500
 `
