@@ -22,6 +22,7 @@ import (
 	"RyanDev-21.com/Chirpy/internal/platform/migrate"
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
 	"RyanDev-21.com/Chirpy/internal/platform/redisx"
+	"RyanDev-21.com/Chirpy/internal/platform/revoke"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/internal/ws"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -38,7 +39,9 @@ type App struct {
 	// must never take connections away from request handling
 	queueRedis *redis.Client
 	queue      queue.Broker
-	hub        *ws.Hub
+	// revoked ends access tokens early (password change, account deletion)
+	revoked *revoke.Store
+	hub     *ws.Hub
 
 	users   users.UserService
 	friends friends.Service
@@ -141,8 +144,16 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		hub:        ws.NewHub(logger),
 	}
 	queries := database.New(db)
+	accessTTL := cfg.AccessTokenTTL
+	if accessTTL <= 0 {
+		accessTTL = authsvc.DefaultAccessTTL
+	}
+	a.revoked = revoke.New(rdb, accessTTL)
+	// every "sign out everywhere" (password change or reset, takeover of an
+	// unverified account) also ends the access tokens already issued
+	userRepo := sessionEnder{UserRepo: users.NewUserRepo(queries), revoked: a.revoked, hub: a.hub}
 
-	a.users = users.NewUserService(users.NewUserRepo(queries), users.NewStore(rdb), logger)
+	a.users = users.NewUserService(userRepo, users.NewStore(rdb), logger)
 	a.friends = friends.NewService(friends.NewRepo(queries), friends.NewStore(rdb), a.users, a.hub, logger)
 	a.groups = groups.NewGroupService(groups.NewGroupRepo(db), groups.NewStore(rdb), a.hub, logger)
 	a.chat = chat.NewChatService(chat.NewChatRepo(queries), chat.NewCache(rdb), a.groups, a.friends, a.hub, a.queue, logger)
@@ -169,8 +180,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		}
 	}
 	friendStore, groupStore, userStore := friends.NewStore(rdb), groups.NewStore(rdb), users.NewStore(rdb)
-	accounts := authsvc.NewAccountService(a.users, users.NewUserRepo(queries), authsvc.NewAccountRepo(db), sender,
-		a.auth, google, &cacheCleaner{friends: friendStore, groups: groupStore, users: userStore, hub: a.hub, logger: logger},
+	accounts := authsvc.NewAccountService(a.users, userRepo, authsvc.NewAccountRepo(db), sender,
+		a.auth, google, &cacheCleaner{friends: friendStore, groups: groupStore, users: userStore, hub: a.hub, revoked: a.revoked, logger: logger},
 		cfg.JWTSecret, logger)
 
 	a.handlers = handlers{

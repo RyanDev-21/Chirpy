@@ -18,6 +18,10 @@ backend. It is intended for a frontend client (web or native).
   Authorization: Bearer <access-token>
   ```
 
+- Access tokens stop working early when the account's sessions end:
+  after a password change or reset, and when the account is deleted
+  (`401`; sign in again). Token times (`iat`, `exp`) have millisecond
+  precision, e.g. `1767225600.123`.
 - Access tokens last 15 minutes. Refresh tokens last 30 days and are
   rotated on every successful refresh. Refresh shortly before the access
   token's `exp` (or when a request returns `401`) and retry once. Store the replacement refresh token;
@@ -65,7 +69,8 @@ Request:
 {"name":"alice","email":"alice@example.com","password":"Pw-example!"}
 ```
 
-Rules: name is 3–25 characters with no whitespace; email must be valid and is
+Rules: name is 3–25 characters with no whitespace, control or invisible
+characters (zero-width spaces, direction overrides and the like); email must be valid and is
 normalized to lowercase; password is 8–128 characters and must contain at
 least one of `@$!%*?&`.
 

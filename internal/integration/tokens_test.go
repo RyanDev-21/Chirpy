@@ -24,13 +24,13 @@ func TestAccessTokenLasts15Minutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	var claims struct {
-		Iat int64 `json:"iat"`
-		Exp int64 `json:"exp"`
+		Iat float64 `json:"iat"` // milliseconds precision: 1767225600.123
+		Exp float64 `json:"exp"`
 	}
 	if err := json.Unmarshal(raw, &claims); err != nil {
 		t.Fatal(err)
 	}
-	if got := time.Duration(claims.Exp-claims.Iat) * time.Second; got != 15*time.Minute {
+	if got := time.Duration((claims.Exp - claims.Iat) * float64(time.Second)).Round(time.Second); got != 15*time.Minute {
 		t.Fatalf("access token lifetime = %v, want 15m", got)
 	}
 }

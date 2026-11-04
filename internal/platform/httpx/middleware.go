@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
@@ -130,7 +131,16 @@ func RoutePattern(r *http.Request) string {
 // Authenticate requires a valid "Authorization: Bearer <token>" header.
 // Tokens in the URL are never accepted: URLs end up in proxy, CDN and crash
 // reporter logs.
-func Authenticate(secret string) func(http.Handler) http.Handler {
+// RevocationChecker reports whether a user's token issued at issuedAt was
+// revoked (sessions ended by a password change or account deletion).
+type RevocationChecker interface {
+	Revoked(ctx context.Context, userID uuid.UUID, issuedAt time.Time) (bool, error)
+}
+
+// Authenticate requires a valid access token that hasn't been revoked.
+// revoked may be nil (no revocation checks). If the check itself fails,
+// the request is allowed and logged, like the rate limiter.
+func Authenticate(secret string, revoked RevocationChecker, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token, err := secure.GetBearerToken(r.Header)
@@ -138,10 +148,19 @@ func Authenticate(secret string) func(http.Handler) http.Handler {
 				Error(w, http.StatusUnauthorized, "unauthorized")
 				return
 			}
-			userID, err := secure.ValidateJWT(token, secret)
+			userID, issued, err := secure.ValidateJWTIssued(token, secret)
 			if err != nil {
 				Error(w, http.StatusUnauthorized, "unauthorized")
 				return
+			}
+			if revoked != nil {
+				gone, err := revoked.Revoked(r.Context(), userID, issued)
+				if err != nil {
+					logger.ErrorContext(r.Context(), "revocation check failed, allowing request", "error", err)
+				} else if gone {
+					Error(w, http.StatusUnauthorized, "unauthorized")
+					return
+				}
 			}
 			next.ServeHTTP(w, r.WithContext(reqctx.WithUser(r.Context(), userID)))
 		})
@@ -167,4 +186,19 @@ func CORS(allowed []string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// SecurityHeaders sets defaults for an API that serves JSON to apps: no
+// MIME sniffing, no framing, no referrer, HTTPS only, and nothing stored
+// by caches unless a handler says otherwise (avatars do).
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Strict-Transport-Security", "max-age=31536000")
+		h.Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
 }
