@@ -103,7 +103,7 @@ func (q *Queries) AdminOverview(ctx context.Context, arg AdminOverviewParams) (A
 const adminSearchGroups = `-- name: AdminSearchGroups :many
 SELECT g.id, g.name, g.current_member, g.created_at,
        COALESCE((SELECT u.name FROM member_table m JOIN users u ON u.id = m.member_id
-        WHERE m.group_id = g.id AND m.role = 'Leader' LIMIT 1), '')::text AS leader,
+        WHERE m.group_id = g.id AND m.role = 'admin' LIMIT 1), '')::text AS leader,
        (SELECT count(*) FROM GroupMessage gm WHERE gm.group_id = g.id AND gm.created_at > $1::timestamp)::bigint AS messages_7d
 FROM chat_groups g
 WHERE $2::text = '' OR g.name ILIKE '%' || $2::text || '%'

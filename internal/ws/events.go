@@ -33,7 +33,7 @@ const (
 	EventPresence   = "Presence"
 )
 
-// OutGroupAdded tells a user that by_id (the leader) added them to group_id.
+// OutGroupAdded tells a user that by_id (admin or moderator) added them to group_id.
 type OutGroupAdded struct {
 	GroupID string `json:"group_id"`
 	ByID    string `json:"by_id"`
@@ -109,17 +109,20 @@ type OutEditedEvent struct {
 	EditedAt time.Time `json:"edited_at"`
 }
 
-// OutDeletedEvent: from_id deleted msg_id for everyone.
+// OutDeletedEvent: msg_id (sent by from_id) was deleted for everyone; by_id
+// is set when a group's admin or a moderator removed someone else's.
 type OutDeletedEvent struct {
 	MsgID   string `json:"msg_id"`
 	FromID  string `json:"from_id"`
 	Type    string `json:"type"`
 	GroupID string `json:"group_id,omitempty"`
+	ByID    string `json:"by_id,omitempty"`
 }
 
 // OutGroupUpdated tells members that a group changed; change is "info"
-// (name/description/picture), "leader" (user_id is the new leader),
-// "members" (user_id was removed) or "joined" (the leader added user_id). Clients refetch the group for details.
+// (name/description/picture/visibility), "admin" (user_id is the new
+// admin), "role" (user_id's role or permissions changed), "members"
+// (user_id left or was removed) or "joined" (user_id joined or was added). Clients refetch the group for details.
 type OutGroupUpdated struct {
 	GroupID string `json:"group_id"`
 	Change  string `json:"change"`

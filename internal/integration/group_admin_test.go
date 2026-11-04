@@ -72,7 +72,8 @@ func TestRenameAndDescribeGroup(t *testing.T) {
 	e.expect(e.do("PATCH", path, bob.Token, map[string]string{"group_name": "mine"}), 403)
 	e.expect(e.do("PATCH", path, lead.Token, map[string]string{}), 400)
 	e.expect(e.do("PATCH", path, lead.Token, map[string]string{"group_name": " "}), 400)
-	e.expect(e.do("PATCH", path, lead.Token, map[string]string{"group_name": "taken"}), 409) // case-insensitive
+	e.expect(e.do("PATCH", path, lead.Token, map[string]string{"group_name": "taken"}), 200) // names needn't be unique
+	_ = readEvent(t, bobWS)
 	var out struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
@@ -97,7 +98,7 @@ func TestTransferLeadership(t *testing.T) {
 	lead, bob := e.signup("lead"), e.signup("bob")
 	g := e.adminGroup("handover", lead, bob)
 	bobWS := e.dial(bob.Token)
-	path := "/api/chats/groups/" + g + "/leader"
+	path := "/api/chats/groups/" + g + "/admin"
 
 	e.expect(e.do("PUT", path, bob.Token, map[string]string{"user_id": bob.ID}), 403)
 	e.expect(e.do("PUT", path, lead.Token, map[string]string{"user_id": lead.ID}), 400)
@@ -105,12 +106,12 @@ func TestTransferLeadership(t *testing.T) {
 	e.expect(e.do("PUT", path, lead.Token, map[string]string{"user_id": bob.ID}), 204)
 	if ev := readEvent(t, bobWS); ev.Event != "GroupUpdated" {
 		t.Fatalf("bob got %s", ev.Event)
-	} else if change, uid, _ := groupEvent(t, ev); change != "leader" || uid != bob.ID {
+	} else if change, uid, _ := groupEvent(t, ev); change != "admin" || uid != bob.ID {
 		t.Fatalf("bob got %s %s", change, uid)
 	}
-	e.now(`SELECT role FROM member_table WHERE group_id = $1 AND member_id = $2`, "Leader", g, bob.ID)
+	e.now(`SELECT role FROM member_table WHERE group_id = $1 AND member_id = $2`, "admin", g, bob.ID)
 	e.now(`SELECT role FROM member_table WHERE group_id = $1 AND member_id = $2`, "member", g, lead.ID)
-	// the old leader can now leave; the new one can regenerate the invite
+	// the old admin is a member now; the new one can regenerate the invite
 	e.expect(e.do("POST", "/api/chats/groups/"+g+"/invite", lead.Token, nil), 403)
 	e.expect(e.do("POST", "/api/chats/groups/"+g+"/invite", bob.Token, nil), 200)
 	e.expect(e.do("DELETE", "/api/chats/groups/"+g+"/members", lead.Token, nil), 204)

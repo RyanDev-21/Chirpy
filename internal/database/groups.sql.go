@@ -28,8 +28,8 @@ func (q *Queries) AddMember(ctx context.Context, arg AddMemberParams) error {
 }
 
 const createGroup = `-- name: CreateGroup :exec
-INSERT INTO chat_groups(id, name, description, max_member, current_member, invite_code)
-VALUES ($1, $2, $3, $4, 1, $5)
+INSERT INTO chat_groups(id, name, description, max_member, current_member, invite_code, visibility)
+VALUES ($1, $2, $3, $4, 1, $5, $6)
 `
 
 type CreateGroupParams struct {
@@ -38,6 +38,7 @@ type CreateGroupParams struct {
 	Description string
 	MaxMember   int16
 	InviteCode  string
+	Visibility  string
 }
 
 func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) error {
@@ -47,13 +48,14 @@ func (q *Queries) CreateGroup(ctx context.Context, arg CreateGroupParams) error 
 		arg.Description,
 		arg.MaxMember,
 		arg.InviteCode,
+		arg.Visibility,
 	)
 	return err
 }
 
 const createGroupLeaderRole = `-- name: CreateGroupLeaderRole :exec
 INSERT INTO member_table(group_id, member_id, role, joined_at)
-VALUES ($1, $2, 'Leader', $3::timestamp)
+VALUES ($1, $2, 'admin', $3::timestamp)
 `
 
 type CreateGroupLeaderRoleParams struct {
@@ -93,7 +95,7 @@ func (q *Queries) DeleteMemFromGroup(ctx context.Context, arg DeleteMemFromGroup
 }
 
 const getGroupByInviteCode = `-- name: GetGroupByInviteCode :one
-SELECT id, name, description, max_member, current_member FROM chat_groups WHERE invite_code = $1
+SELECT id, name, description, max_member, current_member, visibility FROM chat_groups WHERE invite_code = $1
 `
 
 type GetGroupByInviteCodeRow struct {
@@ -102,6 +104,7 @@ type GetGroupByInviteCodeRow struct {
 	Description   string
 	MaxMember     int16
 	CurrentMember int16
+	Visibility    string
 }
 
 func (q *Queries) GetGroupByInviteCode(ctx context.Context, inviteCode string) (GetGroupByInviteCodeRow, error) {
@@ -113,12 +116,13 @@ func (q *Queries) GetGroupByInviteCode(ctx context.Context, inviteCode string) (
 		&i.Description,
 		&i.MaxMember,
 		&i.CurrentMember,
+		&i.Visibility,
 	)
 	return i, err
 }
 
 const getGroupInfoByID = `-- name: GetGroupInfoByID :one
-SELECT id, name, description, max_member, created_at, updated_at, current_member, invite_code, avatar_at FROM chat_groups WHERE id = $1
+SELECT id, name, description, max_member, created_at, updated_at, current_member, invite_code, avatar_at, visibility FROM chat_groups WHERE id = $1
 `
 
 func (q *Queries) GetGroupInfoByID(ctx context.Context, id uuid.UUID) (ChatGroup, error) {
@@ -134,12 +138,13 @@ func (q *Queries) GetGroupInfoByID(ctx context.Context, id uuid.UUID) (ChatGroup
 		&i.CurrentMember,
 		&i.InviteCode,
 		&i.AvatarAt,
+		&i.Visibility,
 	)
 	return i, err
 }
 
 const getGroupLeader = `-- name: GetGroupLeader :one
-SELECT member_id FROM member_table WHERE group_id = $1 AND role = 'Leader' LIMIT 1
+SELECT member_id FROM member_table WHERE group_id = $1 AND role = 'admin' LIMIT 1
 `
 
 func (q *Queries) GetGroupLeader(ctx context.Context, groupID uuid.UUID) (uuid.UUID, error) {
@@ -158,6 +163,28 @@ func (q *Queries) GetInviteCode(ctx context.Context, id uuid.UUID) (string, erro
 	var invite_code string
 	err := row.Scan(&invite_code)
 	return invite_code, err
+}
+
+const getMember = `-- name: GetMember :one
+SELECT role, permissions, joined_at FROM member_table WHERE group_id = $1 AND member_id = $2
+`
+
+type GetMemberParams struct {
+	GroupID  uuid.UUID
+	MemberID uuid.UUID
+}
+
+type GetMemberRow struct {
+	Role        string
+	Permissions []string
+	JoinedAt    pgtype.Timestamp
+}
+
+func (q *Queries) GetMember(ctx context.Context, arg GetMemberParams) (GetMemberRow, error) {
+	row := q.db.QueryRow(ctx, getMember, arg.GroupID, arg.MemberID)
+	var i GetMemberRow
+	err := row.Scan(&i.Role, &i.Permissions, &i.JoinedAt)
+	return i, err
 }
 
 const getMemberListByID = `-- name: GetMemberListByID :many
@@ -202,13 +229,15 @@ func (q *Queries) GetMemberRole(ctx context.Context, arg GetMemberRoleParams) (s
 
 const groupAvatarForMember = `-- name: GroupAvatarForMember :one
 SELECT a.image, a.updated_at FROM group_avatars a
-JOIN member_table m ON m.group_id = a.group_id AND m.member_id = $1
-WHERE a.group_id = $2
+JOIN chat_groups g ON g.id = a.group_id
+WHERE a.group_id = $1
+  AND (g.visibility = 'public'
+       OR EXISTS (SELECT 1 FROM member_table m WHERE m.group_id = a.group_id AND m.member_id = $2))
 `
 
 type GroupAvatarForMemberParams struct {
-	Viewer  uuid.UUID
 	GroupID uuid.UUID
+	Viewer  uuid.UUID
 }
 
 type GroupAvatarForMemberRow struct {
@@ -216,20 +245,20 @@ type GroupAvatarForMemberRow struct {
 	UpdatedAt pgtype.Timestamp
 }
 
-// the picture, only for a member of the group
+// the picture, for members (or anyone, for a public group)
 func (q *Queries) GroupAvatarForMember(ctx context.Context, arg GroupAvatarForMemberParams) (GroupAvatarForMemberRow, error) {
-	row := q.db.QueryRow(ctx, groupAvatarForMember, arg.Viewer, arg.GroupID)
+	row := q.db.QueryRow(ctx, groupAvatarForMember, arg.GroupID, arg.Viewer)
 	var i GroupAvatarForMemberRow
 	err := row.Scan(&i.Image, &i.UpdatedAt)
 	return i, err
 }
 
 const listGroupMembers = `-- name: ListGroupMembers :many
-SELECT m.member_id, u.name, u.display_name, u.avatar_at, m.role
+SELECT m.member_id, u.name, u.display_name, u.avatar_at, m.role, m.permissions
 FROM member_table m
 JOIN users u ON u.id = m.member_id
 WHERE m.group_id = $1
-ORDER BY (m.role = 'Leader') DESC, m.joined_at
+ORDER BY (m.role = 'admin') DESC, (m.role = 'moderator') DESC, m.joined_at
 `
 
 type ListGroupMembersRow struct {
@@ -238,6 +267,7 @@ type ListGroupMembersRow struct {
 	DisplayName string
 	AvatarAt    pgtype.Timestamp
 	Role        string
+	Permissions []string
 }
 
 func (q *Queries) ListGroupMembers(ctx context.Context, groupID uuid.UUID) ([]ListGroupMembersRow, error) {
@@ -255,6 +285,7 @@ func (q *Queries) ListGroupMembers(ctx context.Context, groupID uuid.UUID) ([]Li
 			&i.DisplayName,
 			&i.AvatarAt,
 			&i.Role,
+			&i.Permissions,
 		); err != nil {
 			return nil, err
 		}
@@ -267,7 +298,7 @@ func (q *Queries) ListGroupMembers(ctx context.Context, groupID uuid.UUID) ([]Li
 }
 
 const listGroupsForUser = `-- name: ListGroupsForUser :many
-SELECT g.id, g.name, g.description, g.max_member, g.current_member, g.avatar_at, m.role
+SELECT g.id, g.name, g.description, g.max_member, g.current_member, g.avatar_at, g.visibility, m.role, m.permissions
 FROM member_table m
 JOIN chat_groups g ON g.id = m.group_id
 WHERE m.member_id = $1
@@ -281,7 +312,9 @@ type ListGroupsForUserRow struct {
 	MaxMember     int16
 	CurrentMember int16
 	AvatarAt      pgtype.Timestamp
+	Visibility    string
 	Role          string
+	Permissions   []string
 }
 
 func (q *Queries) ListGroupsForUser(ctx context.Context, memberID uuid.UUID) ([]ListGroupsForUserRow, error) {
@@ -300,7 +333,9 @@ func (q *Queries) ListGroupsForUser(ctx context.Context, memberID uuid.UUID) ([]
 			&i.MaxMember,
 			&i.CurrentMember,
 			&i.AvatarAt,
+			&i.Visibility,
 			&i.Role,
+			&i.Permissions,
 		); err != nil {
 			return nil, err
 		}
@@ -327,6 +362,109 @@ func (q *Queries) LockGroup(ctx context.Context, id uuid.UUID) (LockGroupRow, er
 	var i LockGroupRow
 	err := row.Scan(&i.MaxMember, &i.CurrentMember)
 	return i, err
+}
+
+const moderatorsOf = `-- name: ModeratorsOf :many
+SELECT member_id, permissions FROM member_table WHERE group_id = $1 AND role = 'moderator'
+`
+
+type ModeratorsOfRow struct {
+	MemberID    uuid.UUID
+	Permissions []string
+}
+
+func (q *Queries) ModeratorsOf(ctx context.Context, groupID uuid.UUID) ([]ModeratorsOfRow, error) {
+	rows, err := q.db.Query(ctx, moderatorsOf, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ModeratorsOfRow
+	for rows.Next() {
+		var i ModeratorsOfRow
+		if err := rows.Scan(&i.MemberID, &i.Permissions); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const nextAdmin = `-- name: NextAdmin :one
+SELECT member_id FROM member_table
+WHERE group_id = $1 AND member_id <> $2
+ORDER BY (role = 'moderator') DESC, joined_at, member_id
+LIMIT 1
+`
+
+type NextAdminParams struct {
+	GroupID uuid.UUID
+	Leaving uuid.UUID
+}
+
+// who takes over from a leaving admin: the longest-serving moderator, else
+// the longest-serving member
+func (q *Queries) NextAdmin(ctx context.Context, arg NextAdminParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, nextAdmin, arg.GroupID, arg.Leaving)
+	var member_id uuid.UUID
+	err := row.Scan(&member_id)
+	return member_id, err
+}
+
+const searchPublicGroups = `-- name: SearchPublicGroups :many
+SELECT g.id, g.name, g.description, g.max_member, g.current_member, g.avatar_at,
+       EXISTS (SELECT 1 FROM member_table m WHERE m.group_id = g.id AND m.member_id = $1)::bool AS is_member
+FROM chat_groups g
+WHERE g.visibility = 'public' AND lower(g.name) LIKE '%' || $2::text || '%' ESCAPE '\'
+ORDER BY (lower(g.name) LIKE $2::text || '%' ESCAPE '\') DESC, g.current_member DESC, g.id
+LIMIT 20
+`
+
+type SearchPublicGroupsParams struct {
+	Viewer uuid.UUID
+	Q      string
+}
+
+type SearchPublicGroupsRow struct {
+	ID            uuid.UUID
+	Name          string
+	Description   string
+	MaxMember     int16
+	CurrentMember int16
+	AvatarAt      pgtype.Timestamp
+	IsMember      bool
+}
+
+// public groups whose name contains q (already lower-cased and escaped)
+func (q *Queries) SearchPublicGroups(ctx context.Context, arg SearchPublicGroupsParams) ([]SearchPublicGroupsRow, error) {
+	rows, err := q.db.Query(ctx, searchPublicGroups, arg.Viewer, arg.Q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchPublicGroupsRow
+	for rows.Next() {
+		var i SearchPublicGroupsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.MaxMember,
+			&i.CurrentMember,
+			&i.AvatarAt,
+			&i.IsMember,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setGroupAvatarAt = `-- name: SetGroupAvatarAt :exec
@@ -372,17 +510,23 @@ func (q *Queries) SetInviteCode(ctx context.Context, arg SetInviteCodeParams) er
 }
 
 const setMemberRole = `-- name: SetMemberRole :exec
-UPDATE member_table SET role = $1 WHERE group_id = $2 AND member_id = $3
+UPDATE member_table SET role = $1, permissions = $2::text[] WHERE group_id = $3 AND member_id = $4
 `
 
 type SetMemberRoleParams struct {
-	Role     string
-	GroupID  uuid.UUID
-	MemberID uuid.UUID
+	Role        string
+	Permissions []string
+	GroupID     uuid.UUID
+	MemberID    uuid.UUID
 }
 
 func (q *Queries) SetMemberRole(ctx context.Context, arg SetMemberRoleParams) error {
-	_, err := q.db.Exec(ctx, setMemberRole, arg.Role, arg.GroupID, arg.MemberID)
+	_, err := q.db.Exec(ctx, setMemberRole,
+		arg.Role,
+		arg.Permissions,
+		arg.GroupID,
+		arg.MemberID,
+	)
 	return err
 }
 
@@ -390,27 +534,35 @@ const updateGroupInfo = `-- name: UpdateGroupInfo :one
 UPDATE chat_groups
 SET name = COALESCE($1, name),
     description = COALESCE($2, description),
+    visibility = COALESCE($3, visibility),
     updated_at = NOW()
-WHERE id = $3
-RETURNING name, description
+WHERE id = $4
+RETURNING name, description, visibility
 `
 
 type UpdateGroupInfoParams struct {
 	Name        pgtype.Text
 	Description pgtype.Text
+	Visibility  pgtype.Text
 	ID          uuid.UUID
 }
 
 type UpdateGroupInfoRow struct {
 	Name        string
 	Description string
+	Visibility  string
 }
 
 // NULL leaves a field unchanged
 func (q *Queries) UpdateGroupInfo(ctx context.Context, arg UpdateGroupInfoParams) (UpdateGroupInfoRow, error) {
-	row := q.db.QueryRow(ctx, updateGroupInfo, arg.Name, arg.Description, arg.ID)
+	row := q.db.QueryRow(ctx, updateGroupInfo,
+		arg.Name,
+		arg.Description,
+		arg.Visibility,
+		arg.ID,
+	)
 	var i UpdateGroupInfoRow
-	err := row.Scan(&i.Name, &i.Description)
+	err := row.Scan(&i.Name, &i.Description, &i.Visibility)
 	return i, err
 }
 

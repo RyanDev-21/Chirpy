@@ -152,7 +152,7 @@ func (q *Queries) DeleteUserByID(ctx context.Context, id uuid.UUID) error {
 const earliestOtherMember = `-- name: EarliestOtherMember :one
 SELECT member_id FROM member_table
 WHERE group_id = $1 AND member_id <> $2
-ORDER BY joined_at, member_id
+ORDER BY (role = 'moderator') DESC, joined_at, member_id
 LIMIT 1
 `
 
@@ -240,7 +240,7 @@ func (q *Queries) GetIdentity(ctx context.Context, arg GetIdentityParams) (UserI
 }
 
 const groupsLedBy = `-- name: GroupsLedBy :many
-SELECT group_id FROM member_table WHERE member_id = $1 AND role = 'Leader'
+SELECT group_id FROM member_table WHERE member_id = $1 AND role = 'admin'
 `
 
 func (q *Queries) GroupsLedBy(ctx context.Context, memberID uuid.UUID) ([]uuid.UUID, error) {
@@ -297,7 +297,7 @@ func (q *Queries) MarkEmailVerified(ctx context.Context, id uuid.UUID) error {
 }
 
 const promoteToLeader = `-- name: PromoteToLeader :exec
-UPDATE member_table SET role = 'Leader' WHERE group_id = $1 AND member_id = $2
+UPDATE member_table SET role = 'admin', permissions = '{}' WHERE group_id = $1 AND member_id = $2
 `
 
 type PromoteToLeaderParams struct {

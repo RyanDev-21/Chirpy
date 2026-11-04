@@ -283,7 +283,7 @@ func (s *Service) leaveGroups(ctx context.Context, user uuid.UUID) error {
 		}
 		err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 			q := s.q.WithTx(tx)
-			if m.Role == "Leader" {
+			if m.Role == "admin" {
 				next, err := q.EarliestOtherMember(ctx, database.EarliestOtherMemberParams{GroupID: m.GroupID, MemberID: user})
 				if errors.Is(err, pgx.ErrNoRows) {
 					return nil // alone after all

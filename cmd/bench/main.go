@@ -211,7 +211,7 @@ func seed(ctx context.Context, pool *pgxpool.Pool, secret string) *world {
 			idx := (g*groupSize + m) % len(w.users)
 			role := "member"
 			if m == 0 {
-				role = "Leader"
+				role = "admin"
 			}
 			_, err := pool.Exec(ctx, `INSERT INTO member_table (group_id, member_id, role, joined_at) VALUES ($1, $2, $3, NOW() - interval '30 days')`, gid, w.users[idx].id, role)
 			must(err)

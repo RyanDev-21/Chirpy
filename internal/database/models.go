@@ -31,6 +31,7 @@ type ChatGroup struct {
 	CurrentMember int16
 	InviteCode    string
 	AvatarAt      pgtype.Timestamp
+	Visibility    string
 }
 
 type ChatMute struct {
@@ -117,11 +118,12 @@ type Medium struct {
 }
 
 type MemberTable struct {
-	ID       uuid.UUID
-	GroupID  uuid.UUID
-	MemberID uuid.UUID
-	JoinedAt pgtype.Timestamp
-	Role     string
+	ID          uuid.UUID
+	GroupID     uuid.UUID
+	MemberID    uuid.UUID
+	JoinedAt    pgtype.Timestamp
+	Role        string
+	Permissions []string
 }
 
 type Message struct {

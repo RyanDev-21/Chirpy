@@ -160,7 +160,7 @@ func TestDeleteAccount(t *testing.T) {
 
 	e.expect(e.do("POST", "/api/login", "", map[string]string{"email": leader.email, "password": password}), 401)
 	e.expect(e.do("GET", "/api/users/me", leader.Token, nil), 401)
-	e.now(`SELECT role FROM member_table WHERE group_id = $1 AND member_id = $2`, "Leader", shared.ChatID, member.ID)
+	e.now(`SELECT role FROM member_table WHERE group_id = $1 AND member_id = $2`, "admin", shared.ChatID, member.ID)
 	e.now(`SELECT current_member::text FROM chat_groups WHERE id = $1`, "1", shared.ChatID)
 	e.now(`SELECT count(*)::text FROM chat_groups WHERE id = $1`, "0", solo.ChatID)
 	// the message stays, without an author

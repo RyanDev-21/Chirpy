@@ -20,13 +20,14 @@ type limitPolicy struct {
 }
 
 var (
-	limitAuth     = limitPolicy{"auth", 10, time.Minute}
-	limitRegister = limitPolicy{"register", 5, time.Minute}
-	limitSearch   = limitPolicy{"search", 20, time.Minute}
-	limitFriendRq = limitPolicy{"friend_request", 10, time.Minute}
-	limitFriendUp = limitPolicy{"friend_update", 30, time.Minute}
-	limitSend     = limitPolicy{"send_message", 120, time.Minute}
-	limitWS       = limitPolicy{"ws_connect", 20, time.Minute}
+	limitAuth        = limitPolicy{"auth", 10, time.Minute}
+	limitRegister    = limitPolicy{"register", 5, time.Minute}
+	limitSearch      = limitPolicy{"search", 20, time.Minute}
+	limitGroupSearch = limitPolicy{"group_search", 20, time.Minute}
+	limitFriendRq    = limitPolicy{"friend_request", 10, time.Minute}
+	limitFriendUp    = limitPolicy{"friend_update", 30, time.Minute}
+	limitSend        = limitPolicy{"send_message", 120, time.Minute}
+	limitWS          = limitPolicy{"ws_connect", 20, time.Minute}
 	// joining and previewing invites share a small budget so codes can't
 	// be brute-forced (40-bit codes at 20/min would take ~100,000 years)
 	limitGroupJoin = limitPolicy{"group_join", 20, time.Minute}
@@ -161,17 +162,20 @@ func (a *App) Router() http.Handler {
 				r.Get("/", a.handlers.groups.MyGroups)
 				r.With(limit(limitGroupCreate)).Post("/", a.handlers.groups.CreateGroup)
 				r.Get("/{group_id}", a.handlers.groups.Detail)
-				r.Delete("/{group_id}/members", a.handlers.groups.LeaveGroup)
-				// leader only
+				r.Delete("/{group_id}/members", a.handlers.groups.LeaveGroup) // ?successor= for the admin
+				r.With(limit(limitGroupSearch)).Get("/search", a.handlers.groups.Search)
+				r.With(limit(limitGroupJoin)).Post("/{group_id}/join", a.handlers.groups.JoinPublic)
+				// admin, or a moderator with the permission (checked inside)
 				r.With(limit(limitGroupAdmin)).Patch("/{group_id}", a.handlers.groups.UpdateGroup)
 				r.With(limit(limitGroupAdmin)).Delete("/{group_id}", a.handlers.groups.DeleteGroup)
 				r.With(limit(limitGroupAdmin)).Delete("/{group_id}/members/{user_id}", a.handlers.groups.KickMember)
-				r.With(limit(limitGroupAdmin)).Put("/{group_id}/leader", a.handlers.groups.TransferLeader)
+				r.With(limit(limitGroupAdmin)).Put("/{group_id}/admin", a.handlers.groups.TransferAdmin)
+				r.With(limit(limitGroupAdmin)).Put("/{group_id}/members/{user_id}/role", a.handlers.groups.SetRole)
 				r.With(limit(limitGroupAdmin)).Post("/{group_id}/members", a.handlers.groups.AddMember)
 				r.With(limit(limitAvatar)).Put("/{group_id}/avatar", a.handlers.groups.UploadAvatar)
 				r.With(limit(limitAvatar)).Delete("/{group_id}/avatar", a.handlers.groups.DeleteAvatar)
 				r.Get("/{group_id}/avatar", a.handlers.groups.Avatar)
-				// joining needs the invite code: groups are private
+				// private groups: joining needs the invite code
 				r.With(limit(limitGroupJoin)).Post("/join", a.handlers.groups.JoinByInvite)
 				r.With(limit(limitGroupJoin)).Get("/invites/{code}", a.handlers.groups.PreviewInvite)
 				r.Get("/{group_id}/invite", a.handlers.groups.InviteCode)

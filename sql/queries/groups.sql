@@ -1,12 +1,12 @@
 -- name: CreateGroup :exec
-INSERT INTO chat_groups(id, name, description, max_member, current_member, invite_code)
-VALUES ($1, $2, $3, $4, 1, $5);
+INSERT INTO chat_groups(id, name, description, max_member, current_member, invite_code, visibility)
+VALUES ($1, $2, $3, $4, 1, $5, @visibility);
 
 -- name: CreateGroupLeaderRole :exec
 -- joined_at comes from the server clock, like message times, so "messages
 -- since I joined" never depends on clock skew between app and database
 INSERT INTO member_table(group_id, member_id, role, joined_at)
-VALUES ($1, $2, 'Leader', @joined_at::timestamp);
+VALUES ($1, $2, 'admin', @joined_at::timestamp);
 
 -- name: LockGroup :one
 -- serialises membership changes for one group inside a transaction
@@ -19,7 +19,7 @@ SELECT * FROM chat_groups WHERE id = $1;
 SELECT member_id FROM member_table WHERE group_id = $1;
 
 -- name: GetGroupLeader :one
-SELECT member_id FROM member_table WHERE group_id = $1 AND role = 'Leader' LIMIT 1;
+SELECT member_id FROM member_table WHERE group_id = $1 AND role = 'admin' LIMIT 1;
 
 -- name: GetMemberRole :one
 SELECT role FROM member_table WHERE group_id = $1 AND member_id = $2;
@@ -34,21 +34,21 @@ DELETE FROM member_table WHERE group_id = $1 AND member_id = $2;
 UPDATE chat_groups SET current_member = $2, updated_at = NOW() WHERE id = $1;
 
 -- name: ListGroupsForUser :many
-SELECT g.id, g.name, g.description, g.max_member, g.current_member, g.avatar_at, m.role
+SELECT g.id, g.name, g.description, g.max_member, g.current_member, g.avatar_at, g.visibility, m.role, m.permissions
 FROM member_table m
 JOIN chat_groups g ON g.id = m.group_id
 WHERE m.member_id = $1
 ORDER BY lower(g.name);
 
 -- name: ListGroupMembers :many
-SELECT m.member_id, u.name, u.display_name, u.avatar_at, m.role
+SELECT m.member_id, u.name, u.display_name, u.avatar_at, m.role, m.permissions
 FROM member_table m
 JOIN users u ON u.id = m.member_id
 WHERE m.group_id = $1
-ORDER BY (m.role = 'Leader') DESC, m.joined_at;
+ORDER BY (m.role = 'admin') DESC, (m.role = 'moderator') DESC, m.joined_at;
 
 -- name: GetGroupByInviteCode :one
-SELECT id, name, description, max_member, current_member FROM chat_groups WHERE invite_code = $1;
+SELECT id, name, description, max_member, current_member, visibility FROM chat_groups WHERE invite_code = $1;
 
 -- name: GetInviteCode :one
 SELECT invite_code FROM chat_groups WHERE id = $1;
@@ -61,12 +61,13 @@ UPDATE chat_groups SET invite_code = $2, updated_at = NOW() WHERE id = $1;
 UPDATE chat_groups
 SET name = COALESCE(sqlc.narg(name), name),
     description = COALESCE(sqlc.narg(description), description),
+    visibility = COALESCE(sqlc.narg(visibility), visibility),
     updated_at = NOW()
 WHERE id = @id
-RETURNING name, description;
+RETURNING name, description, visibility;
 
 -- name: SetMemberRole :exec
-UPDATE member_table SET role = @role WHERE group_id = @group_id AND member_id = @member_id;
+UPDATE member_table SET role = @role, permissions = @permissions::text[] WHERE group_id = @group_id AND member_id = @member_id;
 
 -- name: UpsertGroupAvatar :exec
 INSERT INTO group_avatars (group_id, image, updated_at) VALUES (@group_id, @image, @at::timestamp)
@@ -79,7 +80,32 @@ UPDATE chat_groups SET avatar_at = sqlc.narg(at)::timestamp, updated_at = NOW() 
 DELETE FROM group_avatars WHERE group_id = $1;
 
 -- name: GroupAvatarForMember :one
--- the picture, only for a member of the group
+-- the picture, for members (or anyone, for a public group)
 SELECT a.image, a.updated_at FROM group_avatars a
-JOIN member_table m ON m.group_id = a.group_id AND m.member_id = @viewer
-WHERE a.group_id = @group_id;
+JOIN chat_groups g ON g.id = a.group_id
+WHERE a.group_id = @group_id
+  AND (g.visibility = 'public'
+       OR EXISTS (SELECT 1 FROM member_table m WHERE m.group_id = a.group_id AND m.member_id = @viewer));
+
+-- name: GetMember :one
+SELECT role, permissions, joined_at FROM member_table WHERE group_id = $1 AND member_id = $2;
+
+-- name: ModeratorsOf :many
+SELECT member_id, permissions FROM member_table WHERE group_id = $1 AND role = 'moderator';
+
+-- name: NextAdmin :one
+-- who takes over from a leaving admin: the longest-serving moderator, else
+-- the longest-serving member
+SELECT member_id FROM member_table
+WHERE group_id = @group_id AND member_id <> @leaving
+ORDER BY (role = 'moderator') DESC, joined_at, member_id
+LIMIT 1;
+
+-- name: SearchPublicGroups :many
+-- public groups whose name contains q (already lower-cased and escaped)
+SELECT g.id, g.name, g.description, g.max_member, g.current_member, g.avatar_at,
+       EXISTS (SELECT 1 FROM member_table m WHERE m.group_id = g.id AND m.member_id = @viewer)::bool AS is_member
+FROM chat_groups g
+WHERE g.visibility = 'public' AND lower(g.name) LIKE '%' || @q::text || '%' ESCAPE '\'
+ORDER BY (lower(g.name) LIKE @q::text || '%' ESCAPE '\') DESC, g.current_member DESC, g.id
+LIMIT 20;
