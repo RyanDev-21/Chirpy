@@ -150,9 +150,6 @@ func (s *userService) SearchUser(ctx context.Context, me uuid.UUID, q string) ([
 	if err != nil {
 		return nil, err
 	}
-	if err := s.store.SetNames(ctx, list...); err != nil {
-		s.logger.WarnContext(ctx, "failed to cache searched names", "error", err)
-	}
 	return list, nil
 }
 
