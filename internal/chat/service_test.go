@@ -15,6 +15,7 @@ import (
 )
 
 type fakeRepo struct {
+	changes     map[uuid.UUID]messageChange
 	history     []MessageMetaDataRes
 	since       int
 	saved       []MessageMetaDataRes
@@ -49,11 +50,14 @@ func (f *fakeRepo) LocateMessage(_ context.Context, id uuid.UUID) (messageRef, e
 		if m.ID != id {
 			continue
 		}
+		if f.changes[id].Deleted {
+			break
+		}
 		to, _ := uuid.Parse(m.MsgInfo.Msg.ToID)
 		if m.MsgInfo.Msg.Type == TypePublic {
-			return messageRef{Kind: TypePublic, Group: to}, nil
+			return messageRef{Kind: TypePublic, Group: to, From: m.MsgInfo.FromID, CreatedAt: m.CreatedAt}, nil
 		}
-		return messageRef{Kind: TypePrivate, From: m.MsgInfo.FromID, To: to}, nil
+		return messageRef{Kind: TypePrivate, From: m.MsgInfo.FromID, To: to, CreatedAt: m.CreatedAt}, nil
 	}
 	return messageRef{}, ErrMessageNotFound
 }
@@ -110,6 +114,23 @@ func (f *fakeRepo) RecentPublic(context.Context, uuid.UUID, int) ([]MessageMetaD
 	return nil, nil
 }
 func (f *fakeRepo) UpdateLastSeen(context.Context, string, uuid.UUID, uuid.UUID) error { return nil }
+func (f *fakeRepo) MessageChanges(context.Context, string, []uuid.UUID) (map[uuid.UUID]messageChange, error) {
+	return f.changes, nil
+}
+func (f *fakeRepo) EditMessage(_ context.Context, _ string, id uuid.UUID, content string, at time.Time) (bool, error) {
+	if f.changes == nil {
+		f.changes = map[uuid.UUID]messageChange{}
+	}
+	f.changes[id] = messageChange{Content: content, EditedAt: &at}
+	return true, nil
+}
+func (f *fakeRepo) DeleteMessage(_ context.Context, _ string, id uuid.UUID, _ time.Time) (bool, error) {
+	if f.changes == nil {
+		f.changes = map[uuid.UUID]messageChange{}
+	}
+	f.changes[id] = messageChange{Deleted: true}
+	return true, nil
+}
 
 type fakeGroups map[uuid.UUID][]uuid.UUID
 
@@ -437,5 +458,60 @@ func TestReactions(t *testing.T) {
 	}
 	if got := f.push.targets[len(f.push.targets)-1]; len(got) != 1 || got[0] != f.alice {
 		t.Fatalf("group reaction targets = %v", got)
+	}
+}
+
+func TestEditAndDelete(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	dm, _ := f.svc.SendMessage(ctx, f.alice, msg(f.bob, TypePrivate, "helo"))
+	gm, _ := f.svc.SendMessage(ctx, f.alice, msg(f.group, TypePublic, "group"))
+
+	if _, err := f.svc.EditMessage(ctx, f.bob, dm, "hijack"); !errors.Is(err, ErrNotYourMessage) {
+		t.Fatalf("edit someone else's message: %v", err)
+	}
+	if _, err := f.svc.EditMessage(ctx, f.carol, gm, "x"); !errors.Is(err, ErrMessageNotFound) {
+		t.Fatalf("non-member edit: %v", err)
+	}
+	if _, err := f.svc.EditMessage(ctx, f.alice, dm, "  "); !errors.Is(err, ErrEmptyMessage) {
+		t.Fatalf("empty edit: %v", err)
+	}
+	pushes := len(f.push.targets)
+	got, err := f.svc.EditMessage(ctx, f.alice, dm, " hello ")
+	if err != nil || got.Content != "hello" {
+		t.Fatalf("edit = %+v %v", got, err)
+	}
+	if tg := f.push.targets[pushes]; len(tg) != 1 || tg[0] != f.bob {
+		t.Fatalf("edit pushed to %v, want bob", tg)
+	}
+	// the edit dropped the cache: the reseed reads "postgres", which still
+	// has the original text; the overlay brings it up to date
+	f.repo.history = f.repo.saved[:1]
+	page, _ := f.svc.PrivateMessages(ctx, f.bob, f.alice, HistoryQuery{})
+	if last := page[len(page)-1]; last.MsgInfo.Msg.Content != "hello" || last.EditedAt == nil {
+		t.Fatalf("after edit: %+v", last)
+	}
+
+	// the edit window is measured from sending
+	f.repo.saved[0].CreatedAt = time.Now().UTC().Add(-EditWindow - time.Second)
+	if _, err := f.svc.EditMessage(ctx, f.alice, dm, "late"); !errors.Is(err, ErrEditWindowClosed) {
+		t.Fatalf("late edit: %v", err)
+	}
+
+	if err := f.svc.DeleteMessage(ctx, f.bob, dm); !errors.Is(err, ErrNotYourMessage) {
+		t.Fatalf("delete someone else's message: %v", err)
+	}
+	if err := f.svc.DeleteMessage(ctx, f.alice, dm); err != nil {
+		t.Fatal(err)
+	}
+	page, _ = f.svc.PrivateMessages(ctx, f.bob, f.alice, HistoryQuery{})
+	if last := page[len(page)-1]; !last.Deleted || last.MsgInfo.Msg.Content != "" {
+		t.Fatalf("after delete: %+v", last)
+	}
+	if err := f.svc.DeleteMessage(ctx, f.alice, dm); !errors.Is(err, ErrMessageNotFound) {
+		t.Fatalf("second delete: %v", err)
+	}
+	if err := f.svc.React(ctx, f.bob, dm, "👍"); !errors.Is(err, ErrMessageNotFound) {
+		t.Fatalf("react to deleted: %v", err)
 	}
 }

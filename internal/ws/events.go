@@ -24,6 +24,8 @@ const (
 	EventDeny      = "DenyFri"
 	EventUnfriend  = "RemoveFri"
 	EventReaction  = "Reaction"
+	EventEdited    = "MsgEdited"
+	EventDeleted   = "MsgDeleted"
 )
 
 // InCommingEvent is the envelope clients send over the socket.
@@ -67,6 +69,24 @@ type OutReactionEvent struct {
 	Type    string `json:"type"`
 	GroupID string `json:"group_id,omitempty"`
 	Emoji   string `json:"emoji"`
+}
+
+// OutEditedEvent: from_id edited msg_id; msg is the new text.
+type OutEditedEvent struct {
+	MsgID    string    `json:"msg_id"`
+	FromID   string    `json:"from_id"`
+	Type     string    `json:"type"`
+	GroupID  string    `json:"group_id,omitempty"`
+	Content  string    `json:"msg"`
+	EditedAt time.Time `json:"edited_at"`
+}
+
+// OutDeletedEvent: from_id deleted msg_id for everyone.
+type OutDeletedEvent struct {
+	MsgID   string `json:"msg_id"`
+	FromID  string `json:"from_id"`
+	Type    string `json:"type"`
+	GroupID string `json:"group_id,omitempty"`
 }
 
 // OutUnfriendEvent tells a user that from_id removed them as a friend.

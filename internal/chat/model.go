@@ -32,7 +32,13 @@ var (
 	ErrSinceAndBefore      = errors.New("use either since or before, not both")
 	ErrSinceNotSupported   = errors.New("since is not supported for group history")
 	ErrMessageNotFound     = errors.New("message not found")
+	ErrNotYourMessage      = errors.New("you can only change your own messages")
+	ErrEditWindowClosed    = errors.New("messages can only be edited within 15 minutes of sending")
 )
+
+// EditWindow is how long after sending the sender may edit a message.
+// Deleting (for everyone) has no time limit.
+const EditWindow = 15 * time.Minute
 
 const maxMessageLen = 500 // matches message.content VARCHAR(500)
 
@@ -60,6 +66,11 @@ type MessageMetaDataRes struct {
 	ID        uuid.UUID    `json:"message_id"`
 	MsgInfo   MessageCache `json:"message_info"`
 	CreatedAt time.Time    `json:"created_at"`
+	// EditedAt is set once the sender edits the message.
+	EditedAt *time.Time `json:"edited_at"`
+	// Deleted messages stay in history as placeholders (content "", no
+	// reactions) so replies to them still make sense.
+	Deleted bool `json:"deleted"`
 	// Reactions are filled in when history is read (never cached with the
 	// message, since they change afterwards).
 	Reactions []ReactionCount `json:"reactions"`
@@ -82,11 +93,27 @@ type Reactor struct {
 }
 
 // messageRef locates a message: a private one (between From and To) or a
-// group one (in Group).
+// group one (in Group). From is always the sender.
 type messageRef struct {
-	Kind     string // TypePrivate or TypePublic
-	From, To uuid.UUID
-	Group    uuid.UUID
+	Kind      string // TypePrivate or TypePublic
+	From, To  uuid.UUID
+	Group     uuid.UUID
+	CreatedAt time.Time
+}
+
+// messageChange is the edit/delete state of a message, read from postgres
+// and laid over cached copies (which are written once, at send time).
+type messageChange struct {
+	Content  string
+	EditedAt *time.Time
+	Deleted  bool
+}
+
+// EditedMessage is the response to an edit.
+type EditedMessage struct {
+	MsgID    uuid.UUID `json:"msg_id"`
+	Content  string    `json:"msg"`
+	EditedAt time.Time `json:"edited_at"`
 }
 
 type MessageListRes struct {
@@ -112,6 +139,7 @@ type LastMessage struct {
 	Msg       string    `json:"msg"`
 	FromID    uuid.UUID `json:"from_id"` // zero uuid if the sender deleted their account
 	CreatedAt time.Time `json:"created_at"`
+	Deleted   bool      `json:"deleted"` // msg is "" then
 }
 
 // JobSeen is the payload of TopicSeen.

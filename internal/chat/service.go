@@ -43,6 +43,10 @@ type ChatService interface {
 	React(ctx context.Context, me, msgID uuid.UUID, emoji string) error
 	Unreact(ctx context.Context, me, msgID uuid.UUID) error
 	Reactors(ctx context.Context, me, msgID uuid.UUID) ([]Reactor, error)
+	// EditMessage changes the text of the caller's own message, within
+	// EditWindow of sending; DeleteMessage deletes it for everyone.
+	EditMessage(ctx context.Context, me, msgID uuid.UUID, content string) (EditedMessage, error)
+	DeleteMessage(ctx context.Context, me, msgID uuid.UUID) error
 	MarkSeen(ctx context.Context, me, other uuid.UUID, msgID string) error
 
 	HandleSeen(ctx context.Context, j JobSeen) error
@@ -236,7 +240,7 @@ func (s *chatService) PrivateMessages(ctx context.Context, me, other uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
-	return s.withReactions(ctx, TypePrivate, me, msgs)
+	return s.withState(ctx, TypePrivate, me, msgs)
 }
 
 func (s *chatService) privateHistory(ctx context.Context, me, other uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error) {
@@ -275,7 +279,7 @@ func (s *chatService) GroupMessages(ctx context.Context, me, groupID uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
-	return s.withReactions(ctx, TypePublic, me, msgs)
+	return s.withState(ctx, TypePublic, me, msgs)
 }
 
 func (s *chatService) groupHistory(ctx context.Context, me, groupID uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error) {
@@ -358,27 +362,119 @@ func (s *chatService) MarkSeen(ctx context.Context, me, other uuid.UUID, msgIDSt
 	return nil
 }
 
-// --- reactions ---
+// --- current state of a page ---
 
-// withReactions attaches reaction counts to a page of messages, read from
-// postgres in one query (cached messages never carry reactions).
-func (s *chatService) withReactions(ctx context.Context, kind string, me uuid.UUID, msgs []MessageMetaDataRes) ([]MessageMetaDataRes, error) {
+// withState brings a page of messages up to date from postgres: edits and
+// deletions (cached copies are written once, at send time, so a cache
+// reseeded concurrently with an edit can't serve stale text) and reaction
+// counts. Two indexed queries per page, whatever its source.
+func (s *chatService) withState(ctx context.Context, kind string, me uuid.UUID, msgs []MessageMetaDataRes) ([]MessageMetaDataRes, error) {
 	ids := make([]uuid.UUID, len(msgs))
 	for i, m := range msgs {
 		ids[i] = m.ID
+	}
+	changes, err := s.repo.MessageChanges(ctx, kind, ids)
+	if err != nil {
+		return nil, err
 	}
 	counts, err := s.repo.ReactionCounts(ctx, kind, me, ids)
 	if err != nil {
 		return nil, err
 	}
 	for i := range msgs {
-		msgs[i].Reactions = counts[msgs[i].ID]
-		if msgs[i].Reactions == nil {
-			msgs[i].Reactions = []ReactionCount{}
+		m := &msgs[i]
+		if c, ok := changes[m.ID]; ok {
+			m.MsgInfo.Msg.Content, m.EditedAt, m.Deleted = c.Content, c.EditedAt, c.Deleted
+		}
+		if m.Deleted {
+			m.MsgInfo.Msg.Content = ""
+		}
+		m.Reactions = counts[m.ID]
+		if m.Reactions == nil {
+			m.Reactions = []ReactionCount{}
 		}
 	}
 	return msgs, nil
 }
+
+// --- edit and delete ---
+
+func (s *chatService) EditMessage(ctx context.Context, me, msgID uuid.UUID, content string) (EditedMessage, error) {
+	content = strings.TrimSpace(content)
+	if n := utf8.RuneCountInString(content); n == 0 || n > maxMessageLen {
+		return EditedMessage{}, ErrEmptyMessage
+	}
+	// editing is sending new text, so private edits need the friendship too
+	ref, others, err := s.authorizeMessage(ctx, me, msgID, true)
+	if err != nil {
+		return EditedMessage{}, err
+	}
+	if ref.From != me {
+		return EditedMessage{}, ErrNotYourMessage
+	}
+	now := time.Now().UTC()
+	if now.Sub(ref.CreatedAt) > EditWindow {
+		return EditedMessage{}, ErrEditWindowClosed
+	}
+	ok, err := s.repo.EditMessage(ctx, ref.Kind, msgID, content, now)
+	if err != nil {
+		return EditedMessage{}, err
+	}
+	if !ok {
+		return EditedMessage{}, ErrMessageNotFound // deleted meanwhile
+	}
+	s.dropCached(ctx, ref)
+	ev := ws.OutEditedEvent{MsgID: msgID.String(), FromID: me.String(), Type: ref.Kind, Content: content, EditedAt: now}
+	if ref.Kind == TypePublic {
+		ev.GroupID = ref.Group.String()
+	}
+	if err := s.push.WriteToUsers(others, ws.Event{Event: ws.EventEdited, Payload: ev}); err != nil {
+		s.logger.WarnContext(ctx, "failed to push edit", "error", err)
+	}
+	return EditedMessage{MsgID: msgID, Content: content, EditedAt: now}, nil
+}
+
+func (s *chatService) DeleteMessage(ctx context.Context, me, msgID uuid.UUID) error {
+	// no friendship needed: you can always take back what you said
+	ref, others, err := s.authorizeMessage(ctx, me, msgID, false)
+	if err != nil {
+		return err
+	}
+	if ref.From != me {
+		return ErrNotYourMessage
+	}
+	ok, err := s.repo.DeleteMessage(ctx, ref.Kind, msgID, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrMessageNotFound
+	}
+	s.dropCached(ctx, ref)
+	ev := ws.OutDeletedEvent{MsgID: msgID.String(), FromID: me.String(), Type: ref.Kind}
+	if ref.Kind == TypePublic {
+		ev.GroupID = ref.Group.String()
+	}
+	if err := s.push.WriteToUsers(others, ws.Event{Event: ws.EventDeleted, Payload: ev}); err != nil {
+		s.logger.WarnContext(ctx, "failed to push delete", "error", err)
+	}
+	return nil
+}
+
+// dropCached removes the chat's cached stream after an edit or delete, so
+// old or deleted text doesn't linger in redis (reads overlay the current
+// state anyway; see withState).
+func (s *chatService) dropCached(ctx context.Context, ref messageRef) {
+	key := groupKey(ref.Group)
+	if ref.Kind == TypePrivate {
+		key = privateKey(ref.From, ref.To)
+	}
+	if err := s.cache.Invalidate(ctx, key); err != nil {
+		s.logger.WarnContext(ctx, "failed to invalidate chat cache", "error", err)
+	}
+}
+
+// --- reactions ---
 
 // authorizeMessage returns where msgID lives and who else should hear
 // about changes to it, if me may read it. requireFriends applies the
