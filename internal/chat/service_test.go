@@ -39,7 +39,7 @@ func (f *fakeRepo) PrivateBefore(_ context.Context, _, _, before uuid.UUID, n in
 	f.beforeCalls++
 	return nil, nil
 }
-func (f *fakeRepo) GroupBefore(context.Context, uuid.UUID, uuid.UUID, int) ([]MessageMetaDataRes, error) {
+func (f *fakeRepo) GroupBefore(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, int) ([]MessageMetaDataRes, error) {
 	f.beforeCalls++
 	return nil, nil
 }
@@ -118,7 +118,10 @@ func (f *fakeRepo) PrivateSince(context.Context, uuid.UUID, uuid.UUID, time.Time
 	f.since++
 	return f.history, nil
 }
-func (f *fakeRepo) RecentPublic(context.Context, uuid.UUID, int) ([]MessageMetaDataRes, error) {
+func (f *fakeRepo) JoinedAt(context.Context, uuid.UUID, uuid.UUID) (time.Time, error) {
+	return time.Time{}, nil
+}
+func (f *fakeRepo) RecentPublic(context.Context, uuid.UUID, uuid.UUID, int) ([]MessageMetaDataRes, error) {
 	return f.history, nil
 }
 func (f *fakeRepo) UpdateLastSeen(context.Context, string, uuid.UUID, uuid.UUID) error { return nil }
@@ -153,6 +156,9 @@ type fakeGroups map[uuid.UUID][]uuid.UUID
 
 func (g fakeGroups) IsMember(_ context.Context, id, user uuid.UUID) (bool, error) {
 	return slices.Contains(g[id], user), nil
+}
+func (g fakeGroups) CanDeleteMessage(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error) {
+	return false, nil
 }
 func (g fakeGroups) Members(_ context.Context, id uuid.UUID) ([]uuid.UUID, error) {
 	return slices.Clone(g[id]), nil

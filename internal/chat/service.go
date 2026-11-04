@@ -30,6 +30,7 @@ const (
 type GroupMembership interface {
 	IsMember(ctx context.Context, groupID, userID uuid.UUID) (bool, error)
 	Members(ctx context.Context, groupID uuid.UUID) ([]uuid.UUID, error)
+	CanDeleteMessage(ctx context.Context, groupID, actor, sender uuid.UUID) (bool, error)
 }
 
 // FriendChecker is implemented by friends.Service.
@@ -303,9 +304,9 @@ func (s *chatService) groupHistory(ctx context.Context, me, groupID uuid.UUID, q
 		return nil, ErrNotAuthorized
 	}
 	if before != uuid.Nil {
-		return s.repo.GroupBefore(ctx, groupID, before, limit)
+		return s.repo.GroupBefore(ctx, groupID, me, before, limit)
 	}
-	return s.repo.RecentPublic(ctx, groupID, limit)
+	return s.repo.RecentPublic(ctx, groupID, me, limit)
 }
 
 // MarkGroupRead records the last group message the caller has read.
@@ -499,7 +500,17 @@ func (s *chatService) DeleteMessage(ctx context.Context, me, msgID uuid.UUID) er
 		return err
 	}
 	if ref.From != me {
-		return ErrNotYourMessage
+		// in groups the admin, and moderators allowed to, delete others' messages
+		if ref.Kind != TypePublic {
+			return ErrNotYourMessage
+		}
+		ok, err := s.groups.CanDeleteMessage(ctx, ref.Group, me, ref.From)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrNotYourMessage
+		}
 	}
 	ok, err := s.repo.DeleteMessage(ctx, ref.Kind, msgID, time.Now().UTC())
 	if err != nil {
@@ -514,9 +525,12 @@ func (s *chatService) DeleteMessage(ctx context.Context, me, msgID uuid.UUID) er
 		}
 	}
 	telemetry.ChatAction(ctx, "delete")
-	ev := ws.OutDeletedEvent{MsgID: msgID.String(), FromID: me.String(), Type: ref.Kind}
+	ev := ws.OutDeletedEvent{MsgID: msgID.String(), FromID: ref.From.String(), Type: ref.Kind}
 	if ref.Kind == TypePublic {
 		ev.GroupID = ref.Group.String()
+	}
+	if ref.From != me {
+		ev.ByID = me.String() // removed by a moderator or the admin
 	}
 	if err := s.push.WriteToUsers(withMe(others, me), ws.Event{Event: ws.EventDeleted, Payload: ev}); err != nil {
 		s.logger.WarnContext(ctx, "failed to push delete", "error", err)
@@ -565,6 +579,14 @@ func (s *chatService) authorizeMessage(ctx context.Context, me, msgID uuid.UUID,
 	}
 	if !slices.Contains(members, me) {
 		return ref, nil, ErrMessageNotFound
+	}
+	// messages from before I joined aren't mine to see
+	joined, err := s.repo.JoinedAt(ctx, ref.Group, me)
+	if errors.Is(err, ErrNotAuthorized) || (err == nil && ref.CreatedAt.Before(joined)) {
+		return ref, nil, ErrMessageNotFound
+	}
+	if err != nil {
+		return ref, nil, err
 	}
 	return ref, slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == me }), nil
 }

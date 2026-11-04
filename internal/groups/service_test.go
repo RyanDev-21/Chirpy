@@ -48,12 +48,7 @@ func (f *fakeRepo) RegenerateInviteCode(_ context.Context, id uuid.UUID) (string
 func (f *fakeRepo) Create(_ context.Context, id, creator uuid.UUID, req createGroupRequest) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, g := range f.groups {
-		if strings.EqualFold(g.Name, req.GroupName) {
-			return ErrDuplicateName
-		}
-	}
-	f.groups[id] = &GroupSnapshot{Name: req.GroupName, MaxMem: req.MaxMems, LeaderID: creator, Members: []uuid.UUID{creator}}
+	f.groups[id] = &GroupSnapshot{Name: req.GroupName, MaxMem: req.MaxMems, AdminID: creator, Public: req.Visibility == Public, Members: []uuid.UUID{creator}}
 	f.codes[id], _ = NewInviteCode()
 	return nil
 }
@@ -68,6 +63,12 @@ func (f *fakeRepo) Snapshot(_ context.Context, id uuid.UUID) (GroupSnapshot, err
 	}
 	cp := *g
 	cp.Members = slices.Clone(g.Members)
+	if g.Mods != nil {
+		cp.Mods = map[uuid.UUID][]string{}
+		for k, v := range g.Mods {
+			cp.Mods[k] = slices.Clone(v)
+		}
+	}
 	return cp, nil
 }
 
@@ -87,21 +88,46 @@ func (f *fakeRepo) Join(_ context.Context, id, user uuid.UUID) error {
 	return nil
 }
 
-func (f *fakeRepo) Leave(_ context.Context, id, user uuid.UUID) error {
+func (f *fakeRepo) Leave(_ context.Context, id, user, successor uuid.UUID) (Leaving, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	g, ok := f.groups[id]
 	if !ok {
-		return ErrNotFoundGroup
+		return Leaving{}, ErrNotFoundGroup
 	}
 	i := slices.Index(g.Members, user)
-	switch {
-	case i == -1:
-		return ErrNotMember
-	case user == g.LeaderID:
-		return ErrLeaderCannotLeave
+	if i == -1 {
+		return Leaving{}, ErrNotMember
 	}
 	g.Members = slices.Delete(g.Members, i, i+1)
+	var out Leaving
+	if user == g.AdminID {
+		if len(g.Members) == 0 {
+			delete(f.groups, id)
+			return Leaving{Deleted: true}, nil
+		}
+		g.AdminID = g.Members[0]
+		if successor != uuid.Nil {
+			g.AdminID = successor
+		}
+		out.NewAdmin = g.AdminID
+	}
+	return out, nil
+}
+func (f *fakeRepo) Search(context.Context, uuid.UUID, string) ([]GroupPreview, error) {
+	return nil, nil
+}
+func (f *fakeRepo) SetRole(_ context.Context, id, _, target uuid.UUID, role string, perms []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	g := f.groups[id]
+	if g.Mods == nil {
+		g.Mods = map[uuid.UUID][]string{}
+	}
+	delete(g.Mods, target)
+	if role == RoleModerator {
+		g.Mods[target] = perms
+	}
 	return nil
 }
 
@@ -117,11 +143,11 @@ func (f *fakeRepo) Detail(_ context.Context, id, viewer uuid.UUID) (GroupDetail,
 }
 
 func (f *fakeRepo) Kick(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error { return nil }
-func (f *fakeRepo) Update(_ context.Context, id, _ uuid.UUID, name, desc *string) (GroupPreview, error) {
+func (f *fakeRepo) Update(_ context.Context, id, _ uuid.UUID, name, desc, _ *string) (GroupPreview, error) {
 	f.updated = append(f.updated, [2]*string{name, desc})
 	return GroupPreview{ID: id}, nil
 }
-func (f *fakeRepo) TransferLeader(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+func (f *fakeRepo) TransferAdmin(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
 	return nil
 }
 func (f *fakeRepo) Delete(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
@@ -179,7 +205,7 @@ func TestMembershipCacheFollowsWrites(t *testing.T) {
 	if ok, _ := svc.IsMember(ctx, g.ChatID, a); !ok {
 		t.Fatal("join not visible: cache was not invalidated")
 	}
-	if err := svc.LeaveGroup(ctx, g.ChatID, a); err != nil {
+	if err := svc.LeaveGroup(ctx, g.ChatID, a, uuid.Nil); err != nil {
 		t.Fatal(err)
 	}
 	if ok, _ := svc.IsMember(ctx, g.ChatID, a); ok {
@@ -201,8 +227,9 @@ func TestErrorsFromRepoArePassedThrough(t *testing.T) {
 	leader := uuid.New()
 	g, _ := svc.CreateGroup(ctx, leader, createGroupRequest{GroupName: "Team", MaxMems: 2})
 
-	if _, err := svc.CreateGroup(ctx, leader, createGroupRequest{GroupName: "team", MaxMems: 2}); !errors.Is(err, ErrDuplicateName) {
-		t.Fatalf("duplicate name: %v", err)
+	// names don't have to be unique
+	if _, err := svc.CreateGroup(ctx, leader, createGroupRequest{GroupName: "team", MaxMems: 2}); err != nil {
+		t.Fatalf("same name: %v", err)
 	}
 	if err := svc.JoinGroup(ctx, g.ChatID, leader); !errors.Is(err, ErrAlreadyMember) {
 		t.Fatalf("rejoin: %v", err)
@@ -210,9 +237,6 @@ func TestErrorsFromRepoArePassedThrough(t *testing.T) {
 	_ = svc.JoinGroup(ctx, g.ChatID, uuid.New())
 	if err := svc.JoinGroup(ctx, g.ChatID, uuid.New()); !errors.Is(err, ErrGroupFull) {
 		t.Fatalf("full: %v", err)
-	}
-	if err := svc.LeaveGroup(ctx, g.ChatID, leader); !errors.Is(err, ErrLeaderCannotLeave) {
-		t.Fatalf("leader leave: %v", err)
 	}
 	if _, err := svc.Members(ctx, uuid.New()); !errors.Is(err, ErrNotFoundGroup) {
 		t.Fatalf("unknown group: %v", err)
@@ -270,7 +294,7 @@ func TestInvites(t *testing.T) {
 	if c, err := svc.InviteCode(ctx, g.ChatID, member); err != nil || c != code {
 		t.Fatalf("member's code = %q, %v", c, err)
 	}
-	if _, err := svc.RegenerateInvite(ctx, g.ChatID, member); !errors.Is(err, ErrNotLeader) {
+	if _, err := svc.RegenerateInvite(ctx, g.ChatID, member); !errors.Is(err, ErrNoPermission) {
 		t.Fatalf("member regenerated the code: %v", err)
 	}
 	fresh, err := svc.RegenerateInvite(ctx, g.ChatID, leader)
@@ -308,5 +332,93 @@ func TestUpdateValidation(t *testing.T) {
 	}
 	if got := repo.updated[0][0]; got == nil || *got != "team" || repo.updated[0][1] != nil {
 		t.Fatalf("repo got %v", repo.updated[0])
+	}
+}
+
+func TestCreateVisibility(t *testing.T) {
+	svc, repo := newSvc(t)
+	ctx := context.Background()
+	if _, err := svc.CreateGroup(ctx, uuid.New(), createGroupRequest{GroupName: "x", MaxMems: 5, Visibility: "secret"}); !errors.Is(err, ErrInvalidGroupReq) {
+		t.Fatalf("bad visibility: %v", err)
+	}
+	g, err := svc.CreateGroup(ctx, uuid.New(), createGroupRequest{GroupName: "x", MaxMems: 5})
+	if err != nil || repo.groups[g.ChatID].Public {
+		t.Fatalf("default must be private: %v", err)
+	}
+}
+
+func TestModeratorPermissions(t *testing.T) {
+	svc, _ := newSvc(t)
+	ctx := context.Background()
+	admin, mod, mod2, member := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	g, _ := svc.CreateGroup(ctx, admin, createGroupRequest{GroupName: "devs", MaxMems: 10})
+	for _, u := range []uuid.UUID{mod, mod2, member} {
+		if err := svc.JoinGroup(ctx, g.ChatID, u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := svc.SetRole(ctx, g.ChatID, admin, mod, roleRequest{Role: "admin"}); !errors.Is(err, ErrBadRole) {
+		t.Fatalf("a second admin: %v", err)
+	}
+	if err := svc.SetRole(ctx, g.ChatID, admin, mod, roleRequest{Role: RoleModerator, Permissions: []string{"ban_everyone"}}); !errors.Is(err, ErrBadRole) {
+		t.Fatalf("unknown permission: %v", err)
+	}
+	if err := svc.SetRole(ctx, g.ChatID, admin, mod, roleRequest{Role: RoleModerator, Permissions: []string{PermDeleteMessages, PermManageInvite, PermDeleteMessages}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = svc.SetRole(ctx, g.ChatID, admin, mod2, roleRequest{Role: RoleModerator})
+
+	can := func(actor, sender uuid.UUID) bool {
+		ok, err := svc.CanDeleteMessage(ctx, g.ChatID, actor, sender)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	switch {
+	case !can(admin, mod), !can(admin, member):
+		t.Fatal("the admin deletes anyone's messages")
+	case !can(mod, member):
+		t.Fatal("a moderator with delete_messages deletes members' messages")
+	case can(mod, admin), can(mod, mod2):
+		t.Fatal("moderators can't delete the admin's or other moderators' messages")
+	case can(mod2, member), can(member, mod):
+		t.Fatal("no permission, no deleting")
+	}
+	if _, err := svc.RegenerateInvite(ctx, g.ChatID, mod); err != nil {
+		t.Fatalf("mod with manage_invite: %v", err)
+	}
+	if _, err := svc.RegenerateInvite(ctx, g.ChatID, mod2); !errors.Is(err, ErrNoPermission) {
+		t.Fatalf("mod without it: %v", err)
+	}
+
+	// taking the permission away works at once (the cache is invalidated)
+	_ = svc.SetRole(ctx, g.ChatID, admin, mod, roleRequest{Role: RoleMember, Permissions: []string{PermDeleteMessages}})
+	if can(mod, member) {
+		t.Fatal("a demoted moderator kept delete_messages")
+	}
+}
+
+func TestAdminLeaving(t *testing.T) {
+	svc, repo := newSvc(t)
+	ctx := context.Background()
+	admin, a, b := uuid.New(), uuid.New(), uuid.New()
+	g, _ := svc.CreateGroup(ctx, admin, createGroupRequest{GroupName: "devs", MaxMems: 10})
+	_ = svc.JoinGroup(ctx, g.ChatID, a)
+	_ = svc.JoinGroup(ctx, g.ChatID, b)
+	if err := svc.LeaveGroup(ctx, g.ChatID, admin, b); err != nil || repo.groups[g.ChatID].AdminID != b {
+		t.Fatalf("hand over to b: %v", err)
+	}
+	gone := false
+	svc.OnDelete(func(context.Context, uuid.UUID) { gone = true })
+	_ = svc.LeaveGroup(ctx, g.ChatID, a, uuid.Nil)
+	if err := svc.LeaveGroup(ctx, g.ChatID, b, uuid.Nil); err != nil || !gone {
+		t.Fatalf("last one out deletes the group: %v %v", err, gone)
+	}
+}
+
+func TestEscapeLike(t *testing.T) {
+	if got, want := escapeLike("50%_off"+string(rune(92))), "50"+string(rune(92))+"%"+string(rune(92))+"_off"+string(rune(92))+string(rune(92)); got != want {
+		t.Fatalf("escapeLike = %q, want %q", got, want)
 	}
 }

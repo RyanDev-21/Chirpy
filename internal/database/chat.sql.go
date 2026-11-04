@@ -168,17 +168,19 @@ func (q *Queries) EditPrivateMessage(ctx context.Context, arg EditPrivateMessage
 }
 
 const getGroupMessagesBefore = `-- name: GetGroupMessagesBefore :many
-SELECT id, content, group_id, from_id, parent_id, created_at, updated_at, deleted_at, edited_at FROM GroupMessage
-WHERE group_id = $1
-  AND (created_at, id) < ($2::timestamp, $3::uuid)
-ORDER BY created_at DESC, id DESC
-LIMIT $4
+SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.updated_at, g.deleted_at, g.edited_at FROM GroupMessage g
+WHERE g.group_id = $1
+  AND (g.created_at, g.id) < ($2::timestamp, $3::uuid)
+  AND g.created_at >= (SELECT mt.joined_at FROM member_table mt WHERE mt.group_id = $1 AND mt.member_id = $4::uuid)
+ORDER BY g.created_at DESC, g.id DESC
+LIMIT $5
 `
 
 type GetGroupMessagesBeforeParams struct {
 	GroupID    pgtype.UUID
 	BeforeTime pgtype.Timestamp
 	BeforeID   uuid.UUID
+	Viewer     uuid.UUID
 	Lim        int32
 }
 
@@ -187,6 +189,7 @@ func (q *Queries) GetGroupMessagesBefore(ctx context.Context, arg GetGroupMessag
 		arg.GroupID,
 		arg.BeforeTime,
 		arg.BeforeID,
+		arg.Viewer,
 		arg.Lim,
 	)
 	if err != nil {
@@ -321,19 +324,22 @@ func (q *Queries) GetPrivateMessagesSince(ctx context.Context, arg GetPrivateMes
 }
 
 const getRecentGroupMessages = `-- name: GetRecentGroupMessages :many
-SELECT id, content, group_id, from_id, parent_id, created_at, updated_at, deleted_at, edited_at FROM GroupMessage
-WHERE group_id = $1
-ORDER BY created_at DESC
-LIMIT $2
+SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.updated_at, g.deleted_at, g.edited_at FROM GroupMessage g
+WHERE g.group_id = $1
+  AND g.created_at >= (SELECT mt.joined_at FROM member_table mt WHERE mt.group_id = $1 AND mt.member_id = $2::uuid)
+ORDER BY g.created_at DESC
+LIMIT $3
 `
 
 type GetRecentGroupMessagesParams struct {
 	GroupID pgtype.UUID
+	Viewer  uuid.UUID
 	Lim     int32
 }
 
+// only what was sent since the viewer joined
 func (q *Queries) GetRecentGroupMessages(ctx context.Context, arg GetRecentGroupMessagesParams) ([]Groupmessage, error) {
-	rows, err := q.db.Query(ctx, getRecentGroupMessages, arg.GroupID, arg.Lim)
+	rows, err := q.db.Query(ctx, getRecentGroupMessages, arg.GroupID, arg.Viewer, arg.Lim)
 	if err != nil {
 		return nil, err
 	}
@@ -403,6 +409,22 @@ func (q *Queries) GetRecentPrivateMessages(ctx context.Context, arg GetRecentPri
 		return nil, err
 	}
 	return items, nil
+}
+
+const groupJoinedAt = `-- name: GroupJoinedAt :one
+SELECT joined_at FROM member_table WHERE group_id = $1 AND member_id = $2
+`
+
+type GroupJoinedAtParams struct {
+	GroupID  uuid.UUID
+	MemberID uuid.UUID
+}
+
+func (q *Queries) GroupJoinedAt(ctx context.Context, arg GroupJoinedAtParams) (pgtype.Timestamp, error) {
+	row := q.db.QueryRow(ctx, groupJoinedAt, arg.GroupID, arg.MemberID)
+	var joined_at pgtype.Timestamp
+	err := row.Scan(&joined_at)
+	return joined_at, err
 }
 
 const groupMessageCursor = `-- name: GroupMessageCursor :one
@@ -512,7 +534,7 @@ FROM member_table m
 JOIN chat_groups g ON g.id = m.group_id
 LEFT JOIN LATERAL (
     SELECT gm.id, gm.content, gm.from_id, gm.created_at, gm.deleted_at FROM GroupMessage gm
-    WHERE gm.group_id = g.id
+    WHERE gm.group_id = g.id AND gm.created_at >= m.joined_at
     ORDER BY gm.created_at DESC, gm.id DESC LIMIT 1
 ) lm ON true
 WHERE m.member_id = $1::uuid

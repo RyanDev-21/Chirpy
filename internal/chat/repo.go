@@ -22,7 +22,8 @@ type ChatRepo interface {
 	// Recent* return the newest n messages in chronological order.
 	RecentPrivate(ctx context.Context, a, b uuid.UUID, n int) ([]MessageMetaDataRes, error)
 	PrivateSince(ctx context.Context, a, b uuid.UUID, since time.Time, n int) ([]MessageMetaDataRes, error)
-	RecentPublic(ctx context.Context, groupID uuid.UUID, n int) ([]MessageMetaDataRes, error)
+	// group history only includes what was sent since viewer joined
+	RecentPublic(ctx context.Context, groupID, viewer uuid.UUID, n int) ([]MessageMetaDataRes, error)
 	UpdateLastSeen(ctx context.Context, chatID string, userID, msgID uuid.UUID) error
 	// ParentInPrivate / ParentInGroup report whether a reply target belongs
 	// to the same conversation.
@@ -31,7 +32,9 @@ type ChatRepo interface {
 	// *Before return up to n messages older than the cursor message, in
 	// chronological order; ErrBadCursor if it isn't in that chat.
 	PrivateBefore(ctx context.Context, a, b, before uuid.UUID, n int) ([]MessageMetaDataRes, error)
-	GroupBefore(ctx context.Context, groupID, before uuid.UUID, n int) ([]MessageMetaDataRes, error)
+	GroupBefore(ctx context.Context, groupID, viewer, before uuid.UUID, n int) ([]MessageMetaDataRes, error)
+	// JoinedAt is when userID joined the group (ErrNotAuthorized if not in it).
+	JoinedAt(ctx context.Context, groupID, userID uuid.UUID) (time.Time, error)
 	// MarkGroupRead reports whether the marker moved forward.
 	MarkGroupRead(ctx context.Context, groupID, userID, msgID uuid.UUID) (bool, error)
 	// GroupReadBy lists current members, other than the sender, who have
@@ -183,8 +186,8 @@ func (r *chatRepo) PrivateSince(ctx context.Context, a, b uuid.UUID, since time.
 	return fromPrivate(rows), nil
 }
 
-func (r *chatRepo) RecentPublic(ctx context.Context, groupID uuid.UUID, n int) ([]MessageMetaDataRes, error) {
-	rows, err := r.q.GetRecentGroupMessages(ctx, database.GetRecentGroupMessagesParams{GroupID: pgUUID(groupID), Lim: int32(n)})
+func (r *chatRepo) RecentPublic(ctx context.Context, groupID, viewer uuid.UUID, n int) ([]MessageMetaDataRes, error) {
+	rows, err := r.q.GetRecentGroupMessages(ctx, database.GetRecentGroupMessagesParams{GroupID: pgUUID(groupID), Viewer: viewer, Lim: int32(n)})
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +227,15 @@ func (r *chatRepo) PrivateBefore(ctx context.Context, a, b, before uuid.UUID, n 
 	return out, nil
 }
 
-func (r *chatRepo) GroupBefore(ctx context.Context, groupID, before uuid.UUID, n int) ([]MessageMetaDataRes, error) {
+func (r *chatRepo) JoinedAt(ctx context.Context, groupID, userID uuid.UUID) (time.Time, error) {
+	t, err := r.q.GroupJoinedAt(ctx, database.GroupJoinedAtParams{GroupID: groupID, MemberID: userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, ErrNotAuthorized
+	}
+	return t.Time, err
+}
+
+func (r *chatRepo) GroupBefore(ctx context.Context, groupID, viewer, before uuid.UUID, n int) ([]MessageMetaDataRes, error) {
 	at, err := r.q.GroupMessageCursor(ctx, database.GroupMessageCursorParams{ID: before, GroupID: pgUUID(groupID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrBadCursor
@@ -233,7 +244,7 @@ func (r *chatRepo) GroupBefore(ctx context.Context, groupID, before uuid.UUID, n
 		return nil, err
 	}
 	rows, err := r.q.GetGroupMessagesBefore(ctx, database.GetGroupMessagesBeforeParams{
-		GroupID: pgUUID(groupID), BeforeTime: at, BeforeID: before, Lim: int32(n),
+		GroupID: pgUUID(groupID), Viewer: viewer, BeforeTime: at, BeforeID: before, Lim: int32(n),
 	})
 	if err != nil {
 		return nil, err

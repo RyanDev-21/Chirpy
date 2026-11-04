@@ -323,7 +323,7 @@ account without a password `{"google_id_token":"<fresh token for the same Google
 Deletion is immediate and permanent: friendships, requests, memberships and
 sessions go; messages the user sent stay in their chats without an author
 (`FromID` becomes the zero UUID). For each group they led, the member who
-joined earliest becomes leader; groups with no one else left are deleted.
+served longest (moderators first) becomes admin; groups with no one else left are deleted.
 Their live WebSocket is closed. Google Play requires apps with accounts to
 offer this.
 
@@ -501,32 +501,62 @@ Success: `204 No Content`.
 
 All group endpoints require authentication.
 
+### Private and public groups
+
+| | `private` (default) | `public` |
+|---|---|---|
+| Found in search | no | yes, by name |
+| Joining | invite code, or being added | join button, invite code, or being added |
+| Non-members see | nothing (`404`); a code previews name and size | name, description, picture, member count (not the members) |
+| History after joining | from when you joined | from when you joined |
+
+Group names don't have to be unique.
+
+### Roles and permissions
+
+Every group has one **admin** (its creator, or whoever it was handed to),
+any number of **moderators**, and **members**. The admin picks each
+moderator's permissions:
+
+| Permission | Allows |
+|---|---|
+| `add_members` | add their own friends directly |
+| `remove_members` | remove ordinary members (not the admin or other moderators) |
+| `delete_messages` | delete ordinary members' messages |
+| `edit_info` | change the name, description and picture |
+| `manage_invite` | replace the invite code |
+
+The admin can do all of that and also: make or unmake moderators and set
+their permissions, remove moderators, switch public/private, hand the admin
+role to someone else, and delete the group. Nobody can edit someone else's
+message. A change of role takes effect immediately. Without the permission
+the answer is `403`; non-members of a private group get `404`.
+
 ### Create group
 
 `POST /api/chats/groups`
 
-Request:
-
 ```json
-{"group_name":"devs","description":"Team chat","max_mems":20}
+{"group_name":"devs","description":"Team chat","max_mems":20,"visibility":"private"}
 ```
 
-`group_name` is 1–30 characters, `description` is at most 1000 characters,
-and `max_mems` is 2–1000. Success: `201 {"chat_id":"group-uuid"}`. The
-creator is automatically the leader and occupies one member slot. Group names
-are case-insensitively unique (`409`). Maximum 10 groups created per minute.
+`group_name` is 1–30 characters, `description` at most 1000, `max_mems`
+2–1000, `visibility` `private` (default) or `public`. → `201
+{"chat_id":"group-uuid"}`. The creator is the admin and takes one member
+slot. 10 groups/minute.
 
 ### My groups
 
 `GET /api/chats/groups` → `200`:
 
 ```json
-{"groups":[{"id":"group-uuid","name":"devs","description":"Team chat",
-  "max_members":20,"member_count":3,"role":"Leader","avatar_url":null}]}
+{"groups":[{"id":"group-uuid","name":"devs","description":"Team chat","max_members":20,
+  "member_count":3,"visibility":"private","role":"moderator",
+  "permissions":["add_members","delete_messages"],"avatar_url":null}]}
 ```
 
-Every group the caller belongs to, sorted by name. `role` is the caller's
-role: `Leader` or `member`.
+Sorted by name. `role` and `permissions` are yours (permissions are empty
+unless you're a moderator): use them to show or hide the management actions.
 
 ### Group details
 
@@ -534,100 +564,126 @@ role: `Leader` or `member`.
 
 ```json
 {"id":"group-uuid","name":"devs","description":"Team chat","max_members":20,
- "member_count":3,"is_member":true,"avatar_url":"/api/chats/groups/group-uuid/avatar?v=1762300000000",
- "members":[{"user_id":"uuid","name":"alice","role":"Leader","avatar_url":null}]}
+ "member_count":3,"visibility":"private","is_member":true,
+ "avatar_url":"/api/chats/groups/group-uuid/avatar?v=1762300000000",
+ "members":[{"user_id":"uuid","name":"alice","display_name":"Alice","role":"admin","permissions":[],"avatar_url":null}]}
 ```
 
-Members only: groups are private, so a non-member gets `404`, the same as an
-unknown group. `members` lists the leader first. `400` invalid ID.
+`members` (members only) lists the admin first, then moderators, then
+members by join time. A public group answers non-members too, with
+`is_member: false` and no `members`. A private one is `404` for them.
+
+### Search public groups
+
+`GET /api/chats/groups/search?q=go` → `200`:
+
+```json
+{"groups":[{"id":"group-uuid","name":"Go Learners","description":"…","max_members":50,
+  "member_count":12,"visibility":"public","avatar_url":null,"is_member":false}]}
+```
+
+Public groups whose name contains `q` (2–30 characters, case-insensitive;
+`%` and `_` are literal). Names starting with `q` come first, then bigger
+groups. At most 20. `400` for a short or long `q`. 20 searches/minute.
+
+### Join a public group
+
+`POST /api/chats/groups/{group_id}/join` → `201 {"chat_id":"group-uuid"}`.
+`404` for a private (or unknown) group, `409` already a member or full.
+Shares the 20/minute join budget.
 
 ### Invite codes
 
-Every group has an invite code like `K7M9-QX2P`: 8 characters from
-`A–Z` and `2–9` without the look-alikes `0 O 1 I`. Joining a group requires
-its code. Codes are case-insensitive and the dash and spaces are optional, so
-`k7m9 qx2p` also works.
+Every group has an invite code like `K7M9-QX2P`: 8 characters from `A–Z`
+and `2–9` without the look-alikes `0 O 1 I`. Case-insensitive; the dash and
+spaces are optional (`k7m9 qx2p` works).
 
 - `GET /api/chats/groups/{group_id}/invite` → `200 {"code":"K7M9-QX2P"}`.
   Members only (`404` otherwise).
-- `POST /api/chats/groups/{group_id}/invite` → `200 {"code":"NEW2-CODE"}`.
-  Leader only (`403` for other members): makes a new code, and the old code
-  stops working immediately. Maximum 10 requests/minute.
+- `POST /api/chats/groups/{group_id}/invite` → `200 {"code":"NEW2-CODE"}`
+  (`manage_invite`): the old code stops working immediately. 10/minute.
 
 ### Preview an invite
 
 `GET /api/chats/groups/invites/{code}` → `200`:
 
 ```json
-{"id":"group-uuid","name":"devs","description":"Team chat","max_members":20,"member_count":3}
+{"id":"group-uuid","name":"devs","description":"Team chat","max_members":20,
+ "member_count":3,"visibility":"private","avatar_url":null}
 ```
 
-Use it to show "Join devs?" before joining. Unknown or malformed codes return
-`404 {"error":"invalid invite code"}`. Shares the 20 requests/minute join
-budget.
+Show "Join devs?" before joining (`avatar_url` only for public groups).
+Unknown or malformed codes: `404 {"error":"invalid invite code"}`. Shares
+the 20/minute join budget.
 
 ### Join with a code
 
 `POST /api/chats/groups/join` with `{"code":"K7M9-QX2P"}` →
-`201 {"chat_id":"group-uuid"}`.
-
-`404` invalid code, `409` already a member or group full. Maximum 20
-join/preview requests per minute.
-
-There is no way to join by group ID.
+`201 {"chat_id":"group-uuid"}`. `404` invalid code, `409` already a member
+or full.
 
 ### Leave group
 
-`DELETE /api/chats/groups/{group_id}/members` → `204 No Content`.
+`DELETE /api/chats/groups/{group_id}/members` → `204`. `400` if you aren't a
+member.
 
-The leader cannot leave (`403`): transfer leadership first, or delete the
-group. A non-member gets `400`.
+The admin may name who takes over:
+`DELETE /api/chats/groups/{group_id}/members?successor={user_id}` (`400` if
+that person isn't a member). Without it the longest-serving moderator takes
+over, then the longest-serving member. The last one to leave deletes the
+group with everything in it.
 
-### Manage a group (leader only)
+### Manage a group
 
-Members who aren't the leader get `403`; non-members get `404`. Maximum 30
-requests/minute across these routes.
+30 requests/minute across these routes.
 
-- `PATCH /api/chats/groups/{group_id}` with `{"group_name":"…"}`,
-  `{"description":"…"}` or both → `200`
-  `{"id","name","description","max_members","member_count"}`. A missing field
-  stays as it is. Same rules as creating (`400`); a name another group has,
-  ignoring case, is `409`.
-- `DELETE /api/chats/groups/{group_id}/members/{user_id}` → `204`: removes
-  that member. They lose access to the group and its history; they can come
-  back only with an invite code (regenerate it to stop that). `400` for
-  yourself or someone who isn't a member.
-- `PUT /api/chats/groups/{group_id}/leader` with `{"user_id":"…"}` → `204`:
-  makes another member the leader; you become a regular member (and may then
-  leave). `400` for yourself or a non-member.
-- `DELETE /api/chats/groups/{group_id}` → `204`: deletes the group with all
-  its messages and reactions, for everyone.
-- `POST /api/chats/groups/{group_id}/members` with `{"user_id":"…"}` → `201`:
-  adds one of **your friends** directly, without an invite code. `403` if
-  they aren't your friend (blocking ends a friendship, so blocked people
-  can't be added), `409` if they're already in or the group is full. They
-  get `GroupAdded` on the WebSocket and, if offline, a `group_added` push.
+- `PATCH /api/chats/groups/{group_id}` (`edit_info`) with any of
+  `{"group_name","description","visibility"}` → `200`
+  `{"id","name","description","max_members","member_count","visibility","avatar_url"}`.
+  Missing fields stay. `visibility` is admin only. Same rules as creating
+  (`400`).
+- `POST /api/chats/groups/{group_id}/members` (`add_members`) with
+  `{"user_id":"…"}` → `201`: adds one of **your friends**, no code needed.
+  `403` not your friend (blocking ends a friendship), `409` already in or
+  full. They get `GroupAdded` and, if offline, a `group_added` push.
+- `DELETE /api/chats/groups/{group_id}/members/{user_id}`
+  (`remove_members`) → `204`. Moderators can only be removed by the admin,
+  and the admin by nobody (`403`); `400` for yourself or a non-member. They
+  lose access to the group and its history and can come back only with an
+  invite code (replace it to stop that) or by joining a public group.
+- `PUT /api/chats/groups/{group_id}/members/{user_id}/role` (admin) with
+  `{"role":"moderator","permissions":["add_members","delete_messages"]}` or
+  `{"role":"member"}` → `204`. Unknown roles or permissions, or your own
+  role: `400`. Sending the permissions again replaces them.
+- `PUT /api/chats/groups/{group_id}/admin` (admin) with `{"user_id":"…"}`
+  → `204`: hands the admin role over; you become a member. `400` for
+  yourself or a non-member.
+- `DELETE /api/chats/groups/{group_id}` (admin) → `204`: deletes the group
+  with all its messages, reactions and media, for everyone.
+- Deleting someone else's message: the same
+  `DELETE /api/chat/messages/{msg_id}` as for your own. The admin may delete
+  anyone's; a moderator with `delete_messages` only ordinary members'.
+  `MsgDeleted` then carries `by_id`.
 
 Members are told over the WebSocket: `GroupUpdated` for changes (refetch
-the group) and `GroupRemoved` for whoever was kicked, or for everyone when
-the group is deleted.
+the group), `GroupRemoved` for whoever was removed (or everyone, when the
+group is deleted), `GroupAdded` for whoever was added.
 
 ### Group picture
 
-- `PUT /api/chats/groups/{group_id}/avatar` (leader) — the body is the image
-  itself (JPEG, PNG or WebP, at most 5 MB and 40 megapixels; any
-  Content-Type). → `200 {"avatar_url":"/api/chats/groups/…/avatar?v=…"}`. It
-  is cropped to the centre square, resized to 256×256 and re-encoded as JPEG
-  (metadata such as GPS is dropped). `400` not an image, `413` too large,
-  `403` not the leader. 5 uploads/minute.
-- `DELETE /api/chats/groups/{group_id}/avatar` (leader) → `204`.
-- `GET <avatar_url>` (members only, with the token) → the JPEG, with
-  `ETag` and a one-year private cache: the URL changes with every upload,
-  so keep cached copies. `404` without a picture or for non-members.
+- `PUT /api/chats/groups/{group_id}/avatar` (`edit_info`): the body is the
+  image itself (JPEG, PNG or WebP, at most 5 MB and 40 megapixels; any
+  Content-Type) → `200 {"avatar_url":"/api/chats/groups/…/avatar?v=…"}`.
+  Cropped to the centre square, 256×256, re-encoded as JPEG (metadata such
+  as GPS is dropped). `400` not an image, `413` too large. 5/minute.
+- `DELETE /api/chats/groups/{group_id}/avatar` (`edit_info`) → `204`.
+- `GET <avatar_url>` (members; anyone for a public group) → the JPEG with
+  `ETag` and a one-year private cache: the URL changes with every upload.
+  `404` without a picture or for non-members of a private group.
 
-`avatar_url` (or `null`) appears in My groups, Group details and the
-conversation list. Members get `GroupUpdated` with `change: "info"` when it
-changes.
+`avatar_url` (or `null`) appears in My groups, Group details, search,
+previews of public groups and the conversation list. Members get
+`GroupUpdated` with `change: "info"` when it changes.
 
 ## Messages
 
@@ -712,6 +768,9 @@ Query parameters (use `since` or `before`, not both):
 `GET /api/chat/groups/{group_id}/messages` → the same response shape; `chat_id`
 is the group UUID. Supports `limit` and `before` like private history;
 `since` is not supported here (`400`). Only members may read (`403`).
+Members only see messages sent **since they joined** (also in the
+conversation list); older ones answer `404` everywhere, as if they didn't
+exist.
 
 ### Reactions
 
@@ -962,10 +1021,10 @@ upgrade (no or bad token) returns `401` JSON instead of switching protocols.
 | `RemoveFri` | `{"from_id":"uuid"}`: that user removed you as a friend |
 | `Reaction` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","emoji":"❤️"}`: `emoji` is `""` when the reaction was removed; `group_id` only for group messages |
 | `MsgEdited` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","msg":"new text","edited_at":"…"}`; `group_id` only for group messages |
-| `MsgDeleted` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…"}`: show the placeholder and drop its reactions |
-| `GroupUpdated` | `{"group_id":"…","change":"info|leader|members|joined","user_id":"…"}`: `info` = name, description or picture changed; `leader` = `user_id` is the new leader; `members` = `user_id` was removed; `joined` = the leader added `user_id`. Refetch the group |
+| `MsgDeleted` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","by_id":"uuid"}`: show the placeholder and drop its reactions. `from_id` is the sender; `by_id` is present when a group's admin or a moderator removed it |
+| `GroupUpdated` | `{"group_id":"…","change":"info|admin|role|members|joined","user_id":"…"}`: `info` = name, description, picture or visibility changed; `admin` = `user_id` is the new admin; `role` = `user_id` became a moderator or member, or got different permissions; `members` = `user_id` left or was removed; `joined` = `user_id` joined or was added. Refetch the group |
 | `GroupRemoved` | `{"group_id":"…","reason":"kicked|deleted"}`: you are no longer in that group; drop it from the list |
-| `GroupAdded` | `{"group_id":"…","by_id":"uuid"}`: the leader `by_id` added you to a group; refetch the group list |
+| `GroupAdded` | `{"group_id":"…","by_id":"uuid"}`: `by_id` (the admin or a moderator) added you to a group; refetch the group list |
 | `GroupRead` | `{"group_id":"…","user_id":"uuid","msg_id":"…"}`: `user_id` has read the group up to `msg_id` (and everything before it). Groups of up to 50 only |
 | `Presence` | `{"user_id":"uuid","online":true}`, `{"user_id":"uuid","online":false,"last_seen_at":"…"}`, or `{"user_id":"uuid","online":false,"hidden":true}`: a friend came online, went offline, or hid their last seen. Ignore it while you hide yours |
 
@@ -1018,7 +1077,7 @@ search, view and action is written to an audit log.
   → `204` (`null`: permanent). Admins and yourself can't be banned (`400`).
   A ban signs the user out everywhere and blocks new sessions, hides them
   from search, discovery and profiles, removes them from groups with other
-  members (a leader hands over to the earliest member) and hides their past
+  members (an admin hands over to the longest-serving moderator, else member) and hides their past
   messages (`sender_suspended`). `DELETE` the same path to lift it (messages
   come back; groups don't).
 

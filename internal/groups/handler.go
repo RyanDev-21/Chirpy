@@ -25,11 +25,11 @@ func writeGroupError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrNotFoundGroup), errors.Is(err, ErrNoAvatar):
 		httpx.Error(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, ErrDuplicateName), errors.Is(err, ErrAlreadyMember), errors.Is(err, ErrGroupFull):
+	case errors.Is(err, ErrAlreadyMember), errors.Is(err, ErrGroupFull):
 		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.Is(err, ErrNotMember), errors.Is(err, ErrInvalidGroupReq), errors.Is(err, httpx.ErrBadPathParam),
-		errors.Is(err, ErrKickSelf), errors.Is(err, ErrAlreadyLeader), errors.Is(err, ErrNothingToUpdate),
-		errors.Is(err, ErrInvalidGroupInfo):
+		errors.Is(err, ErrKickSelf), errors.Is(err, ErrAlreadyAdmin), errors.Is(err, ErrNothingToUpdate),
+		errors.Is(err, ErrInvalidGroupInfo), errors.Is(err, ErrBadRole), errors.Is(err, ErrSelfRole), errors.Is(err, ErrBadSearch):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, users.ErrBadImage):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
@@ -38,7 +38,7 @@ func writeGroupError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrInvalidInviteCode):
 		// same answer as an unknown code: don't help anyone probe the format
 		httpx.Error(w, http.StatusNotFound, "invalid invite code")
-	case errors.Is(err, ErrLeaderCannotLeave), errors.Is(err, ErrNotLeader), errors.Is(err, ErrNotFriend):
+	case errors.Is(err, ErrNoPermission), errors.Is(err, ErrNotFriend), errors.Is(err, ErrCantRemoveAdmin):
 		httpx.Error(w, http.StatusForbidden, err.Error())
 	default:
 		httpx.ServerError(w, r, err)
@@ -75,7 +75,15 @@ func (h *GroupHandler) LeaveGroup(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	if err := h.groupService.LeaveGroup(r.Context(), groupID, userID); err != nil {
+	// an admin may name who takes over: ?successor={user_id}
+	var successor uuid.UUID
+	if v := r.URL.Query().Get("successor"); v != "" {
+		if successor, err = uuid.Parse(v); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "successor must be a user id")
+			return
+		}
+	}
+	if err := h.groupService.LeaveGroup(r.Context(), groupID, userID, successor); err != nil {
 		writeGroupError(w, r, err)
 		return
 	}
@@ -186,8 +194,8 @@ func (h *GroupHandler) invite(w http.ResponseWriter, r *http.Request, fn func(co
 	httpx.JSON(w, http.StatusOK, InviteCode{Code: code})
 }
 
-// leaderAction reads the caller and the group id for a leader-only route.
-func leaderAction(w http.ResponseWriter, r *http.Request) (groupID, me uuid.UUID, ok bool) {
+// groupAction reads the caller and the group id.
+func groupAction(w http.ResponseWriter, r *http.Request) (groupID, me uuid.UUID, ok bool) {
 	groupID, err := httpx.PathUUID(r, "group_id")
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid group id")
@@ -204,7 +212,7 @@ func leaderAction(w http.ResponseWriter, r *http.Request) (groupID, me uuid.UUID
 // UpdateGroup handles PATCH /api/chats/groups/{group_id}
 // {"group_name"?, "description"?}.
 func (h *GroupHandler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
-	groupID, me, ok := leaderAction(w, r)
+	groupID, me, ok := groupAction(w, r)
 	if !ok {
 		return
 	}
@@ -223,7 +231,7 @@ func (h *GroupHandler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 
 // DeleteGroup handles DELETE /api/chats/groups/{group_id}.
 func (h *GroupHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
-	groupID, me, ok := leaderAction(w, r)
+	groupID, me, ok := groupAction(w, r)
 	if !ok {
 		return
 	}
@@ -236,7 +244,7 @@ func (h *GroupHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 
 // KickMember handles DELETE /api/chats/groups/{group_id}/members/{user_id}.
 func (h *GroupHandler) KickMember(w http.ResponseWriter, r *http.Request) {
-	groupID, me, ok := leaderAction(w, r)
+	groupID, me, ok := groupAction(w, r)
 	if !ok {
 		return
 	}
@@ -252,9 +260,9 @@ func (h *GroupHandler) KickMember(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// TransferLeader handles PUT /api/chats/groups/{group_id}/leader {"user_id"}.
-func (h *GroupHandler) TransferLeader(w http.ResponseWriter, r *http.Request) {
-	groupID, me, ok := leaderAction(w, r)
+// TransferAdmin handles PUT /api/chats/groups/{group_id}/admin {"user_id"}.
+func (h *GroupHandler) TransferAdmin(w http.ResponseWriter, r *http.Request) {
+	groupID, me, ok := groupAction(w, r)
 	if !ok {
 		return
 	}
@@ -265,7 +273,7 @@ func (h *GroupHandler) TransferLeader(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
-	if err := h.groupService.TransferLeader(r.Context(), groupID, me, body.UserID); err != nil {
+	if err := h.groupService.TransferAdmin(r.Context(), groupID, me, body.UserID); err != nil {
 		writeGroupError(w, r, err)
 		return
 	}
@@ -275,7 +283,7 @@ func (h *GroupHandler) TransferLeader(w http.ResponseWriter, r *http.Request) {
 // AddMember handles POST /api/chats/groups/{group_id}/members {"user_id"}:
 // the leader adds one of their friends.
 func (h *GroupHandler) AddMember(w http.ResponseWriter, r *http.Request) {
-	groupID, me, ok := leaderAction(w, r)
+	groupID, me, ok := groupAction(w, r)
 	if !ok {
 		return
 	}
@@ -296,7 +304,7 @@ func (h *GroupHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 // UploadAvatar handles PUT /api/chats/groups/{group_id}/avatar (leader);
 // the body is the image (JPEG, PNG or WebP, at most 5 MB).
 func (h *GroupHandler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
-	groupID, me, ok := leaderAction(w, r)
+	groupID, me, ok := groupAction(w, r)
 	if !ok {
 		return
 	}
@@ -320,7 +328,7 @@ func (h *GroupHandler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
 
 // DeleteAvatar handles DELETE /api/chats/groups/{group_id}/avatar (leader).
 func (h *GroupHandler) DeleteAvatar(w http.ResponseWriter, r *http.Request) {
-	groupID, me, ok := leaderAction(w, r)
+	groupID, me, ok := groupAction(w, r)
 	if !ok {
 		return
 	}
@@ -333,7 +341,7 @@ func (h *GroupHandler) DeleteAvatar(w http.ResponseWriter, r *http.Request) {
 
 // Avatar handles GET /api/chats/groups/{group_id}/avatar (members): the JPEG.
 func (h *GroupHandler) Avatar(w http.ResponseWriter, r *http.Request) {
-	groupID, me, ok := leaderAction(w, r)
+	groupID, me, ok := groupAction(w, r)
 	if !ok {
 		return
 	}
@@ -352,4 +360,56 @@ func (h *GroupHandler) Avatar(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
 	_, _ = w.Write(img)
+}
+
+// SetRole handles PUT /api/chats/groups/{group_id}/members/{user_id}/role
+// {"role":"moderator"|"member","permissions":[...]} (admin only).
+func (h *GroupHandler) SetRole(w http.ResponseWriter, r *http.Request) {
+	groupID, me, ok := groupAction(w, r)
+	if !ok {
+		return
+	}
+	target, err := httpx.PathUUID(r, "user_id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	var req roleRequest
+	if err := httpx.Decode(w, r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, ErrBadRole.Error())
+		return
+	}
+	if err := h.groupService.SetRole(r.Context(), groupID, me, target, req); err != nil {
+		writeGroupError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// JoinPublic handles POST /api/chats/groups/{group_id}/join (public groups).
+func (h *GroupHandler) JoinPublic(w http.ResponseWriter, r *http.Request) {
+	groupID, me, ok := groupAction(w, r)
+	if !ok {
+		return
+	}
+	if err := h.groupService.JoinPublic(r.Context(), groupID, me); err != nil {
+		writeGroupError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, GroupInfo{ChatID: groupID})
+}
+
+// Search handles GET /api/chats/groups/search?q= (public groups by name).
+func (h *GroupHandler) Search(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	list, err := h.groupService.Search(r.Context(), me, r.URL.Query().Get("q"))
+	if err != nil {
+		writeGroupError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string][]GroupPreview{"groups": list})
 }

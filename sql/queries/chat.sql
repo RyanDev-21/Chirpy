@@ -20,9 +20,11 @@ ORDER BY created_at ASC
 LIMIT @lim;
 
 -- name: GetRecentGroupMessages :many
-SELECT * FROM GroupMessage
-WHERE group_id = @group_id
-ORDER BY created_at DESC
+-- only what was sent since the viewer joined
+SELECT g.* FROM GroupMessage g
+WHERE g.group_id = @group_id
+  AND g.created_at >= (SELECT mt.joined_at FROM member_table mt WHERE mt.group_id = @group_id AND mt.member_id = @viewer::uuid)
+ORDER BY g.created_at DESC
 LIMIT @lim;
 
 -- name: AddLastSeenMessage :exec
@@ -50,10 +52,11 @@ ORDER BY created_at DESC, id DESC
 LIMIT @lim;
 
 -- name: GetGroupMessagesBefore :many
-SELECT * FROM GroupMessage
-WHERE group_id = @group_id
-  AND (created_at, id) < (@before_time::timestamp, @before_id::uuid)
-ORDER BY created_at DESC, id DESC
+SELECT g.* FROM GroupMessage g
+WHERE g.group_id = @group_id
+  AND (g.created_at, g.id) < (@before_time::timestamp, @before_id::uuid)
+  AND g.created_at >= (SELECT mt.joined_at FROM member_table mt WHERE mt.group_id = @group_id AND mt.member_id = @viewer::uuid)
+ORDER BY g.created_at DESC, g.id DESC
 LIMIT @lim;
 
 -- name: PrivateMessageCursor :one
@@ -121,7 +124,7 @@ FROM member_table m
 JOIN chat_groups g ON g.id = m.group_id
 LEFT JOIN LATERAL (
     SELECT gm.id, gm.content, gm.from_id, gm.created_at, gm.deleted_at FROM GroupMessage gm
-    WHERE gm.group_id = g.id
+    WHERE gm.group_id = g.id AND gm.created_at >= m.joined_at
     ORDER BY gm.created_at DESC, gm.id DESC LIMIT 1
 ) lm ON true
 WHERE m.member_id = @me::uuid
@@ -177,3 +180,6 @@ SELECT DISTINCT t.from_id::uuid FROM (
   ORDER BY g.created_at DESC, g.id DESC
   LIMIT 50
 ) t WHERE t.from_id IS NOT NULL;
+
+-- name: GroupJoinedAt :one
+SELECT joined_at FROM member_table WHERE group_id = @group_id AND member_id = @member_id;

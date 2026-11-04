@@ -227,7 +227,7 @@ func TestGroups(t *testing.T) {
 		ChatID string `json:"chat_id"`
 	}
 	e.expect(e.do("POST", "/api/chats/groups", leader.Token, map[string]any{"group_name": "devs", "description": "d", "max_mems": 2}), 201).json(t, &g)
-	e.expect(e.do("POST", "/api/chats/groups", member.Token, map[string]any{"group_name": "DEVS", "max_mems": 2}), 409)
+	e.expect(e.do("POST", "/api/chats/groups", member.Token, map[string]any{"group_name": "DEVS", "max_mems": 2}), 201) // names needn't be unique
 	e.now(`SELECT name FROM chat_groups WHERE id = $1`, "devs", g.ChatID)
 
 	members := "/api/chats/groups/" + g.ChatID + "/members"
@@ -255,10 +255,12 @@ func TestGroups(t *testing.T) {
 	}
 	e.now(`SELECT count(*)::text FROM groupmessage WHERE group_id = $1`, "1", g.ChatID)
 
-	e.expect(e.do("DELETE", members, leader.Token, nil), 403)
 	e.expect(e.do("DELETE", members, member.Token, nil), 204)
 	e.now(`SELECT current_member::text FROM chat_groups WHERE id = $1`, "1", g.ChatID)
 	e.expect(e.do("POST", "/api/chats/message", member.Token, send), 403)
+	// the admin, last one out, takes the group with them
+	e.expect(e.do("DELETE", members, leader.Token, nil), 204)
+	e.now(`SELECT count(*)::text FROM chat_groups WHERE id = $1`, "0", g.ChatID)
 }
 
 func TestLoginRateLimit(t *testing.T) {
@@ -410,7 +412,7 @@ func TestMyGroupsAndGroupDetail(t *testing.T) {
 		} `json:"groups"`
 	}
 	e.expect(e.do("GET", "/api/chats/groups", leader.Token, nil), 200).json(t, &mine)
-	if len(mine.Groups) != 2 || mine.Groups[0].Name != "alpha" || mine.Groups[1].Role != "Leader" || mine.Groups[1].Members != 2 {
+	if len(mine.Groups) != 2 || mine.Groups[0].Name != "alpha" || mine.Groups[1].Role != "admin" || mine.Groups[1].Members != 2 {
 		t.Fatalf("leader's groups = %+v", mine.Groups)
 	}
 	e.expect(e.do("GET", "/api/chats/groups", member.Token, nil), 200).json(t, &mine)
@@ -428,7 +430,7 @@ func TestMyGroupsAndGroupDetail(t *testing.T) {
 		} `json:"members"`
 	}
 	e.expect(e.do("GET", "/api/chats/groups/"+g.ChatID, member.Token, nil), 200).json(t, &d)
-	if !d.IsMember || d.Count != 2 || len(d.Members) != 2 || d.Members[0].UserID != leader.ID || d.Members[0].Role != "Leader" {
+	if !d.IsMember || d.Count != 2 || len(d.Members) != 2 || d.Members[0].UserID != leader.ID || d.Members[0].Role != "admin" {
 		t.Fatalf("member's view = %+v", d)
 	}
 	// groups are private: a non-member can't see the group at all

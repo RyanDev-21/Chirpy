@@ -18,35 +18,47 @@ import (
 type GroupService interface {
 	CreateGroup(ctx context.Context, creatorID uuid.UUID, req createGroupRequest) (*GroupInfo, error)
 	JoinGroup(ctx context.Context, groupID, userID uuid.UUID) error
-	LeaveGroup(ctx context.Context, groupID, userID uuid.UUID) error
+	// JoinPublic joins a public group without a code (ErrNotFoundGroup for
+	// private ones).
+	JoinPublic(ctx context.Context, groupID, userID uuid.UUID) error
+	// LeaveGroup: an admin may name their successor (uuid.Nil: the
+	// longest-serving moderator, then member).
+	LeaveGroup(ctx context.Context, groupID, userID, successor uuid.UUID) error
 	MyGroups(ctx context.Context, userID uuid.UUID) ([]GroupSummary, error)
 	GroupDetail(ctx context.Context, groupID, viewer uuid.UUID) (GroupDetail, error)
+	// Search finds public groups by name.
+	Search(ctx context.Context, viewer uuid.UUID, q string) ([]GroupPreview, error)
 	// PreviewInvite shows what a code leads to before joining.
 	PreviewInvite(ctx context.Context, code string) (GroupPreview, error)
 	JoinByInvite(ctx context.Context, userID uuid.UUID, code string) (uuid.UUID, error)
-	// InviteCode is visible to members; RegenerateInvite is leader-only.
+	// InviteCode is visible to members; RegenerateInvite needs manage_invite.
 	InviteCode(ctx context.Context, groupID, viewer uuid.UUID) (string, error)
 	RegenerateInvite(ctx context.Context, groupID, userID uuid.UUID) (string, error)
 	// IsMember and Members are used by chat for authorization and fan-out.
 	IsMember(ctx context.Context, groupID, userID uuid.UUID) (bool, error)
 	Members(ctx context.Context, groupID uuid.UUID) ([]uuid.UUID, error)
+	// CanDeleteMessage: may actor delete sender's message in the group?
+	// The admin may delete anyone's; a moderator with delete_messages only
+	// ordinary members'.
+	CanDeleteMessage(ctx context.Context, groupID, actor, sender uuid.UUID) (bool, error)
 
-	// Leader-only administration.
-	Kick(ctx context.Context, groupID, leader, target uuid.UUID) error
-	Update(ctx context.Context, groupID, leader uuid.UUID, req updateGroupRequest) (GroupPreview, error)
-	TransferLeader(ctx context.Context, groupID, leader, target uuid.UUID) error
-	Delete(ctx context.Context, groupID, leader uuid.UUID) error
-	// OnDelete registers cleanup to run after a group is deleted (the chat
-	// package drops its cached messages).
+	// Managing the group (admin, or a moderator with the permission).
+	Kick(ctx context.Context, groupID, actor, target uuid.UUID) error
+	Update(ctx context.Context, groupID, actor uuid.UUID, req updateGroupRequest) (GroupPreview, error)
+	TransferAdmin(ctx context.Context, groupID, admin, target uuid.UUID) error
+	SetRole(ctx context.Context, groupID, admin, target uuid.UUID, req roleRequest) error
+	Delete(ctx context.Context, groupID, admin uuid.UUID) error
+	// OnDelete registers cleanup to run after a group is deleted.
 	OnDelete(fn func(ctx context.Context, groupID uuid.UUID))
 	// GroupName is the group's display name (cached).
 	GroupName(ctx context.Context, groupID uuid.UUID) (string, error)
 
-	// AddFriend: the leader adds one of their friends directly.
-	AddFriend(ctx context.Context, groupID, leader, target uuid.UUID) error
-	// SetAvatar (leader) stores raw as a 256x256 JPEG; Avatar is for members.
-	SetAvatar(ctx context.Context, groupID, leader uuid.UUID, raw []byte) (*string, error)
-	DeleteAvatar(ctx context.Context, groupID, leader uuid.UUID) error
+	// AddFriend: the admin or a moderator with add_members adds one of
+	// their friends directly.
+	AddFriend(ctx context.Context, groupID, actor, target uuid.UUID) error
+	// SetAvatar (edit_info) stores raw as a 256x256 JPEG.
+	SetAvatar(ctx context.Context, groupID, actor uuid.UUID, raw []byte) (*string, error)
+	DeleteAvatar(ctx context.Context, groupID, actor uuid.UUID) error
 	Avatar(ctx context.Context, groupID, viewer uuid.UUID) ([]byte, time.Time, error)
 	// SetFriends and SetNotifier must be called before AddFriend is used.
 	SetFriends(f FriendChecker)
@@ -77,10 +89,15 @@ func NewGroupService(repo GroupRepo, store Store, push Pusher, logger *slog.Logg
 	return &groupService{repo: repo, store: store, push: push, logger: logger}
 }
 
+func validVisibility(v string) bool { return v == Private || v == Public }
+
 func validateCreate(req *createGroupRequest) error {
 	req.GroupName = strings.TrimSpace(req.GroupName)
+	if req.Visibility == "" {
+		req.Visibility = Private
+	}
 	n := utf8.RuneCountInString(req.GroupName)
-	if n == 0 || n > maxGroupNameLen || utf8.RuneCountInString(req.Description) > maxDescLen {
+	if n == 0 || n > maxGroupNameLen || utf8.RuneCountInString(req.Description) > maxDescLen || !validVisibility(req.Visibility) {
 		return ErrInvalidGroupReq
 	}
 	if req.MaxMems < 2 || req.MaxMems > maxGroupSize {
@@ -108,14 +125,37 @@ func (s *groupService) JoinGroup(ctx context.Context, groupID, userID uuid.UUID)
 		return err
 	}
 	s.invalidate(ctx, groupID)
+	s.pushMembers(ctx, groupID, userID, "joined", userID)
 	return nil
 }
 
-func (s *groupService) LeaveGroup(ctx context.Context, groupID, userID uuid.UUID) error {
-	if err := s.repo.Leave(ctx, groupID, userID); err != nil {
+func (s *groupService) JoinPublic(ctx context.Context, groupID, userID uuid.UUID) error {
+	snap, err := s.snapshot(ctx, groupID)
+	if err != nil {
+		return err
+	}
+	if !snap.Public {
+		return ErrNotFoundGroup // private groups need a code or an invite
+	}
+	return s.JoinGroup(ctx, groupID, userID)
+}
+
+func (s *groupService) LeaveGroup(ctx context.Context, groupID, userID, successor uuid.UUID) error {
+	left, err := s.repo.Leave(ctx, groupID, userID, successor)
+	if err != nil {
 		return err
 	}
 	s.invalidate(ctx, groupID)
+	if left.Deleted {
+		for _, fn := range s.onDelete {
+			fn(ctx, groupID)
+		}
+		return nil
+	}
+	if left.NewAdmin != uuid.Nil {
+		s.pushMembers(ctx, groupID, userID, "admin", left.NewAdmin)
+	}
+	s.pushMembers(ctx, groupID, userID, "members", userID)
 	return nil
 }
 
@@ -123,17 +163,31 @@ func (s *groupService) MyGroups(ctx context.Context, userID uuid.UUID) ([]GroupS
 	return s.repo.ListForUser(ctx, userID)
 }
 
-// GroupDetail is members-only: groups are private, so a non-member gets
-// ErrNotFoundGroup rather than learning the group exists.
+// GroupDetail: members see everything; anyone sees a public group's
+// details without the member list; a private group is ErrNotFoundGroup
+// for non-members, who don't learn it exists.
 func (s *groupService) GroupDetail(ctx context.Context, groupID, viewer uuid.UUID) (GroupDetail, error) {
 	d, err := s.repo.Detail(ctx, groupID, viewer)
 	if err != nil {
 		return GroupDetail{}, err
 	}
-	if !d.IsMember {
+	if !d.IsMember && d.Visibility != Public {
 		return GroupDetail{}, ErrNotFoundGroup
 	}
 	return d, nil
+}
+
+// escapeLike makes q a literal LIKE pattern (with ESCAPE '\').
+func escapeLike(q string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)
+}
+
+func (s *groupService) Search(ctx context.Context, viewer uuid.UUID, q string) ([]GroupPreview, error) {
+	q = strings.ToLower(strings.TrimSpace(q))
+	if n := utf8.RuneCountInString(q); n < 2 || n > maxGroupNameLen {
+		return nil, ErrBadSearch
+	}
+	return s.repo.Search(ctx, viewer, escapeLike(q))
 }
 
 func (s *groupService) PreviewInvite(ctx context.Context, raw string) (GroupPreview, error) {
@@ -168,18 +222,28 @@ func (s *groupService) InviteCode(ctx context.Context, groupID, viewer uuid.UUID
 }
 
 func (s *groupService) RegenerateInvite(ctx context.Context, groupID, userID uuid.UUID) (string, error) {
-	snap, err := s.snapshot(ctx, groupID)
-	if err != nil {
+	if err := s.check(ctx, groupID, userID, PermManageInvite); err != nil {
 		return "", err
-	}
-	if !slices.Contains(snap.Members, userID) {
-		return "", ErrNotFoundGroup
-	}
-	if snap.LeaderID != userID {
-		return "", ErrNotLeader
 	}
 	code, err := s.repo.RegenerateInviteCode(ctx, groupID)
 	return FormatInviteCode(code), err
+}
+
+// check: may user do perm ("" = admin only)? Uses the cached snapshot,
+// which every role change invalidates.
+func (s *groupService) check(ctx context.Context, groupID, user uuid.UUID, perm string) error {
+	snap, err := s.snapshot(ctx, groupID)
+	if err != nil {
+		return err
+	}
+	role, perms := snap.Role(user)
+	if role == "" {
+		return ErrNotFoundGroup
+	}
+	if !allowed(role, perms, perm) {
+		return ErrNoPermission
+	}
+	return nil
 }
 
 func (s *groupService) snapshot(ctx context.Context, groupID uuid.UUID) (GroupSnapshot, error) {
@@ -204,26 +268,43 @@ func (s *groupService) Members(ctx context.Context, groupID uuid.UUID) ([]uuid.U
 	return slices.Clone(snap.Members), nil
 }
 
+func (s *groupService) CanDeleteMessage(ctx context.Context, groupID, actor, sender uuid.UUID) (bool, error) {
+	snap, err := s.snapshot(ctx, groupID)
+	if err != nil {
+		return false, err
+	}
+	role, perms := snap.Role(actor)
+	switch {
+	case role == RoleAdmin:
+		return true, nil
+	case !allowed(role, perms, PermDeleteMessages):
+		return false, nil
+	}
+	// moderators can't delete the admin's or other moderators' messages
+	senderRole, _ := snap.Role(sender)
+	return senderRole != RoleAdmin && senderRole != RoleModerator, nil
+}
+
 func (s *groupService) invalidate(ctx context.Context, groupID uuid.UUID) {
 	if err := s.store.Invalidate(ctx, groupID.String()); err != nil {
 		s.logger.ErrorContext(ctx, "failed to invalidate group cache", "group", groupID, "error", err)
 	}
 }
 
-// --- leader-only administration ---
+// --- managing the group ---
 
-func (s *groupService) Kick(ctx context.Context, groupID, leader, target uuid.UUID) error {
-	if err := s.repo.Kick(ctx, groupID, leader, target); err != nil {
+func (s *groupService) Kick(ctx context.Context, groupID, actor, target uuid.UUID) error {
+	if err := s.repo.Kick(ctx, groupID, actor, target); err != nil {
 		return err
 	}
 	s.invalidate(ctx, groupID)
 	s.pushTo(ctx, []uuid.UUID{target}, ws.EventGroupGone, ws.OutGroupRemoved{GroupID: groupID.String(), Reason: "kicked"})
-	s.pushMembers(ctx, groupID, leader, "members", target)
+	s.pushMembers(ctx, groupID, actor, "members", target)
 	return nil
 }
 
-func (s *groupService) Update(ctx context.Context, groupID, leader uuid.UUID, req updateGroupRequest) (GroupPreview, error) {
-	if req.GroupName == nil && req.Description == nil {
+func (s *groupService) Update(ctx context.Context, groupID, actor uuid.UUID, req updateGroupRequest) (GroupPreview, error) {
+	if req.GroupName == nil && req.Description == nil && req.Visibility == nil {
 		return GroupPreview{}, ErrNothingToUpdate
 	}
 	if req.GroupName != nil {
@@ -236,26 +317,45 @@ func (s *groupService) Update(ctx context.Context, groupID, leader uuid.UUID, re
 	if req.Description != nil && utf8.RuneCountInString(*req.Description) > maxDescLen {
 		return GroupPreview{}, ErrInvalidGroupInfo
 	}
-	g, err := s.repo.Update(ctx, groupID, leader, req.GroupName, req.Description)
+	if req.Visibility != nil && !validVisibility(*req.Visibility) {
+		return GroupPreview{}, ErrInvalidGroupInfo
+	}
+	g, err := s.repo.Update(ctx, groupID, actor, req.GroupName, req.Description, req.Visibility)
 	if err != nil {
 		return GroupPreview{}, err
 	}
 	s.invalidate(ctx, groupID)
-	s.pushMembers(ctx, groupID, leader, "info", uuid.Nil)
+	s.pushMembers(ctx, groupID, actor, "info", uuid.Nil)
 	return g, nil
 }
 
-func (s *groupService) TransferLeader(ctx context.Context, groupID, leader, target uuid.UUID) error {
-	if err := s.repo.TransferLeader(ctx, groupID, leader, target); err != nil {
+func (s *groupService) TransferAdmin(ctx context.Context, groupID, admin, target uuid.UUID) error {
+	if err := s.repo.TransferAdmin(ctx, groupID, admin, target); err != nil {
 		return err
 	}
 	s.invalidate(ctx, groupID)
-	s.pushMembers(ctx, groupID, leader, "leader", target)
+	s.pushMembers(ctx, groupID, admin, "admin", target)
 	return nil
 }
 
-func (s *groupService) Delete(ctx context.Context, groupID, leader uuid.UUID) error {
-	members, err := s.repo.Delete(ctx, groupID, leader)
+func (s *groupService) SetRole(ctx context.Context, groupID, admin, target uuid.UUID, req roleRequest) error {
+	if req.Role != RoleModerator && req.Role != RoleMember {
+		return ErrBadRole
+	}
+	perms, err := cleanPermissions(req.Permissions)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.SetRole(ctx, groupID, admin, target, req.Role, perms); err != nil {
+		return err
+	}
+	s.invalidate(ctx, groupID)
+	s.pushMembers(ctx, groupID, admin, "role", target)
+	return nil
+}
+
+func (s *groupService) Delete(ctx context.Context, groupID, admin uuid.UUID) error {
+	members, err := s.repo.Delete(ctx, groupID, admin)
 	if err != nil {
 		return err
 	}
@@ -263,7 +363,7 @@ func (s *groupService) Delete(ctx context.Context, groupID, leader uuid.UUID) er
 	for _, fn := range s.onDelete {
 		fn(ctx, groupID)
 	}
-	others := slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == leader })
+	others := slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == admin })
 	s.pushTo(ctx, others, ws.EventGroupGone, ws.OutGroupRemoved{GroupID: groupID.String(), Reason: "deleted"})
 	return nil
 }
@@ -303,58 +403,54 @@ func (s *groupService) GroupName(ctx context.Context, groupID uuid.UUID) (string
 func (s *groupService) SetFriends(f FriendChecker)  { s.friends = f }
 func (s *groupService) SetNotifier(n push.Notifier) { s.notify = n }
 
-func (s *groupService) AddFriend(ctx context.Context, groupID, leader, target uuid.UUID) error {
-	// leadership first, so outsiders learn nothing (404) whoever they name
-	snap, err := s.snapshot(ctx, groupID)
-	if err != nil {
+func (s *groupService) AddFriend(ctx context.Context, groupID, actor, target uuid.UUID) error {
+	// permission first, so outsiders learn nothing (404) whoever they name
+	if err := s.check(ctx, groupID, actor, PermAddMembers); err != nil {
 		return err
 	}
-	if snap.LeaderID != leader {
-		if slices.Contains(snap.Members, leader) {
-			return ErrNotLeader
+	if in, err := s.IsMember(ctx, groupID, target); err != nil || in {
+		if in {
+			return ErrAlreadyMember
 		}
-		return ErrNotFoundGroup
+		return err
 	}
-	if slices.Contains(snap.Members, target) {
-		return ErrAlreadyMember
-	}
-	ok, err := s.friends.AreFriends(ctx, leader, target)
+	ok, err := s.friends.AreFriends(ctx, actor, target)
 	if err != nil {
 		return err
 	}
 	if !ok { // blocking ends a friendship, so blocks are covered too
 		return ErrNotFriend
 	}
-	if err := s.repo.AddMember(ctx, groupID, leader, target); err != nil {
+	if err := s.repo.AddMember(ctx, groupID, actor, target); err != nil {
 		return err
 	}
 	s.invalidate(ctx, groupID)
-	s.pushTo(ctx, []uuid.UUID{target}, ws.EventGroupAdded, ws.OutGroupAdded{GroupID: groupID.String(), ByID: leader.String()})
-	s.pushMembers(ctx, groupID, leader, "joined", target)
+	s.pushTo(ctx, []uuid.UUID{target}, ws.EventGroupAdded, ws.OutGroupAdded{GroupID: groupID.String(), ByID: actor.String()})
+	s.pushMembers(ctx, groupID, actor, "joined", target)
 	if s.notify != nil {
-		s.notify.Notify(ctx, push.Job{Kind: push.KindGroupAdded, To: []uuid.UUID{target}, From: leader, Group: groupID})
+		s.notify.Notify(ctx, push.Job{Kind: push.KindGroupAdded, To: []uuid.UUID{target}, From: actor, Group: groupID})
 	}
 	return nil
 }
 
-func (s *groupService) SetAvatar(ctx context.Context, groupID, leader uuid.UUID, raw []byte) (*string, error) {
+func (s *groupService) SetAvatar(ctx context.Context, groupID, actor uuid.UUID, raw []byte) (*string, error) {
 	img, err := users.ProcessAvatar(raw)
 	if err != nil {
 		return nil, err
 	}
 	at := time.Now().UTC().Truncate(time.Millisecond)
-	if err := s.repo.SetAvatar(ctx, groupID, leader, img, at); err != nil {
+	if err := s.repo.SetAvatar(ctx, groupID, actor, img, at); err != nil {
 		return nil, err
 	}
-	s.pushMembers(ctx, groupID, leader, "info", uuid.Nil)
+	s.pushMembers(ctx, groupID, actor, "info", uuid.Nil)
 	return AvatarURL(groupID, pgtype.Timestamp{Time: at, Valid: true}), nil
 }
 
-func (s *groupService) DeleteAvatar(ctx context.Context, groupID, leader uuid.UUID) error {
-	if err := s.repo.DeleteAvatar(ctx, groupID, leader); err != nil {
+func (s *groupService) DeleteAvatar(ctx context.Context, groupID, actor uuid.UUID) error {
+	if err := s.repo.DeleteAvatar(ctx, groupID, actor); err != nil {
 		return err
 	}
-	s.pushMembers(ctx, groupID, leader, "info", uuid.Nil)
+	s.pushMembers(ctx, groupID, actor, "info", uuid.Nil)
 	return nil
 }
 

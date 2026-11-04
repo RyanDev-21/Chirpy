@@ -32,16 +32,16 @@ VALUES (gen_random_uuid(), $1, $3, NOW(), NOW(), $2, NULL, NOW())
 RETURNING *;
 
 -- name: GroupsLedBy :many
-SELECT group_id FROM member_table WHERE member_id = $1 AND role = 'Leader';
+SELECT group_id FROM member_table WHERE member_id = $1 AND role = 'admin';
 
 -- name: EarliestOtherMember :one
 SELECT member_id FROM member_table
 WHERE group_id = $1 AND member_id <> $2
-ORDER BY joined_at, member_id
+ORDER BY (role = 'moderator') DESC, joined_at, member_id
 LIMIT 1;
 
 -- name: PromoteToLeader :exec
-UPDATE member_table SET role = 'Leader' WHERE group_id = $1 AND member_id = $2;
+UPDATE member_table SET role = 'admin', permissions = '{}' WHERE group_id = $1 AND member_id = $2;
 
 -- name: DeleteGroup :exec
 DELETE FROM chat_groups WHERE id = $1;

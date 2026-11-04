@@ -110,7 +110,7 @@ func TestBanAndUnban(t *testing.T) {
 	e.expect(e.do("GET", "/api/users/"+bob.ID, carol.Token, nil), 404)
 	// removed from the group; carol leads now
 	e.now(`SELECT count(*)::text FROM member_table WHERE group_id = $1 AND member_id = $2`, "0", g, bob.ID)
-	e.now(`SELECT role FROM member_table WHERE group_id = $1 AND member_id = $2`, "Leader", g, carol.ID)
+	e.now(`SELECT role FROM member_table WHERE group_id = $1 AND member_id = $2`, "admin", g, carol.ID)
 	e.now(`SELECT current_member::text FROM chat_groups WHERE id = $1`, "1", g)
 	// past messages hidden, not deleted
 	var page struct {
