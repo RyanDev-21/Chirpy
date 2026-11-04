@@ -40,8 +40,8 @@ FROM users WHERE id = $1;
 
 -- name: AdminSearchGroups :many
 SELECT g.id, g.name, g.current_member, g.created_at,
-       (SELECT u.name FROM member_table m JOIN users u ON u.id = m.member_id
-        WHERE m.group_id = g.id AND m.role = 'Leader' LIMIT 1) AS leader,
+       COALESCE((SELECT u.name FROM member_table m JOIN users u ON u.id = m.member_id
+        WHERE m.group_id = g.id AND m.role = 'Leader' LIMIT 1), '')::text AS leader,
        (SELECT count(*) FROM GroupMessage gm WHERE gm.group_id = g.id AND gm.created_at > @week_ago::timestamp)::bigint AS messages_7d
 FROM chat_groups g
 WHERE @q::text = '' OR g.name ILIKE '%' || @q::text || '%'

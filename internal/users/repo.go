@@ -54,6 +54,7 @@ func toUser(u database.User) *User {
 		Email:     u.Email,
 		IsRED:     u.IsChirpyRed.Bool,
 		Verified:  u.EmailVerifiedAt.Valid,
+		IsAdmin:   u.IsAdmin,
 		Bio:       u.Bio,
 	}
 	if u.AvatarAt.Valid {

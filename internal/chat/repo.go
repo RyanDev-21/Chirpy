@@ -46,6 +46,8 @@ type ChatRepo interface {
 	// deleted. Deleting also removes its reactions.
 	EditMessage(ctx context.Context, kind string, msgID uuid.UUID, content string, at time.Time) (bool, error)
 	DeleteMessage(ctx context.Context, kind string, msgID uuid.UUID, at time.Time) (bool, error)
+	// Suspended returns which of these users are banned.
+	Suspended(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]bool, error)
 }
 
 type chatRepo struct {
@@ -387,4 +389,16 @@ func (r *chatRepo) DeleteMessage(ctx context.Context, kind string, msgID uuid.UU
 		n, err = r.q.DeleteGroupMessage(ctx, database.DeleteGroupMessageParams{ID: msgID, At: pgTime(at)})
 	}
 	return n > 0, err
+}
+
+func (r *chatRepo) Suspended(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]bool, error) {
+	out := map[uuid.UUID]bool{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.q.BannedAmong(ctx, ids)
+	for _, id := range rows {
+		out[id] = true
+	}
+	return out, err
 }

@@ -33,6 +33,9 @@ var (
 const (
 	purposeVerify = "verify_email"
 	purposeReset  = "reset_password"
+	purposeAdmin  = "admin_login"
+	// AdminSessionTTL is how long an admin-page sign-in lasts.
+	AdminSessionTTL = 30 * time.Minute
 
 	codeTTL         = 2 * time.Minute
 	codeMaxAttempts = 5
@@ -87,6 +90,11 @@ type AccountService interface {
 	Google(ctx context.Context, idToken string) (GoogleResult, error)
 	CompleteGoogleSignup(ctx context.Context, signupToken, name string) (*Session, error)
 	DeleteAccount(ctx context.Context, userID uuid.UUID, password, googleIDToken string) error
+	// AdminStart checks an admin's password and emails a sign-in code; it
+	// answers the same for wrong passwords and non-admins.
+	AdminStart(ctx context.Context, email, password string) error
+	// AdminVerify trades that code for an admin-page token.
+	AdminVerify(ctx context.Context, email, code string) (string, error)
 }
 
 type tokenIssuer interface {
@@ -400,8 +408,11 @@ func (s *accountService) session(ctx context.Context, u *users.User) (*Session, 
 
 func codeEmail(u *users.User, purpose, code string) mail.Message {
 	what, subject := "confirm your email", "Your Chirpy verification code"
-	if purpose == purposeReset {
+	switch purpose {
+	case purposeReset:
 		what, subject = "reset your password", "Your Chirpy password reset code"
+	case purposeAdmin:
+		what, subject = "sign in to the Chirpy admin page", "Your Chirpy admin sign-in code"
 	}
 	text := fmt.Sprintf("Hi %s,\n\nYour code to %s is %s.\nIt expires in %d minutes.\n\nIf you didn't ask for this, you can ignore this email.\n", u.Name, what, code, int(codeTTL.Minutes()))
 	html := fmt.Sprintf(`<p>Hi %s,</p><p>Your code to %s is</p><p style="font-size:28px;font-weight:bold;letter-spacing:4px">%s</p><p>It expires in %d minutes. If you didn't ask for this, you can ignore this email.</p>`,
@@ -417,4 +428,33 @@ func alreadyRegisteredEmail(u *users.User) mail.Message {
 
 func htmlEscape(s string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&#39;").Replace(s)
+}
+
+func (s *accountService) AdminStart(ctx context.Context, email, password string) error {
+	u, hash, err := s.userRepo.GetUserByEmail(ctx, strings.ToLower(strings.TrimSpace(email)))
+	if err != nil || hash == "" {
+		secure.BurnPasswordCheck(password)
+		if err != nil && !errors.Is(err, users.ErrUserNotFound) {
+			return err
+		}
+		return ErrInvalidCredentials
+	}
+	ok, err := secure.CheckPassword(password, hash)
+	if err != nil || !ok || !u.IsAdmin {
+		s.logger.WarnContext(ctx, "admin sign-in refused", "user_id", u.ID)
+		return ErrInvalidCredentials
+	}
+	return s.sendCode(ctx, u, purposeAdmin)
+}
+
+func (s *accountService) AdminVerify(ctx context.Context, email, code string) (string, error) {
+	u, _, err := s.userRepo.GetUserByEmail(ctx, strings.ToLower(strings.TrimSpace(email)))
+	if err != nil || !u.IsAdmin {
+		return "", ErrInvalidCode
+	}
+	if err := s.checkCode(ctx, u.ID, purposeAdmin, code); err != nil {
+		return "", err
+	}
+	s.logger.InfoContext(ctx, "admin signed in", "user_id", u.ID)
+	return secure.MakeAdminJWT(u.ID, string(s.secret), AdminSessionTTL)
 }

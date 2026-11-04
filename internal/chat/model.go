@@ -80,6 +80,9 @@ type MessageMetaDataRes struct {
 	Reactions []ReactionCount `json:"reactions"`
 	// Media is the message's photos and videos (empty list if none).
 	Media []media.Attachment `json:"media"`
+	// SenderSuspended: the sender is banned; text and media are hidden
+	// (kept on the server, shown again if the ban is lifted).
+	SenderSuspended bool `json:"sender_suspended"`
 }
 
 // ReactionCount is one emoji on a message: how many people used it and
@@ -139,6 +142,8 @@ type LastMessage struct {
 	FromID    uuid.UUID `json:"from_id"` // zero uuid if the sender deleted their account
 	CreatedAt time.Time `json:"created_at"`
 	Deleted   bool      `json:"deleted"` // msg is "" then
+	// SenderSuspended: the sender is banned, msg is "" then.
+	SenderSuspended bool `json:"sender_suspended"`
 }
 
 // JobSeen is the payload of TopicSeen.

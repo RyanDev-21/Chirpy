@@ -115,6 +115,10 @@ func (f *fakeRepo) RecentPublic(context.Context, uuid.UUID, int) ([]MessageMetaD
 }
 func (f *fakeRepo) UpdateLastSeen(context.Context, string, uuid.UUID, uuid.UUID) error { return nil }
 
+func (f *fakeRepo) Suspended(context.Context, []uuid.UUID) (map[uuid.UUID]bool, error) {
+	return map[uuid.UUID]bool{}, nil
+}
+
 // EditMessage and DeleteMessage change the stored row, like postgres.
 func (f *fakeRepo) EditMessage(_ context.Context, _ string, id uuid.UUID, content string, at time.Time) (bool, error) {
 	for i := range f.saved {

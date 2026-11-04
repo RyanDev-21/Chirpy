@@ -3,11 +3,13 @@
 package app
 
 import (
+	"RyanDev-21.com/Chirpy/internal/admin"
 	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"log/slog"
 	"net/http"
 	"time"
@@ -45,6 +47,7 @@ type App struct {
 	// revoked ends access tokens early (password change, account deletion)
 	revoked *revoke.Store
 	pushSvc *push.Service
+	admin   *admin.Service
 	media   *media.Service
 	hub     *ws.Hub
 
@@ -67,6 +70,7 @@ type handlers struct {
 	admin    *adminHandler
 	discover *discover.Handler
 	push     *push.Handler
+	admin2   *admin.Handler
 	media    *media.Handler
 }
 
@@ -241,6 +245,12 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		a.auth, google, &cacheCleaner{friends: friendStore, groups: groupStore, users: userStore, hub: a.hub, revoked: a.revoked, logger: logger},
 		cfg.JWTSecret, logger)
 
+	a.admin = admin.NewService(db, userRepo, func(ctx context.Context, g uuid.UUID) {
+		if err := groupStore.Invalidate(ctx, g.String()); err != nil {
+			logger.WarnContext(ctx, "failed to invalidate group cache", "error", err)
+		}
+	}, logger)
+
 	a.handlers = handlers{
 		users:    users.NewUserHandler(a.users),
 		friends:  friends.NewHandler(a.friends),
@@ -251,6 +261,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		admin:    &adminHandler{queries: queries},
 		discover: discover.NewHandler(discover.NewService(queries)),
 		push:     push.NewHandler(a.pushSvc),
+		admin2:   admin.NewHandler(a.admin),
 		media:    media.NewHandler(a.media),
 	}
 	return a, nil
