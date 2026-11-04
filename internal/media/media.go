@@ -86,6 +86,8 @@ func key(id uuid.UUID) string { return "m/" + id.String() }
 
 func ts(t time.Time) pgtype.Timestamp { return pgtype.Timestamp{Time: t, Valid: true} }
 
+func pu(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
+
 // Upload is the answer to POST /api/media.
 type Upload struct {
 	ID        uuid.UUID         `json:"media_id"`
@@ -108,7 +110,7 @@ func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, kind, contentT
 		return Upload{}, ErrBadMedia
 	}
 	now := s.now()
-	used, err := s.q.MediaUploadedSince(ctx, database.MediaUploadedSinceParams{OwnerID: owner, Since: ts(now.Add(-24 * time.Hour))})
+	used, err := s.q.MediaUploadedSince(ctx, database.MediaUploadedSinceParams{OwnerID: pu(owner), Since: ts(now.Add(-24 * time.Hour))})
 	if err != nil {
 		return Upload{}, err
 	}
@@ -127,7 +129,7 @@ func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, kind, contentT
 		return Upload{}, err
 	}
 	if err := s.q.CreateMedia(ctx, database.CreateMediaParams{
-		ID: id, OwnerID: owner, Kind: kind, ContentType: contentType, Size: size,
+		ID: id, OwnerID: pu(owner), Kind: kind, ContentType: contentType, Size: size,
 		Now: ts(now), ExpiresAt: ts(now.Add(maxLifetime)),
 	}); err != nil {
 		return Upload{}, err
@@ -137,7 +139,7 @@ func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, kind, contentT
 		return Upload{}, err
 	}
 	return Upload{ID: id, URL: u, Method: "PUT", ExpiresIn: int(uploadTTL.Seconds()),
-		Headers: map[string]string{"Content-Type": contentType}}, nil
+		Headers: map[string]string{"Content-Type": contentType, "If-None-Match": "*"}}, nil
 }
 
 // Attach links uploads to a new message. Each must be the sender's own,
@@ -162,7 +164,7 @@ func (s *Service) Attach(ctx context.Context, owner uuid.UUID, ids []uuid.UUID, 
 	out := make([]Attachment, 0, len(ids))
 	for _, id := range ids {
 		m, err := s.q.GetMedia(ctx, id)
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (m.OwnerID != owner || m.Status != "pending" || m.DeletedAt.Valid)) {
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (m.OwnerID != pu(owner) || m.Status != "pending" || m.DeletedAt.Valid)) {
 			return nil, ErrBadAttachment
 		}
 		if err != nil {
@@ -179,7 +181,7 @@ func (s *Service) Attach(ctx context.Context, owner uuid.UUID, ids []uuid.UUID, 
 	}
 	for _, id := range ids {
 		n, err := s.q.AttachMedia(ctx, database.AttachMediaParams{
-			ID: id, OwnerID: owner, ChatType: pgtype.Text{String: chatType, Valid: true},
+			ID: id, OwnerID: pu(owner), ChatType: pgtype.Text{String: chatType, Valid: true},
 			ChatID: pgtype.UUID{Bytes: chatID, Valid: true}, MessageID: pgtype.UUID{Bytes: msgID, Valid: true},
 		})
 		if err != nil {
@@ -208,6 +210,13 @@ func (s *Service) ForMessages(ctx context.Context, msgIDs []uuid.UUID) (map[uuid
 			ExpiresAt: r.ExpiresAt.Time.UTC(), Expired: r.DeletedAt.Valid})
 	}
 	return out, nil
+}
+
+// ExpireGroup schedules a deleted group's media for removal.
+func (s *Service) ExpireGroup(ctx context.Context, groupID uuid.UUID) {
+	if err := s.q.ExpireMediaOfGroup(ctx, database.ExpireMediaOfGroupParams{GroupID: pu(groupID), Now: ts(s.now())}); err != nil {
+		s.logger.WarnContext(ctx, "failed to expire media of deleted group", "error", err)
+	}
 }
 
 // ExpireMessage schedules a deleted message's media for removal.
@@ -240,10 +249,11 @@ func (s *Service) Download(ctx context.Context, viewer, id uuid.UUID) (Download,
 		return Download{}, ErrNotFound
 	}
 	chatID := uuid.UUID(m.ChatID.Bytes)
-	var recipients []uuid.UUID // who must download it before the 24 h clock starts
+	owner := uuid.UUID(m.OwnerID.Bytes) // zero if the uploader deleted their account
+	var recipients []uuid.UUID          // who must download it before the 24 h clock starts
 	switch m.ChatType.String {
 	case "private":
-		if viewer != m.OwnerID && viewer != chatID {
+		if viewer != owner && viewer != chatID {
 			return Download{}, ErrNotFound
 		}
 		recipients = []uuid.UUID{chatID}
@@ -253,16 +263,16 @@ func (s *Service) Download(ctx context.Context, viewer, id uuid.UUID) (Download,
 			return Download{}, ErrNotFound // also for a deleted group
 		}
 		if len(members) <= trackGroupsUpTo {
-			recipients = slices.DeleteFunc(members, func(u uuid.UUID) bool { return u == m.OwnerID })
+			recipients = slices.DeleteFunc(members, func(u uuid.UUID) bool { return u == owner })
 		}
 	default:
 		return Download{}, ErrNotFound
 	}
-	if m.DeletedAt.Valid {
+	if m.DeletedAt.Valid || !m.OwnerID.Valid {
 		return Download{}, ErrExpired
 	}
 	now := s.now()
-	if viewer != m.OwnerID {
+	if viewer != owner {
 		if err := s.q.RecordMediaDownload(ctx, database.RecordMediaDownloadParams{MediaID: id, UserID: viewer, Now: ts(now)}); err != nil {
 			return Download{}, err
 		}
@@ -278,7 +288,7 @@ func (s *Service) Download(ctx context.Context, viewer, id uuid.UUID) (Download,
 			}
 		}
 	}
-	u, err := s.store.PresignGet(key(id), downloadTTL)
+	u, err := s.store.PresignGet(key(id), m.ContentType, downloadTTL)
 	if err != nil {
 		return Download{}, err
 	}

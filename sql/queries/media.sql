@@ -38,12 +38,18 @@ UPDATE media SET delivered_at = @now::timestamp WHERE id = @id AND delivered_at 
 -- deleting a message deletes its media at the next cleanup
 UPDATE media SET expires_at = @now::timestamp WHERE message_id = @message_id AND deleted_at IS NULL;
 
+-- name: ExpireMediaOfGroup :exec
+-- a deleted group's media goes at the next cleanup
+UPDATE media SET expires_at = @now::timestamp
+WHERE chat_type = 'public' AND chat_id = @group_id AND deleted_at IS NULL;
+
 -- name: MediaToDelete :many
 -- delivered 24 h ago, past the 7-day limit, or uploads never attached
 SELECT id FROM media
 WHERE deleted_at IS NULL
   AND (delivered_at < @delivered_before::timestamp
        OR expires_at < @now::timestamp
+       OR owner_id IS NULL -- the uploader deleted their account
        OR (status = 'pending' AND created_at < @pending_before::timestamp))
 LIMIT 500;
 

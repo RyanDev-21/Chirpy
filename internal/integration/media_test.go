@@ -36,6 +36,14 @@ func newFakeR2(t *testing.T) *fakeR2 {
 		switch r.Method {
 		case http.MethodPut:
 			body, _ := io.ReadAll(r.Body)
+			if _, exists := f.objects[key]; exists && r.Header.Get("If-None-Match") == "*" {
+				http.Error(w, "PreconditionFailed", http.StatusPreconditionFailed)
+				return
+			}
+			if r.Header.Get("If-None-Match") != "*" {
+				http.Error(w, "SignatureDoesNotMatch: if-none-match is signed", http.StatusForbidden)
+				return
+			}
 			if strconv.Itoa(len(body)) != r.URL.Query().Get("size") || r.Header.Get("Content-Type") != r.URL.Query().Get("ct") {
 				http.Error(w, "SignatureDoesNotMatch", http.StatusForbidden)
 				return
@@ -57,7 +65,7 @@ func newFakeR2(t *testing.T) *fakeR2 {
 func (f *fakeR2) PresignPut(key, ct string, size int64, _ time.Duration) (string, error) {
 	return f.srv.URL + "/" + key + "?ct=" + url.QueryEscape(ct) + "&size=" + strconv.FormatInt(size, 10), nil
 }
-func (f *fakeR2) PresignGet(key string, _ time.Duration) (string, error) {
+func (f *fakeR2) PresignGet(key, _ string, _ time.Duration) (string, error) {
 	return f.srv.URL + "/" + key, nil
 }
 func (f *fakeR2) Size(_ context.Context, key string) (int64, error) {
@@ -94,7 +102,9 @@ func (e *env) uploadFile(u user, kind, ct string, body []byte) string {
 	var up upload
 	e.expect(e.do("POST", "/api/media", u.Token, map[string]any{"kind": kind, "content_type": ct, "size": len(body)}), 201).json(e.t, &up)
 	req, _ := http.NewRequest("PUT", up.URL, bytes.NewReader(body))
-	req.Header.Set("Content-Type", up.Headers["Content-Type"])
+	for k, v := range up.Headers {
+		req.Header.Set(k, v)
+	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil || res.StatusCode != 200 {
 		e.t.Fatalf("upload: %v %v", err, res)
@@ -187,6 +197,7 @@ func TestMediaValidationAndLimits(t *testing.T) {
 	e.expect(e.do("POST", "/api/media", alice.Token, map[string]any{"kind": "image", "content_type": "image/png", "size": 10}), 201).json(t, &up)
 	req, _ := http.NewRequest("PUT", up.URL, bytes.NewReader(make([]byte, 5000)))
 	req.Header.Set("Content-Type", "image/png")
+	req.Header.Set("If-None-Match", "*")
 	if res, _ := http.DefaultClient.Do(req); res.StatusCode != 403 {
 		t.Fatalf("oversized body accepted: %d", res.StatusCode)
 	}
@@ -278,5 +289,64 @@ func TestMediaCleanupRules(t *testing.T) {
 	e.now(`SELECT max(extract(hour FROM NOW() - last_access_at))::int::text FROM media WHERE deleted_at IS NULL AND size = 1073741824`, "7")
 	if !e.r2.has(keep) {
 		t.Fatal("LRU removed a recently used small file before older big ones")
+	}
+}
+
+// TestMediaSecurityGaps covers what the media review found.
+func TestMediaSecurityGaps(t *testing.T) {
+	e := newEnv(t)
+	alice, bob := e.signup("alice"), e.signup("bobby")
+	e.befriend(alice, bob)
+	cleanup := func() {
+		t.Helper()
+		if err := e.app.Cleanup(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 1. an upload link is write-once: no swapping the file after sending
+	var up upload
+	e.expect(e.do("POST", "/api/media", alice.Token, map[string]any{"kind": "image", "content_type": "image/jpeg", "size": 4}), 201).json(t, &up)
+	put := func(body string) int {
+		req, _ := http.NewRequest("PUT", up.URL, strings.NewReader(body))
+		for k, v := range up.Headers {
+			req.Header.Set(k, v)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+	if got := put("good"); got != 200 {
+		t.Fatalf("first upload: %d", got)
+	}
+	e.expect(e.do("POST", "/api/chats/message", alice.Token, map[string]any{"to_id": bob.ID, "type": "private", "media": []string{up.ID}}), 200)
+	if got := put("evil"); got != http.StatusPreconditionFailed {
+		t.Fatalf("overwrite after sending: %d, want 412", got)
+	}
+
+	// 2. a deleted group's media is removed at the next cleanup
+	g := e.adminGroup("pics", alice, bob)
+	gm := e.uploadFile(alice, "image", "image/png", []byte("group pic"))
+	e.expect(e.do("POST", "/api/chats/message", alice.Token, map[string]any{"to_id": g, "type": "public", "media": []string{gm}}), 200)
+	e.expect(e.do("DELETE", "/api/chats/groups/"+g, alice.Token, nil), 204)
+	cleanup()
+	if e.r2.has(gm) {
+		t.Fatal("deleted group's media still stored")
+	}
+
+	// 3. a deleted account's media is removed too
+	mine := e.uploadFile(bob, "video", "video/mp4", []byte("bob's video"))
+	e.expect(e.do("POST", "/api/chats/message", bob.Token, map[string]any{"to_id": alice.ID, "type": "private", "media": []string{mine}}), 200)
+	e.expect(e.do("DELETE", "/api/users/me", bob.Token, map[string]string{"password": password}), 204)
+	e.expect(e.do("GET", "/api/media/"+mine, alice.Token, nil), 410)
+	cleanup()
+	if e.r2.has(mine) {
+		t.Fatal("deleted account's media still stored")
+	}
+	if !e.r2.has(up.ID) {
+		t.Fatal("cleanup removed media of a live account")
 	}
 }

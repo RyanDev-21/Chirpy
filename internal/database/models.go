@@ -79,7 +79,7 @@ type MediaDownload struct {
 
 type Medium struct {
 	ID           uuid.UUID
-	OwnerID      uuid.UUID
+	OwnerID      pgtype.UUID
 	Kind         string
 	ContentType  string
 	Size         int64

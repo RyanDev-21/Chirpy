@@ -22,7 +22,7 @@ type AttachMediaParams struct {
 	ChatID    pgtype.UUID
 	MessageID pgtype.UUID
 	ID        uuid.UUID
-	OwnerID   uuid.UUID
+	OwnerID   pgtype.UUID
 }
 
 // only the owner's own pending upload, once
@@ -58,7 +58,7 @@ VALUES ($1, $2, $3, $4, $5, $6::timestamp, $7::timestamp, $6::timestamp)
 
 type CreateMediaParams struct {
 	ID          uuid.UUID
-	OwnerID     uuid.UUID
+	OwnerID     pgtype.UUID
 	Kind        string
 	ContentType string
 	Size        int64
@@ -76,6 +76,22 @@ func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) error 
 		arg.Now,
 		arg.ExpiresAt,
 	)
+	return err
+}
+
+const expireMediaOfGroup = `-- name: ExpireMediaOfGroup :exec
+UPDATE media SET expires_at = $1::timestamp
+WHERE chat_type = 'public' AND chat_id = $2 AND deleted_at IS NULL
+`
+
+type ExpireMediaOfGroupParams struct {
+	Now     pgtype.Timestamp
+	GroupID pgtype.UUID
+}
+
+// a deleted group's media goes at the next cleanup
+func (q *Queries) ExpireMediaOfGroup(ctx context.Context, arg ExpireMediaOfGroupParams) error {
+	_, err := q.db.Exec(ctx, expireMediaOfGroup, arg.Now, arg.GroupID)
 	return err
 }
 
@@ -237,6 +253,7 @@ SELECT id FROM media
 WHERE deleted_at IS NULL
   AND (delivered_at < $1::timestamp
        OR expires_at < $2::timestamp
+       OR owner_id IS NULL -- the uploader deleted their account
        OR (status = 'pending' AND created_at < $3::timestamp))
 LIMIT 500
 `
@@ -273,7 +290,7 @@ SELECT COALESCE(sum(size), 0)::bigint FROM media WHERE owner_id = $1 AND created
 `
 
 type MediaUploadedSinceParams struct {
-	OwnerID uuid.UUID
+	OwnerID pgtype.UUID
 	Since   pgtype.Timestamp
 }
 

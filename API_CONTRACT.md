@@ -693,10 +693,11 @@ uploads get `507` for a while.
    (size in bytes, exact) → `201`:
    ```json
    {"media_id":"uuid","upload_url":"https://…","method":"PUT",
-    "headers":{"Content-Type":"image/jpeg"},"expires_in":600}
+    "headers":{"Content-Type":"image/jpeg","If-None-Match":"*"},"expires_in":600}
    ```
-2. `PUT` the file to `upload_url` within 10 minutes, with exactly that
-   `Content-Type` and the declared size (storage refuses anything else).
+2. `PUT` the file to `upload_url` within 10 minutes, sending **every header
+   in `headers`** and exactly the declared size (storage refuses anything
+   else). The link works once: it can't replace a file already uploaded.
 3. Send the message with `"media":["<media_id>", …]` (text may be empty):
    `{"to_id":"…","type":"private","media":["…"]}`. Each id must be your own
    upload, actually uploaded, and not used before (`400` otherwise).
@@ -708,14 +709,17 @@ uploads get `507` for a while.
   `"media":[{"id":"…","kind":"image","content_type":"image/jpeg","size":123456,"expires_at":"…","expired":false}]`
   (an empty list when there is none; omitted from the event).
 - `GET /api/media/{media_id}` → `200 {"url":"https://…","content_type":"…","size":…,"expires_in":300}`;
-  download from `url` within 5 minutes (no auth header needed on that link).
+  download from `url` within 5 minutes (no auth header needed on that link;
+  don't share it, anyone holding it can download until it expires). Browsers
+  are told to save the file, not display it.
   Only the two people in the private chat, or group members, may (`404`
   otherwise).
 - **Save the file on the phone.** The server keeps it only **24 hours after
   everyone in the chat has downloaded it**, and never longer than **7 days**
   (in groups over 50 members, just the 7 days). After that `GET` returns `410`
   and history shows `"expired":true`; show the phone's copy, or "expired".
-- Deleting a message for everyone also deletes its media.
+- Deleting a message for everyone, deleting the group, or the sender deleting
+  their account also deletes the media.
 - Push for a message without text says `📷 Photo`, `🎥 Video`, `📷 3 photos`…
 
 ## Push notifications

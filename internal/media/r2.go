@@ -18,9 +18,13 @@ import (
 // Storage holds the files. Phones upload and download directly with
 // short-lived signed links; the server only checks and deletes.
 type Storage interface {
-	// PresignPut is a PUT link that only accepts exactly this type and size.
+	// PresignPut is a PUT link that only accepts exactly this type and size,
+	// once: it can't overwrite a file that is already there.
 	PresignPut(key, contentType string, size int64, ttl time.Duration) (string, error)
-	PresignGet(key string, ttl time.Duration) (string, error)
+	// PresignGet is a download link that makes browsers save the file
+	// (Content-Disposition: attachment) with the given type, never display
+	// or sniff it.
+	PresignGet(key, contentType string, ttl time.Duration) (string, error)
 	// Size is the stored object's size; ErrNoObject if it isn't there.
 	Size(ctx context.Context, key string) (int64, error)
 	Delete(ctx context.Context, key string) error
@@ -51,15 +55,19 @@ func (r *R2) PresignPut(key, contentType string, size int64, ttl time.Duration) 
 	return r.signer.presign(http.MethodPut, r.host, r.path(key), map[string]string{
 		"content-length": strconv.FormatInt(size, 10),
 		"content-type":   contentType,
+		"if-none-match":  "*", // write once: no swapping the file after it was sent
+	}, nil, ttl, time.Now()), nil
+}
+
+func (r *R2) PresignGet(key, contentType string, ttl time.Duration) (string, error) {
+	return r.signer.presign(http.MethodGet, r.host, r.path(key), nil, map[string]string{
+		"response-content-disposition": "attachment",
+		"response-content-type":        contentType,
 	}, ttl, time.Now()), nil
 }
 
-func (r *R2) PresignGet(key string, ttl time.Duration) (string, error) {
-	return r.signer.presign(http.MethodGet, r.host, r.path(key), nil, ttl, time.Now()), nil
-}
-
 func (r *R2) do(ctx context.Context, method, key string) (*http.Response, error) {
-	u := r.signer.presign(method, r.host, r.path(key), nil, time.Minute, time.Now())
+	u := r.signer.presign(method, r.host, r.path(key), nil, nil, time.Minute, time.Now())
 	req, err := http.NewRequestWithContext(ctx, method, u, nil)
 	if err != nil {
 		return nil, err
@@ -124,7 +132,7 @@ func hmacSHA256(key []byte, data string) []byte {
 
 // presign signs method+path with the given headers (which the client must
 // then send exactly), valid for ttl from now.
-func (s sigV4) presign(method, host, path string, headers map[string]string, ttl time.Duration, now time.Time) string {
+func (s sigV4) presign(method, host, path string, headers, params map[string]string, ttl time.Duration, now time.Time) string {
 	now = now.UTC()
 	amzDate := now.Format("20060102T150405Z")
 	day := now.Format("20060102")
@@ -151,6 +159,9 @@ func (s sigV4) presign(method, host, path string, headers map[string]string, ttl
 	q.Set("X-Amz-Date", amzDate)
 	q.Set("X-Amz-Expires", strconv.Itoa(int(ttl.Seconds())))
 	q.Set("X-Amz-SignedHeaders", signedHeaders)
+	for k, v := range params {
+		q.Set(k, v)
+	}
 	keys := make([]string, 0, len(q))
 	for k := range q {
 		keys = append(keys, k)
