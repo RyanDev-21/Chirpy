@@ -41,6 +41,8 @@ var (
 	limitDevices  = limitPolicy{"push_settings", 30, time.Minute}
 	limitMedia    = limitPolicy{"media_upload", 60, time.Minute}
 	limitAdmin    = limitPolicy{"admin", 120, time.Minute}
+	// reports are rare; a burst means abuse of the report button
+	limitReport = limitPolicy{"report", 10, time.Hour}
 	// every authenticated route also shares one per-user budget, so routes
 	// without a tighter policy (reads, seen markers) can't be hammered
 	limitAPI = limitPolicy{"api", 300, time.Minute}
@@ -132,6 +134,8 @@ func (a *App) Router() http.Handler {
 			r.With(limit(limitMedia)).Post("/media", a.handlers.media.Create)
 			r.Get("/media/{media_id}", a.handlers.media.Get)
 
+			r.With(limit(limitReport)).Post("/reports", a.handlers.reports.Create)
+
 			r.Get("/discover/options", a.handlers.discover.Options)
 			r.With(limit(limitDiscover)).Get("/discover", a.handlers.discover.Suggest)
 
@@ -193,6 +197,9 @@ func (a *App) Router() http.Handler {
 			r.Delete("/users/{user_id}/ban", a.handlers.admin2.Unban)
 			r.Get("/groups", a.handlers.admin2.Groups)
 			r.Get("/audit", a.handlers.admin2.Audit)
+			r.Get("/reports", a.handlers.admin2.Reports)
+			r.Get("/reports/{report_id}", a.handlers.admin2.Report)
+			r.Post("/reports/{report_id}/resolve", a.handlers.admin2.Resolve)
 		})
 	})
 

@@ -334,6 +334,22 @@ fail as if your account didn't exist (`404`).
   `200 {"blocked":[{"user_id":"uuid","name":"bob","created_at":"…"}]}`,
   newest first.
 
+## Reporting a user
+
+`POST /api/reports` with
+`{"user_id":"…","reason":"harassment","note":"…","messages":["msg-id", …]}`
+→ `201 {"report_id":"…"}`.
+
+- `reason`: `spam`, `harassment`, `hate`, `violence`, `sexual`,
+  `impersonation`, `scam` or `other`. `note` up to 1000 characters (optional).
+- `messages` (optional, up to 20): messages **the user chooses** as evidence,
+  from their private chat with that person or from a group they're in
+  (`400` otherwise). They're copied when reported; admins see only these.
+- Reporting the same person again while the report is open updates it.
+  `400` for yourself or bad input, `404` unknown user. Maximum 10 reports
+  per hour.
+- Offer **Block** next to **Report** in the app; reporting doesn't block.
+
 ## Discovery ("people you may know")
 
 ### Discovery options
@@ -877,6 +893,10 @@ search, view and action is written to an audit log.
   `200 {"token":"…","expires_in":1800}`: an admin token (30 minutes) for the
   routes below. App tokens don't work here, and admin tokens don't work on
   the app API.
+- `GET /api/admin/reports?status=open|resolved|dismissed`,
+  `GET /api/admin/reports/{report_id}` (with the attached messages; logged),
+  `POST /api/admin/reports/{report_id}/resolve` `{"status":"resolved"|"dismissed","note":"…"}`.
+  Closed reports and their evidence are deleted after 180 days.
 - `GET /api/admin/overview`, `GET /api/admin/users?q=&limit=&offset=`,
   `GET /api/admin/users/{user_id}`, `GET /api/admin/groups?q=`,
   `GET /api/admin/audit?limit=`.

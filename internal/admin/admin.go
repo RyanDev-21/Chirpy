@@ -82,12 +82,18 @@ type Overview struct {
 	Messages24h int64 `json:"messages_24h"`
 	Groups      int64 `json:"groups"`
 	MediaBytes  int64 `json:"media_bytes"`
+	OpenReports int64 `json:"open_reports"`
 }
 
 func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	now := s.now()
 	o, err := s.q.AdminOverview(ctx, database.AdminOverviewParams{DayAgo: ts(now.Add(-24 * time.Hour)), WeekAgo: ts(now.Add(-7 * 24 * time.Hour))})
-	return Overview(o), err
+	if err != nil {
+		return Overview{}, err
+	}
+	open, err := s.q.CountOpenReports(ctx)
+	return Overview{Users: o.Users, Verified: o.Verified, Signups24h: o.Signups24h, Signups7d: o.Signups7d, Active7d: o.Active7d,
+		Banned: o.Banned, Messages24h: o.Messages24h, Groups: o.Groups, MediaBytes: o.MediaBytes, OpenReports: open}, err
 }
 
 type User struct {
@@ -378,4 +384,123 @@ func (s *Service) Admins(ctx context.Context) ([]Admin, error) {
 		out[i] = Admin{ID: r.ID, Name: r.Name, Email: r.Email}
 	}
 	return out, nil
+}
+
+// --- reports ---
+
+var (
+	ErrReportNotFound = errors.New("report not found")
+	ErrBadResolution  = errors.New(`status must be "resolved" or "dismissed"; note at most 1000 characters`)
+	ErrReportClosed   = errors.New("report is already closed")
+)
+
+type ReportSummary struct {
+	ID             uuid.UUID `json:"id"`
+	Reason         string    `json:"reason"`
+	Status         string    `json:"status"`
+	CreatedAt      time.Time `json:"created_at"`
+	ReportedID     uuid.UUID `json:"reported_id"`
+	ReportedName   string    `json:"reported_name"`
+	ReporterName   string    `json:"reporter_name"`
+	Evidence       int       `json:"evidence"`        // attached messages
+	ReportsAgainst int       `json:"reports_against"` // all reports about this user
+}
+
+// Evidence is a message the reporter chose to attach, as it was then.
+type Evidence struct {
+	MessageID uuid.UUID  `json:"message_id"`
+	ChatType  string     `json:"chat_type"`
+	GroupID   *uuid.UUID `json:"group_id,omitempty"`
+	SenderID  *uuid.UUID `json:"sender_id"`
+	Content   string     `json:"content"`
+	SentAt    time.Time  `json:"sent_at"`
+}
+
+type ReportDetail struct {
+	ReportSummary
+	ReporterID *uuid.UUID `json:"reporter_id"`
+	Note       string     `json:"note"`
+	Resolution string     `json:"resolution"`
+	ResolvedAt *time.Time `json:"resolved_at"`
+	Messages   []Evidence `json:"messages"`
+}
+
+func optID(u pgtype.UUID) *uuid.UUID {
+	if !u.Valid {
+		return nil
+	}
+	id := uuid.UUID(u.Bytes)
+	return &id
+}
+
+func (s *Service) Reports(ctx context.Context, status string, limit, offset int) ([]ReportSummary, error) {
+	lim, off := page(limit, offset)
+	rows, err := s.q.ListReports(ctx, database.ListReportsParams{Status: status, Lim: lim, Off: off})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ReportSummary, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ReportSummary{ID: r.ID, Reason: r.Reason, Status: r.Status, CreatedAt: r.CreatedAt.Time.UTC(),
+			ReportedID: r.ReportedID, ReportedName: r.ReportedName, ReporterName: r.ReporterName,
+			Evidence: int(r.Evidence), ReportsAgainst: int(r.ReportsAgainst)})
+	}
+	return out, nil
+}
+
+// Report shows one report with its evidence (logged as a view).
+func (s *Service) Report(ctx context.Context, admin, id uuid.UUID) (ReportDetail, error) {
+	r, err := s.q.GetReport(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReportDetail{}, ErrReportNotFound
+	}
+	if err != nil {
+		return ReportDetail{}, err
+	}
+	msgs, err := s.q.ReportMessages(ctx, id)
+	if err != nil {
+		return ReportDetail{}, err
+	}
+	d := ReportDetail{
+		ReportSummary: ReportSummary{ID: r.ID, Reason: r.Reason, Status: r.Status, CreatedAt: r.CreatedAt.Time.UTC(),
+			ReportedID: r.ReportedID, ReportedName: r.ReportedName, ReporterName: r.ReporterName, Evidence: len(msgs)},
+		ReporterID: optID(r.ReporterID), Note: r.Note, Resolution: r.Resolution, ResolvedAt: optTime(r.ResolvedAt),
+		Messages: make([]Evidence, 0, len(msgs)),
+	}
+	for _, m := range msgs {
+		d.Messages = append(d.Messages, Evidence{MessageID: m.MessageID, ChatType: m.ChatType, GroupID: optID(m.GroupID),
+			SenderID: optID(m.SenderID), Content: m.Content, SentAt: m.SentAt.Time.UTC()})
+	}
+	s.Log(ctx, admin, "view_report", r.ReportedID, uuid.Nil, "report "+id.String())
+	return d, nil
+}
+
+// Resolve closes an open report as "resolved" (action taken) or
+// "dismissed" (no action). Banning is a separate step.
+func (s *Service) Resolve(ctx context.Context, admin, id uuid.UUID, status, note string) error {
+	note = strings.TrimSpace(note)
+	if (status != "resolved" && status != "dismissed") || utf8.RuneCountInString(note) > 1000 {
+		return ErrBadResolution
+	}
+	n, err := s.q.ResolveReport(ctx, database.ResolveReportParams{ID: id, Status: status, AdminID: optUUID(admin), Now: ts(s.now()), Resolution: note})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		if _, err := s.q.GetReport(ctx, id); errors.Is(err, pgx.ErrNoRows) {
+			return ErrReportNotFound
+		}
+		return ErrReportClosed
+	}
+	s.Log(ctx, admin, "report_"+status, uuid.Nil, uuid.Nil, "report "+id.String()+": "+note)
+	return nil
+}
+
+// reportRetention: closed reports and their copied evidence are deleted
+// after this (privacy: moderation records aren't kept forever).
+const reportRetention = 180 * 24 * time.Hour
+
+// PurgeOldReports runs in the hourly cleanup.
+func (s *Service) PurgeOldReports(ctx context.Context) (int64, error) {
+	return s.q.DeleteOldClosedReports(ctx, ts(s.now().Add(-reportRetention)))
 }

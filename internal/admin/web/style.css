@@ -21,6 +21,8 @@ tbody tr { cursor:pointer; }
 dl { display:grid; grid-template-columns:max-content 1fr; gap:4px 16px; background:var(--card); padding:12px; border:1px solid var(--line); border-radius:8px; }
 dt { color:var(--muted); }
 dd { margin:0; font-variant-numeric:tabular-nums; }
-#user-detail { margin-top:16px; }
+#user-detail, #report-detail { margin-top:16px; }
+.evidence li { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:6px 8px; margin:4px 0; white-space:pre-wrap; }
+.evidence small { color:var(--muted); display:block; }
 .banned { color:var(--danger); font-weight:600; }
 @media (max-width:640px) { th:nth-child(3), td:nth-child(3), th:nth-child(4), td:nth-child(4) { display:none; } }

@@ -149,6 +149,29 @@ type RefreshToken struct {
 	RevokedAt pgtype.Timestamp
 }
 
+type Report struct {
+	ID         uuid.UUID
+	ReporterID pgtype.UUID
+	ReportedID uuid.UUID
+	Reason     string
+	Note       string
+	Status     string
+	ResolvedBy pgtype.UUID
+	ResolvedAt pgtype.Timestamp
+	Resolution string
+	CreatedAt  pgtype.Timestamp
+}
+
+type ReportMessage struct {
+	ReportID  uuid.UUID
+	MessageID uuid.UUID
+	ChatType  string
+	GroupID   pgtype.UUID
+	SenderID  pgtype.UUID
+	Content   string
+	SentAt    pgtype.Timestamp
+}
+
 type SeenMessage struct {
 	ID          uuid.UUID
 	ChatID      string
