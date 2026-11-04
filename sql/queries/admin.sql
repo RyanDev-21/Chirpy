@@ -19,7 +19,7 @@ SELECT
 
 -- name: AdminSearchUsers :many
 -- metadata only: never message content
-SELECT u.id, u.name, u.email, (u.email_verified_at IS NOT NULL)::bool AS verified, u.created_at, u.last_seen_at,
+SELECT u.id, u.name, u.display_name, u.email, (u.email_verified_at IS NOT NULL)::bool AS verified, u.created_at, u.last_seen_at,
        u.is_admin, u.banned_at, u.banned_until, u.ban_reason
 FROM users u
 WHERE @q::text = '' OR u.name ILIKE '%' || @q::text || '%' OR u.email ILIKE '%' || @q::text || '%'
@@ -34,7 +34,7 @@ SELECT
   (SELECT count(*) FROM user_devices WHERE user_id = @id::uuid)::bigint AS devices;
 
 -- name: AdminGetUser :one
-SELECT id, name, email, (email_verified_at IS NOT NULL)::bool AS verified, created_at, last_seen_at,
+SELECT id, name, display_name, email, (email_verified_at IS NOT NULL)::bool AS verified, created_at, last_seen_at,
        is_admin, banned_at, banned_until, ban_reason
 FROM users WHERE id = $1;
 

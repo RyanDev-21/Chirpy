@@ -93,6 +93,7 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 type User struct {
 	ID          uuid.UUID  `json:"id"`
 	Name        string     `json:"name"`
+	DisplayName string     `json:"display_name"`
 	Email       string     `json:"email"`
 	Verified    bool       `json:"email_verified"`
 	CreatedAt   time.Time  `json:"created_at"`
@@ -112,9 +113,12 @@ type UserStats struct {
 	Devices      int64 `json:"devices"`
 }
 
-func toUser(id uuid.UUID, name, email string, verified bool, created time.Time, seen pgtype.Timestamp, admin bool,
+func toUser(id uuid.UUID, name, display, email string, verified bool, created time.Time, seen pgtype.Timestamp, admin bool,
 	bannedAt, bannedUntil pgtype.Timestamp, reason pgtype.Text) User {
-	return User{ID: id, Name: name, Email: email, Verified: verified, CreatedAt: created.UTC(), LastSeenAt: optTime(seen),
+	if display == "" {
+		display = name
+	}
+	return User{ID: id, Name: name, DisplayName: display, Email: email, Verified: verified, CreatedAt: created.UTC(), LastSeenAt: optTime(seen),
 		IsAdmin: admin, BannedAt: optTime(bannedAt), BannedUntil: optTime(bannedUntil), BanReason: reason.String}
 }
 
@@ -133,7 +137,7 @@ func (s *Service) Users(ctx context.Context, q string, limit, offset int) ([]Use
 	}
 	out := make([]User, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, toUser(r.ID, r.Name, r.Email, r.Verified, r.CreatedAt, r.LastSeenAt, r.IsAdmin, r.BannedAt, r.BannedUntil, r.BanReason))
+		out = append(out, toUser(r.ID, r.Name, r.DisplayName, r.Email, r.Verified, r.CreatedAt, r.LastSeenAt, r.IsAdmin, r.BannedAt, r.BannedUntil, r.BanReason))
 	}
 	return out, nil
 }
@@ -146,7 +150,7 @@ func (s *Service) User(ctx context.Context, id uuid.UUID) (User, error) {
 	if err != nil {
 		return User{}, err
 	}
-	u := toUser(r.ID, r.Name, r.Email, r.Verified, r.CreatedAt, r.LastSeenAt, r.IsAdmin, r.BannedAt, r.BannedUntil, r.BanReason)
+	u := toUser(r.ID, r.Name, r.DisplayName, r.Email, r.Verified, r.CreatedAt, r.LastSeenAt, r.IsAdmin, r.BannedAt, r.BannedUntil, r.BanReason)
 	st, err := s.q.AdminUserStats(ctx, id)
 	if err != nil {
 		return User{}, err

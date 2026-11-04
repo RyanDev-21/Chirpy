@@ -88,7 +88,7 @@ WITH mine AS (
     WHERE other_id IS NOT NULL
     ORDER BY other_id, created_at DESC, id DESC
 )
-SELECT l.other_id::uuid AS other_id, u.name AS other_name, u.avatar_at AS other_avatar_at,
+SELECT l.other_id::uuid AS other_id, u.name AS other_name, u.display_name AS other_display, u.avatar_at AS other_avatar_at,
        l.id AS last_id, l.content AS last_content, l.from_id AS last_from, l.created_at AS last_at,
        (l.deleted_at IS NOT NULL)::bool AS last_deleted,
        (SELECT count(*) FROM message x

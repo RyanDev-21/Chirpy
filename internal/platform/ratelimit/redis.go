@@ -51,5 +51,11 @@ func (l *Redis) Allow(ctx context.Context, key string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Allowed: res[0] == 1, Remaining: int(res[1]), Limit: l.limit}, nil
+	out := Result{Allowed: res[0] == 1, Remaining: int(res[1]), Limit: l.limit}
+	if !out.Allowed {
+		// a sliding window frees up gradually; the end of the current
+		// window is a safe "try again" time
+		out.RetryAfter = time.Duration(winMs-nowMs%winMs) * time.Millisecond
+	}
+	return out, nil
 }

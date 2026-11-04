@@ -177,6 +177,7 @@ type User struct {
 	BannedUntil     pgtype.Timestamp
 	BanReason       pgtype.Text
 	LastSeenAt      pgtype.Timestamp
+	DisplayName     string
 }
 
 type UserAvatar struct {

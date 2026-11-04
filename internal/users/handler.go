@@ -101,8 +101,8 @@ func (h *UserHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 		httpx.JSON(w, http.StatusOK, u)
 	case errors.Is(err, ErrInvalidInput):
-		httpx.Error(w, http.StatusBadRequest, "send at least one field; name is 3-25 characters without spaces")
-	case errors.Is(err, ErrBioTooLong), errors.Is(err, ErrBadPlace), errors.Is(err, ErrBadInterests):
+		httpx.Error(w, http.StatusBadRequest, "send at least one field; username is 3-25 characters: a-z, 0-9, _ and .")
+	case errors.Is(err, ErrBioTooLong), errors.Is(err, ErrBadPlace), errors.Is(err, ErrBadInterests), errors.Is(err, ErrBadDisplayName):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrDuplicateName):
 		httpx.Error(w, http.StatusConflict, "username taken")

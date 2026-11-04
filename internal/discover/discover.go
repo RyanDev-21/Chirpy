@@ -31,6 +31,7 @@ const (
 type Suggestion struct {
 	ID              uuid.UUID      `json:"id"`
 	Name            string         `json:"name"`
+	DisplayName     string         `json:"display_name"`
 	AvatarURL       *string        `json:"avatar_url"`
 	Location        *catalog.Place `json:"location"`
 	SharedInterests []string       `json:"shared_interests"`
@@ -60,7 +61,7 @@ func (s *Service) Suggestions(ctx context.Context, me uuid.UUID, limit, page int
 	}
 	out := make([]Suggestion, 0, len(rows))
 	for _, r := range rows {
-		sg := Suggestion{ID: r.ID, Name: r.Name, Location: users.PlaceOf(r.LocationID.String), SharedInterests: r.SharedInterests, MutualFriends: int(r.MutualFriends)}
+		sg := Suggestion{ID: r.ID, Name: r.Name, DisplayName: users.ShownName(r.Name, r.DisplayName), Location: users.PlaceOf(r.LocationID.String), SharedInterests: r.SharedInterests, MutualFriends: int(r.MutualFriends)}
 		if r.AvatarAt.Valid {
 			sg.AvatarURL = users.AvatarURL(r.ID, r.AvatarAt.Time)
 		}

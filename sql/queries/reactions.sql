@@ -32,11 +32,11 @@ GROUP BY message_id, emoji
 ORDER BY message_id, first_at;
 
 -- name: PrivateReactors :many
-SELECT r.user_id, u.name, r.emoji, r.created_at FROM message_reactions r
+SELECT r.user_id, u.name, u.display_name, r.emoji, r.created_at FROM message_reactions r
 JOIN users u ON u.id = r.user_id
 WHERE r.message_id = $1 ORDER BY r.created_at;
 
 -- name: GroupReactors :many
-SELECT r.user_id, u.name, r.emoji, r.created_at FROM group_message_reactions r
+SELECT r.user_id, u.name, u.display_name, r.emoji, r.created_at FROM group_message_reactions r
 JOIN users u ON u.id = r.user_id
 WHERE r.message_id = $1 ORDER BY r.created_at;

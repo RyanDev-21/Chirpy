@@ -13,8 +13,11 @@ const nameTTL = 24 * time.Hour
 
 // Redis keys owned by the users package:
 //
-//	user:{id}:name  string  display name
-func nameKey(id uuid.UUID) string { return "user:" + id.String() + ":name" }
+//	user:{id}:handle  string  username
+//
+// ":handle" (was ":name") so names cached before usernames were
+// normalised (migration 038) are never read again
+func nameKey(id uuid.UUID) string { return "user:" + id.String() + ":handle" }
 
 // Store caches user data in Redis.
 type Store interface {

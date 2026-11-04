@@ -23,7 +23,7 @@ WITH me AS (
     WHERE mine.user_id = @me::uuid
     GROUP BY o.user_id
 ), scored AS (
-    SELECT u.id, u.name, u.avatar_at, u.location_id,
+    SELECT u.id, u.name, u.display_name, u.avatar_at, u.location_id,
            COALESCE(m.n, 0)::int AS mutual_friends,
            COALESCE(s.ids, '{}'::text[]) AS shared_interests,
            (u.location_id IS NOT NULL AND u.location_id = me.location_id) AS same_place,
@@ -42,7 +42,7 @@ WITH me AS (
              OR (b.blocker_id = @me::uuid AND b.blocked_id = u.id)
       )
 )
-SELECT id, name, avatar_at, location_id, mutual_friends, shared_interests::text[] AS shared_interests,
+SELECT id, name, display_name, avatar_at, location_id, mutual_friends, shared_interests::text[] AS shared_interests,
        same_place::bool AS same_place,
        (3 * mutual_friends + 2 * cardinality(shared_interests)
         + CASE WHEN same_place THEN 3 WHEN same_country THEN 1 ELSE 0 END)::int AS score

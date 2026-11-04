@@ -103,6 +103,14 @@ func (f *fakeRepo) Interests(_ context.Context, id uuid.UUID) ([]string, error) 
 	return append([]string{}, f.interests[id]...), nil
 }
 
+func (f *fakeRepo) SetDisplayName(_ context.Context, id uuid.UUID, n string) error {
+	f.users[id].DisplayName = n
+	return nil
+}
+func (f *fakeRepo) DisplayName(_ context.Context, id uuid.UUID) (string, error) {
+	return ShownName(f.users[id].Name, f.users[id].DisplayName), nil
+}
+
 func newSvc(t *testing.T) (UserService, *fakeRepo) {
 	rdb, _ := testutil.Redis(t)
 	repo := newFakeRepo()

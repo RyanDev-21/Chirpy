@@ -14,7 +14,7 @@ import (
 )
 
 const adminGetUser = `-- name: AdminGetUser :one
-SELECT id, name, email, (email_verified_at IS NOT NULL)::bool AS verified, created_at, last_seen_at,
+SELECT id, name, display_name, email, (email_verified_at IS NOT NULL)::bool AS verified, created_at, last_seen_at,
        is_admin, banned_at, banned_until, ban_reason
 FROM users WHERE id = $1
 `
@@ -22,6 +22,7 @@ FROM users WHERE id = $1
 type AdminGetUserRow struct {
 	ID          uuid.UUID
 	Name        string
+	DisplayName string
 	Email       string
 	Verified    bool
 	CreatedAt   time.Time
@@ -38,6 +39,7 @@ func (q *Queries) AdminGetUser(ctx context.Context, id uuid.UUID) (AdminGetUserR
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
+		&i.DisplayName,
 		&i.Email,
 		&i.Verified,
 		&i.CreatedAt,
@@ -158,7 +160,7 @@ func (q *Queries) AdminSearchGroups(ctx context.Context, arg AdminSearchGroupsPa
 }
 
 const adminSearchUsers = `-- name: AdminSearchUsers :many
-SELECT u.id, u.name, u.email, (u.email_verified_at IS NOT NULL)::bool AS verified, u.created_at, u.last_seen_at,
+SELECT u.id, u.name, u.display_name, u.email, (u.email_verified_at IS NOT NULL)::bool AS verified, u.created_at, u.last_seen_at,
        u.is_admin, u.banned_at, u.banned_until, u.ban_reason
 FROM users u
 WHERE $1::text = '' OR u.name ILIKE '%' || $1::text || '%' OR u.email ILIKE '%' || $1::text || '%'
@@ -175,6 +177,7 @@ type AdminSearchUsersParams struct {
 type AdminSearchUsersRow struct {
 	ID          uuid.UUID
 	Name        string
+	DisplayName string
 	Email       string
 	Verified    bool
 	CreatedAt   time.Time
@@ -198,6 +201,7 @@ func (q *Queries) AdminSearchUsers(ctx context.Context, arg AdminSearchUsersPara
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
+			&i.DisplayName,
 			&i.Email,
 			&i.Verified,
 			&i.CreatedAt,

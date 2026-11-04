@@ -91,7 +91,7 @@ func (r *accountRepo) CreateGoogleUser(ctx context.Context, name, email, subject
 	var out *users.User
 	err := pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
 		q := r.q.WithTx(tx)
-		u, err := q.CreateUserVerifiedNoPassword(ctx, database.CreateUserVerifiedNoPasswordParams{Name: name, Email: email})
+		u, err := q.CreateUserVerifiedNoPassword(ctx, database.CreateUserVerifiedNoPasswordParams{Name: name, DisplayName: name, Email: email})
 		if err != nil {
 			return err
 		}

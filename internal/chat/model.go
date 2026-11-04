@@ -95,10 +95,11 @@ type ReactionCount struct {
 
 // Reactor is one person's reaction, for GET .../reactions.
 type Reactor struct {
-	UserID    uuid.UUID `json:"user_id"`
-	Name      string    `json:"name"`
-	Emoji     string    `json:"emoji"`
-	CreatedAt time.Time `json:"created_at"`
+	UserID      uuid.UUID `json:"user_id"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"display_name"`
+	Emoji       string    `json:"emoji"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // messageRef locates a message: a private one (between From and To) or a
@@ -128,9 +129,10 @@ type ResponseMessageID struct {
 
 // Conversation is one row of the chat list (GET /api/chats).
 type Conversation struct {
-	Type        string       `json:"type"` // "private" or "public"
-	ID          uuid.UUID    `json:"id"`   // the other user, or the group
-	Name        string       `json:"name"`
+	Type        string       `json:"type"`         // "private" or "public"
+	ID          uuid.UUID    `json:"id"`           // the other user, or the group
+	Name        string       `json:"name"`         // the other user's username, or the group name
+	DisplayName string       `json:"display_name"` // what to show: display name, or the group name
 	AvatarURL   *string      `json:"avatar_url"`   // the other user's picture (private chats only)
 	LastMessage *LastMessage `json:"last_message"` // null for a group with no messages
 	Unread      int          `json:"unread"`

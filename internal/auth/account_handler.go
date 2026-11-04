@@ -34,7 +34,7 @@ func writeSession(w http.ResponseWriter, s *Session) {
 func (h *AccountHandler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, users.ErrInvalidInput):
-		httpx.Error(w, http.StatusBadRequest, "name must be 3-25 characters without spaces, email must be valid, and password 8-128 characters with one of @$!%*?&")
+		httpx.Error(w, http.StatusBadRequest, "username must be 3-25 characters: a-z, 0-9, _ and . (email must be valid, and password 8-128 characters with one of @$!%*?&)")
 	case errors.Is(err, users.ErrDuplicateName):
 		httpx.Error(w, http.StatusConflict, "the user name already exists")
 	case errors.Is(err, ErrInvalidCode):
