@@ -37,6 +37,16 @@ type GroupRepo interface {
 	// RegenerateInviteCode replaces the code, invalidating the old one.
 	RegenerateInviteCode(ctx context.Context, groupID uuid.UUID) (string, error)
 	Detail(ctx context.Context, groupID, viewer uuid.UUID) (GroupDetail, error)
+
+	// Leader-only changes. Each locks the group row and checks that leader
+	// is its leader (ErrNotFoundGroup for non-members, ErrNotLeader).
+	Kick(ctx context.Context, groupID, leader, target uuid.UUID) error
+	// Update changes name and/or description (nil keeps a field);
+	// ErrDuplicateName if the name is taken.
+	Update(ctx context.Context, groupID, leader uuid.UUID, name, desc *string) (GroupPreview, error)
+	TransferLeader(ctx context.Context, groupID, leader, target uuid.UUID) error
+	// Delete removes the group with its messages; returns who was in it.
+	Delete(ctx context.Context, groupID, leader uuid.UUID) ([]uuid.UUID, error)
 }
 
 type groupRepo struct {
@@ -227,6 +237,94 @@ func (r *groupRepo) Detail(ctx context.Context, groupID, viewer uuid.UUID) (Grou
 		d.Members = members // the member list is only shown to members
 	}
 	return d, nil
+}
+
+// asLeader runs fn in the group's locked transaction if leader leads it.
+func (r *groupRepo) asLeader(ctx context.Context, groupID, leader uuid.UUID, fn func(q *database.Queries, g database.LockGroupRow) error) error {
+	return r.withLockedGroup(ctx, groupID, func(q *database.Queries, g database.LockGroupRow) error {
+		role, err := q.GetMemberRole(ctx, database.GetMemberRoleParams{GroupID: groupID, MemberID: leader})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFoundGroup // private: don't confirm the group exists
+		}
+		if err != nil {
+			return err
+		}
+		if role != RoleLeader {
+			return ErrNotLeader
+		}
+		return fn(q, g)
+	})
+}
+
+func (r *groupRepo) Kick(ctx context.Context, groupID, leader, target uuid.UUID) error {
+	return r.asLeader(ctx, groupID, leader, func(q *database.Queries, g database.LockGroupRow) error {
+		if target == leader {
+			return ErrKickSelf
+		}
+		if _, err := q.GetMemberRole(ctx, database.GetMemberRoleParams{GroupID: groupID, MemberID: target}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotMember
+			}
+			return err
+		}
+		if err := q.DeleteMemFromGroup(ctx, database.DeleteMemFromGroupParams{GroupID: groupID, MemberID: target}); err != nil {
+			return err
+		}
+		return q.SetGroupMemberCount(ctx, database.SetGroupMemberCountParams{ID: groupID, CurrentMember: max(g.CurrentMember-1, 0)})
+	})
+}
+
+func optText(s *string) pgtype.Text {
+	if s == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *s, Valid: true}
+}
+
+func (r *groupRepo) Update(ctx context.Context, groupID, leader uuid.UUID, name, desc *string) (GroupPreview, error) {
+	var out GroupPreview
+	err := r.asLeader(ctx, groupID, leader, func(q *database.Queries, g database.LockGroupRow) error {
+		row, err := q.UpdateGroupInfo(ctx, database.UpdateGroupInfoParams{ID: groupID, Name: optText(name), Description: optText(desc)})
+		if err != nil {
+			return err
+		}
+		out = GroupPreview{ID: groupID, Name: row.Name, Description: row.Description, MaxMembers: g.MaxMember, MemberCount: g.CurrentMember}
+		return nil
+	})
+	if constraint(err) != "" {
+		return GroupPreview{}, ErrDuplicateName
+	}
+	return out, err
+}
+
+func (r *groupRepo) TransferLeader(ctx context.Context, groupID, leader, target uuid.UUID) error {
+	return r.asLeader(ctx, groupID, leader, func(q *database.Queries, _ database.LockGroupRow) error {
+		if target == leader {
+			return ErrAlreadyLeader
+		}
+		if _, err := q.GetMemberRole(ctx, database.GetMemberRoleParams{GroupID: groupID, MemberID: target}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotMember
+			}
+			return err
+		}
+		if err := q.SetMemberRole(ctx, database.SetMemberRoleParams{GroupID: groupID, MemberID: leader, Role: RoleMember}); err != nil {
+			return err
+		}
+		return q.SetMemberRole(ctx, database.SetMemberRoleParams{GroupID: groupID, MemberID: target, Role: RoleLeader})
+	})
+}
+
+func (r *groupRepo) Delete(ctx context.Context, groupID, leader uuid.UUID) ([]uuid.UUID, error) {
+	var members []uuid.UUID
+	err := r.asLeader(ctx, groupID, leader, func(q *database.Queries, _ database.LockGroupRow) error {
+		var err error
+		if members, err = q.GetMemberListByID(ctx, groupID); err != nil {
+			return err
+		}
+		return q.DeleteGroup(ctx, groupID)
+	})
+	return members, err
 }
 
 // nowUTC is the server clock, which also stamps every message: comparing

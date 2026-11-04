@@ -24,7 +24,9 @@ func writeGroupError(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrDuplicateName), errors.Is(err, ErrAlreadyMember), errors.Is(err, ErrGroupFull):
 		httpx.Error(w, http.StatusConflict, err.Error())
-	case errors.Is(err, ErrNotMember), errors.Is(err, ErrInvalidGroupReq), errors.Is(err, httpx.ErrBadPathParam):
+	case errors.Is(err, ErrNotMember), errors.Is(err, ErrInvalidGroupReq), errors.Is(err, httpx.ErrBadPathParam),
+		errors.Is(err, ErrKickSelf), errors.Is(err, ErrAlreadyLeader), errors.Is(err, ErrNothingToUpdate),
+		errors.Is(err, ErrInvalidGroupInfo):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrInvalidInviteCode):
 		// same answer as an unknown code: don't help anyone probe the format
@@ -175,4 +177,90 @@ func (h *GroupHandler) invite(w http.ResponseWriter, r *http.Request, fn func(co
 		return
 	}
 	httpx.JSON(w, http.StatusOK, InviteCode{Code: code})
+}
+
+// leaderAction reads the caller and the group id for a leader-only route.
+func leaderAction(w http.ResponseWriter, r *http.Request) (groupID, me uuid.UUID, ok bool) {
+	groupID, err := httpx.PathUUID(r, "group_id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid group id")
+		return groupID, me, false
+	}
+	me, err = reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return groupID, me, false
+	}
+	return groupID, me, true
+}
+
+// UpdateGroup handles PATCH /api/chats/groups/{group_id}
+// {"group_name"?, "description"?}.
+func (h *GroupHandler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
+	groupID, me, ok := leaderAction(w, r)
+	if !ok {
+		return
+	}
+	var req updateGroupRequest
+	if err := httpx.Decode(w, r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid parameters")
+		return
+	}
+	g, err := h.groupService.Update(r.Context(), groupID, me, req)
+	if err != nil {
+		writeGroupError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, g)
+}
+
+// DeleteGroup handles DELETE /api/chats/groups/{group_id}.
+func (h *GroupHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
+	groupID, me, ok := leaderAction(w, r)
+	if !ok {
+		return
+	}
+	if err := h.groupService.Delete(r.Context(), groupID, me); err != nil {
+		writeGroupError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// KickMember handles DELETE /api/chats/groups/{group_id}/members/{user_id}.
+func (h *GroupHandler) KickMember(w http.ResponseWriter, r *http.Request) {
+	groupID, me, ok := leaderAction(w, r)
+	if !ok {
+		return
+	}
+	target, err := httpx.PathUUID(r, "user_id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	if err := h.groupService.Kick(r.Context(), groupID, me, target); err != nil {
+		writeGroupError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// TransferLeader handles PUT /api/chats/groups/{group_id}/leader {"user_id"}.
+func (h *GroupHandler) TransferLeader(w http.ResponseWriter, r *http.Request) {
+	groupID, me, ok := leaderAction(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		UserID uuid.UUID `json:"user_id"`
+	}
+	if err := httpx.Decode(w, r, &body); err != nil || body.UserID == uuid.Nil {
+		httpx.Error(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	if err := h.groupService.TransferLeader(r.Context(), groupID, me, body.UserID); err != nil {
+		writeGroupError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

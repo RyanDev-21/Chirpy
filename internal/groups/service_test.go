@@ -14,10 +14,11 @@ import (
 
 // fakeRepo applies the same rules the postgres transactions enforce.
 type fakeRepo struct {
-	mu     sync.Mutex
-	groups map[uuid.UUID]*GroupSnapshot
-	codes  map[uuid.UUID]string
-	reads  int
+	mu      sync.Mutex
+	groups  map[uuid.UUID]*GroupSnapshot
+	codes   map[uuid.UUID]string
+	reads   int
+	updated [][2]*string
 }
 
 func (f *fakeRepo) ByInviteCode(_ context.Context, code string) (GroupPreview, error) {
@@ -114,11 +115,23 @@ func (f *fakeRepo) Detail(_ context.Context, id, viewer uuid.UUID) (GroupDetail,
 	return GroupDetail{ID: id, Name: g.Name, IsMember: slices.Contains(g.Members, viewer)}, nil
 }
 
+func (f *fakeRepo) Kick(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error { return nil }
+func (f *fakeRepo) Update(_ context.Context, id, _ uuid.UUID, name, desc *string) (GroupPreview, error) {
+	f.updated = append(f.updated, [2]*string{name, desc})
+	return GroupPreview{ID: id}, nil
+}
+func (f *fakeRepo) TransferLeader(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error {
+	return nil
+}
+func (f *fakeRepo) Delete(context.Context, uuid.UUID, uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
 func newSvc(t *testing.T) (GroupService, *fakeRepo) {
 	t.Helper()
 	rdb, _ := testutil.Redis(t)
 	repo := &fakeRepo{groups: map[uuid.UUID]*GroupSnapshot{}, codes: map[uuid.UUID]string{}}
-	return NewGroupService(repo, NewStore(rdb), testutil.Logger()), repo
+	return NewGroupService(repo, NewStore(rdb), nil, testutil.Logger()), repo
 }
 
 func TestCreateValidation(t *testing.T) {
@@ -260,5 +273,31 @@ func TestInvites(t *testing.T) {
 	}
 	if _, err := svc.JoinByInvite(ctx, outsider, "nope"); !errors.Is(err, ErrInvalidInviteCode) {
 		t.Fatalf("garbage code: %v", err)
+	}
+}
+
+func TestUpdateValidation(t *testing.T) {
+	svc, repo := newSvc(t)
+	ctx := context.Background()
+	str := func(s string) *string { return &s }
+	cases := []struct {
+		req  updateGroupRequest
+		want error
+	}{
+		{updateGroupRequest{}, ErrNothingToUpdate},
+		{updateGroupRequest{GroupName: str("   ")}, ErrInvalidGroupInfo},
+		{updateGroupRequest{GroupName: str(strings.Repeat("x", maxGroupNameLen+1))}, ErrInvalidGroupInfo},
+		{updateGroupRequest{Description: str(strings.Repeat("x", maxDescLen+1))}, ErrInvalidGroupInfo},
+	}
+	for _, c := range cases {
+		if _, err := svc.Update(ctx, uuid.New(), uuid.New(), c.req); !errors.Is(err, c.want) {
+			t.Errorf("%+v: got %v, want %v", c.req, err, c.want)
+		}
+	}
+	if _, err := svc.Update(ctx, uuid.New(), uuid.New(), updateGroupRequest{GroupName: str("  team  ")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := repo.updated[0][0]; got == nil || *got != "team" || repo.updated[0][1] != nil {
+		t.Fatalf("repo got %v", repo.updated[0])
 	}
 }

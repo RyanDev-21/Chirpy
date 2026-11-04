@@ -47,6 +47,8 @@ type ChatService interface {
 	// EditWindow of sending; DeleteMessage deletes it for everyone.
 	EditMessage(ctx context.Context, me, msgID uuid.UUID, content string) (EditedMessage, error)
 	DeleteMessage(ctx context.Context, me, msgID uuid.UUID) error
+	// ForgetGroup drops cached messages of a deleted group.
+	ForgetGroup(ctx context.Context, groupID uuid.UUID)
 	MarkSeen(ctx context.Context, me, other uuid.UUID, msgID string) error
 
 	HandleSeen(ctx context.Context, j JobSeen) error
@@ -459,6 +461,10 @@ func (s *chatService) DeleteMessage(ctx context.Context, me, msgID uuid.UUID) er
 		s.logger.WarnContext(ctx, "failed to push delete", "error", err)
 	}
 	return nil
+}
+
+func (s *chatService) ForgetGroup(ctx context.Context, groupID uuid.UUID) {
+	s.dropCached(ctx, messageRef{Kind: TypePublic, Group: groupID})
 }
 
 // dropCached removes the chat's cached stream after an edit or delete, so
