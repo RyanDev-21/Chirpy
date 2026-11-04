@@ -121,6 +121,13 @@ type User struct {
 	EmailVerifiedAt pgtype.Timestamp
 	Bio             string
 	NameChangedAt   pgtype.Timestamp
+	AvatarAt        pgtype.Timestamp
+}
+
+type UserAvatar struct {
+	UserID    uuid.UUID
+	Image     []byte
+	UpdatedAt pgtype.Timestamp
 }
 
 type UserBlock struct {

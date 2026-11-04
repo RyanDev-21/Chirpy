@@ -38,6 +38,10 @@ type UserService interface {
 	// OnRename registers cleanup after a username change (friend lists
 	// cache names).
 	OnRename(fn func(ctx context.Context, userID uuid.UUID))
+	// SetAvatar stores raw (a JPEG, PNG or WebP upload) as a 256x256 JPEG.
+	SetAvatar(ctx context.Context, me uuid.UUID, raw []byte) (*User, error)
+	DeleteAvatar(ctx context.Context, me uuid.UUID) error
+	Avatar(ctx context.Context, viewer, id uuid.UUID) ([]byte, time.Time, error)
 }
 
 type userService struct {
@@ -228,4 +232,24 @@ func (s *userService) Profile(ctx context.Context, viewer, id uuid.UUID) (Profil
 
 func (s *userService) OnRename(fn func(ctx context.Context, userID uuid.UUID)) {
 	s.onRename = append(s.onRename, fn)
+}
+
+func (s *userService) SetAvatar(ctx context.Context, me uuid.UUID, raw []byte) (*User, error) {
+	img, err := ProcessAvatar(raw)
+	if err != nil {
+		return nil, err
+	}
+	// millisecond precision: the time is also the URL version
+	if err := s.repo.SetAvatar(ctx, me, img, time.Now().UTC().Truncate(time.Millisecond)); err != nil {
+		return nil, err
+	}
+	return s.Me(ctx, me)
+}
+
+func (s *userService) DeleteAvatar(ctx context.Context, me uuid.UUID) error {
+	return s.repo.DeleteAvatar(ctx, me)
+}
+
+func (s *userService) Avatar(ctx context.Context, viewer, id uuid.UUID) ([]byte, time.Time, error) {
+	return s.repo.Avatar(ctx, id, viewer)
 }

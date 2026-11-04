@@ -26,6 +26,10 @@ type UserRepo interface {
 	SetBio(ctx context.Context, id uuid.UUID, bio string) (*User, error)
 	// PublicProfile is ErrUserNotFound if either user blocked the other.
 	PublicProfile(ctx context.Context, id, viewer uuid.UUID) (Profile, error)
+	SetAvatar(ctx context.Context, id uuid.UUID, image []byte, at time.Time) error
+	DeleteAvatar(ctx context.Context, id uuid.UUID) error
+	// Avatar is ErrUserNotFound without a picture or across a block.
+	Avatar(ctx context.Context, id, viewer uuid.UUID) ([]byte, time.Time, error)
 }
 
 type userRepo struct {
@@ -46,6 +50,9 @@ func toUser(u database.User) *User {
 		IsRED:     u.IsChirpyRed.Bool,
 		Verified:  u.EmailVerifiedAt.Valid,
 		Bio:       u.Bio,
+	}
+	if u.AvatarAt.Valid {
+		out.AvatarURL = avatarURL(u.ID, u.AvatarAt.Time)
 	}
 	if u.NameChangedAt.Valid {
 		if next := u.NameChangedAt.Time.UTC().Add(RenameEvery); next.After(time.Now()) {
@@ -165,5 +172,28 @@ func (r *userRepo) PublicProfile(ctx context.Context, id, viewer uuid.UUID) (Pro
 	if err != nil {
 		return Profile{}, err
 	}
-	return Profile{ID: p.ID, Name: p.Name, Bio: p.Bio}, nil
+	out := Profile{ID: p.ID, Name: p.Name, Bio: p.Bio}
+	if p.AvatarAt.Valid {
+		out.AvatarURL = avatarURL(p.ID, p.AvatarAt.Time)
+	}
+	return out, nil
+}
+
+func (r *userRepo) SetAvatar(ctx context.Context, id uuid.UUID, image []byte, at time.Time) error {
+	return r.queries.SetAvatar(ctx, database.SetAvatarParams{UserID: id, Image: image, At: pgtype.Timestamp{Time: at, Valid: true}})
+}
+
+func (r *userRepo) DeleteAvatar(ctx context.Context, id uuid.UUID) error {
+	return r.queries.DeleteAvatar(ctx, id)
+}
+
+func (r *userRepo) Avatar(ctx context.Context, id, viewer uuid.UUID) ([]byte, time.Time, error) {
+	a, err := r.queries.GetAvatar(ctx, database.GetAvatarParams{ID: id, Viewer: viewer})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, time.Time{}, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return a.Image, a.UpdatedAt.Time.UTC(), nil
 }

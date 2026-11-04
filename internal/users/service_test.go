@@ -77,6 +77,12 @@ func (f *fakeRepo) PublicProfile(_ context.Context, id, _ uuid.UUID) (Profile, e
 	return Profile{ID: id, Name: u.Name, Bio: u.Bio}, nil
 }
 
+func (f *fakeRepo) SetAvatar(context.Context, uuid.UUID, []byte, time.Time) error { return nil }
+func (f *fakeRepo) DeleteAvatar(context.Context, uuid.UUID) error                 { return nil }
+func (f *fakeRepo) Avatar(context.Context, uuid.UUID, uuid.UUID) ([]byte, time.Time, error) {
+	return nil, time.Time{}, ErrUserNotFound
+}
+
 func newSvc(t *testing.T) (UserService, *fakeRepo) {
 	rdb, _ := testutil.Redis(t)
 	repo := newFakeRepo()

@@ -33,6 +33,8 @@ var (
 	limitAccount = limitPolicy{"account", 10, time.Minute}
 	limitReact   = limitPolicy{"react", 60, time.Minute}
 	limitEdit    = limitPolicy{"edit_message", 60, time.Minute}
+	// each upload decodes and resizes an image
+	limitAvatar = limitPolicy{"avatar_upload", 10, time.Minute}
 	// every authenticated route also shares one per-user budget, so routes
 	// without a tighter policy (reads, seen markers) can't be hammered
 	limitAPI = limitPolicy{"api", 300, time.Minute}
@@ -103,6 +105,9 @@ func (a *App) Router() http.Handler {
 			r.With(limit(limitFriendUp)).Post("/users/blocks", a.handlers.friends.Block)
 			r.With(limit(limitFriendUp)).Delete("/users/blocks/{user_id}", a.handlers.friends.Unblock)
 			r.Get("/users/{user_id}", a.handlers.users.Profile)
+			r.Get("/users/{user_id}/avatar", a.handlers.users.Avatar)
+			r.With(limit(limitAvatar)).Put("/users/me/avatar", a.handlers.users.UploadAvatar)
+			r.With(limit(limitAvatar)).Delete("/users/me/avatar", a.handlers.users.DeleteAvatar)
 
 			r.Route("/friends", func(r chi.Router) {
 				r.Get("/", a.handlers.friends.List)
