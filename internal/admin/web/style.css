@@ -1,0 +1,26 @@
+:root { --bg:#f6f7f9; --fg:#1b1f24; --muted:#5b6470; --line:#d9dde3; --accent:#2563eb; --danger:#c62828; --card:#fff; }
+@media (prefers-color-scheme: dark) { :root { --bg:#111418; --fg:#e7eaee; --muted:#9aa4b1; --line:#2a3038; --accent:#60a5fa; --danger:#ef5350; --card:#181c21; } }
+* { box-sizing: border-box; }
+body { margin:0; font:15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+header { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); background:var(--card); }
+h1 { font-size:18px; margin:0; }
+main { max-width:1100px; margin:0 auto; padding:16px; }
+form { display:flex; flex-wrap:wrap; gap:8px; align-items:end; margin:12px 0; }
+#login form { flex-direction:column; align-items:stretch; max-width:340px; background:var(--card); padding:16px; border:1px solid var(--line); border-radius:8px; }
+label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); }
+input, select { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); }
+button { font:inherit; padding:6px 12px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); cursor:pointer; }
+button[type=submit], nav button.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+button.danger { background:var(--danger); border-color:var(--danger); }
+nav { display:flex; gap:6px; flex-wrap:wrap; }
+.note { color:var(--muted); font-size:13px; }
+.error { color:var(--danger); }
+table { width:100%; border-collapse:collapse; background:var(--card); font-size:14px; }
+th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; overflow-wrap:anywhere; }
+tbody tr { cursor:pointer; }
+dl { display:grid; grid-template-columns:max-content 1fr; gap:4px 16px; background:var(--card); padding:12px; border:1px solid var(--line); border-radius:8px; }
+dt { color:var(--muted); }
+dd { margin:0; font-variant-numeric:tabular-nums; }
+#user-detail { margin-top:16px; }
+.banned { color:var(--danger); font-weight:600; }
+@media (max-width:640px) { th:nth-child(3), td:nth-child(3), th:nth-child(4), td:nth-child(4) { display:none; } }

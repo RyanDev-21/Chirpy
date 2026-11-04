@@ -39,6 +39,8 @@ func (h *AccountHandler) writeErr(w http.ResponseWriter, r *http.Request, err er
 		httpx.Error(w, http.StatusConflict, "the user name already exists")
 	case errors.Is(err, ErrInvalidCode):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrSuspended):
+		httpx.Error(w, http.StatusForbidden, "account suspended")
 	case errors.Is(err, ErrInvalidGoogle), errors.Is(err, ErrReauthRequired):
 		httpx.Error(w, http.StatusUnauthorized, err.Error())
 	case errors.Is(err, ErrMailUnavailable), errors.Is(err, ErrGoogleUnavailable):
@@ -188,4 +190,44 @@ func (h *AccountHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// AdminLogin handles POST /api/admin/login {"email","password"}: emails an
+// admin sign-in code. Wrong passwords and non-admins get the same 401.
+func (h *AccountHandler) AdminLogin(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := httpx.Decode(w, r, &b); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid parameters")
+		return
+	}
+	switch err := h.svc.AdminStart(r.Context(), b.Email, b.Password); {
+	case err == nil:
+		httpx.JSON(w, http.StatusAccepted, accepted)
+	case errors.Is(err, ErrInvalidCredentials):
+		httpx.Error(w, http.StatusUnauthorized, "invalid credentials")
+	default:
+		h.writeErr(w, r, err)
+	}
+}
+
+// AdminVerify handles POST /api/admin/verify {"email","code"}: returns an
+// admin-page token valid for 30 minutes.
+func (h *AccountHandler) AdminVerify(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Email string `json:"email"`
+		Code  string `json:"code"`
+	}
+	if err := httpx.Decode(w, r, &b); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid parameters")
+		return
+	}
+	tok, err := h.svc.AdminVerify(r.Context(), b.Email, b.Code)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"token": tok, "expires_in": int(AdminSessionTTL.Seconds())})
 }

@@ -120,6 +120,12 @@ response. This is intentional and must not be used to distinguish an unknown
 account. Accounts created with Google have no password and also get this `401`
 here; they sign in with Google (or set a password with **Reset password**).
 
+**Suspended accounts:** an account banned by an admin gets
+`403 {"error":"account suspended"}` from login, refresh, Google sign-in and
+email verification, and its existing tokens stop working (`401`). Show
+"Your account is suspended" and stop retrying. Bans can be temporary; they
+lift by themselves.
+
 A correct password on an account whose email isn't verified yet returns
 `403 {"error":"email not verified"}`: show the code screen and offer
 **Resend verification code**.
@@ -565,6 +571,7 @@ Returns `200`:
       },
       "created_at":"2026-01-01T00:00:00Z",
       "edited_at":null,
+      "sender_suspended":false,
       "deleted":false,
       "reactions":[]
     }
@@ -578,7 +585,10 @@ part of the current wire format. Every message also has
 are none), ordered by which emoji was used first. `msgList` is always oldest-first; an empty
 conversation returns `"msgList":[]`.
 
-`edited_at` is the time of the last edit (`null` if never edited; show
+`sender_suspended` is `true` when the sender's account is suspended: `msg`
+is `""` and media and reactions are empty; show "Message from a suspended
+user". (Lifting the ban shows the message again.) `edited_at` is the time of
+the last edit (`null` if never edited; show
 "edited"). A message deleted for everyone stays in the list as a placeholder
 with `"deleted":true`, an empty `msg` and no reactions: show "message
 deleted", and keep replies pointing at it working.
@@ -673,7 +683,8 @@ your read marker: for private chats that's the last message you marked
 **seen**, for groups the last one you marked **read**. Group messages from
 before you joined don't count. `from_id` is the zero UUID when the sender
 deleted their account. If the last message was deleted for everyone,
-`last_message.deleted` is `true` and `msg` is `""`.
+`last_message.deleted` is `true` and `msg` is `""`. If its sender is
+suspended, `last_message.sender_suspended` is `true` and `msg` is `""`.
 
 ### Mark a private message seen
 
@@ -840,6 +851,30 @@ seconds while the user keeps typing. Seen:
 Typing and seen events from strangers or unauthorized group members are
 silently dropped. REST message sending and REST seen updates remain the
 authoritative operations.
+
+## Admin API (admin page only)
+
+Used by the built-in page at `https://api.ponypigeon.com/admin`; the app
+doesn't need it. Admin rights are granted only with the `cmd/admin` CLI.
+Admins see **metadata only, never message content or media**, and every
+search, view and action is written to an audit log.
+
+- `POST /api/admin/login` `{"email","password"}` → `202` and a 6-digit code
+  is emailed (`401` for a wrong password or a non-admin, alike).
+- `POST /api/admin/verify` `{"email","code"}` →
+  `200 {"token":"…","expires_in":1800}`: an admin token (30 minutes) for the
+  routes below. App tokens don't work here, and admin tokens don't work on
+  the app API.
+- `GET /api/admin/overview`, `GET /api/admin/users?q=&limit=&offset=`,
+  `GET /api/admin/users/{user_id}`, `GET /api/admin/groups?q=`,
+  `GET /api/admin/audit?limit=`.
+- `POST /api/admin/users/{user_id}/ban` `{"reason":"…","until":"<RFC3339>"|null}`
+  → `204` (`null`: permanent). Admins and yourself can't be banned (`400`).
+  A ban signs the user out everywhere and blocks new sessions, hides them
+  from search, discovery and profiles, removes them from groups with other
+  members (a leader hands over to the earliest member) and hides their past
+  messages (`sender_suspended`). `DELETE` the same path to lift it (messages
+  come back; groups don't).
 
 ## Frontend implementation notes
 

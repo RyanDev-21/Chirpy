@@ -1,6 +1,7 @@
 package app
 
 import (
+	"RyanDev-21.com/Chirpy/internal/admin"
 	"context"
 	"net/http"
 	"time"
@@ -39,6 +40,7 @@ var (
 	limitDiscover = limitPolicy{"discover", 20, time.Minute}
 	limitDevices  = limitPolicy{"push_settings", 30, time.Minute}
 	limitMedia    = limitPolicy{"media_upload", 60, time.Minute}
+	limitAdmin    = limitPolicy{"admin", 120, time.Minute}
 	// every authenticated route also shares one per-user budget, so routes
 	// without a tighter policy (reads, seen markers) can't be hammered
 	limitAPI = limitPolicy{"api", 300, time.Minute}
@@ -175,7 +177,26 @@ func (a *App) Router() http.Handler {
 		})
 	})
 
-	// admin routes only exist on dev and still require a logged-in user
+	// god mode: an admin-page token (password + emailed code), metadata only
+	r.Get("/admin", http.RedirectHandler("/admin/", http.StatusMovedPermanently).ServeHTTP)
+	r.Handle("/admin/*", admin.Page())
+	r.Route("/api/admin", func(r chi.Router) {
+		r.With(limit(limitAccount)).Post("/login", a.handlers.account.AdminLogin)
+		r.With(limit(limitAccount)).Post("/verify", a.handlers.account.AdminVerify)
+		r.Group(func(r chi.Router) {
+			r.Use(admin.Authenticate(a.cfg.JWTSecret, a.admin, a.revoked, a.logger))
+			r.Use(limit(limitAdmin))
+			r.Get("/overview", a.handlers.admin2.Overview)
+			r.Get("/users", a.handlers.admin2.Users)
+			r.Get("/users/{user_id}", a.handlers.admin2.User)
+			r.Post("/users/{user_id}/ban", a.handlers.admin2.Ban)
+			r.Delete("/users/{user_id}/ban", a.handlers.admin2.Unban)
+			r.Get("/groups", a.handlers.admin2.Groups)
+			r.Get("/audit", a.handlers.admin2.Audit)
+		})
+	})
+
+	// dev-only reset; still requires a logged-in user
 	if a.cfg.IsDev() {
 		r.With(authed).Post("/admin/reset", a.handlers.admin.ResetUsers)
 	}

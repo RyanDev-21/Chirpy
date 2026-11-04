@@ -11,6 +11,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AdminAction struct {
+	ID          uuid.UUID
+	AdminID     pgtype.UUID
+	Action      string
+	TargetUser  pgtype.UUID
+	TargetGroup pgtype.UUID
+	Detail      string
+	At          pgtype.Timestamp
+}
+
 type ChatGroup struct {
 	ID            uuid.UUID
 	Name          string
@@ -162,6 +172,11 @@ type User struct {
 	LocationID      pgtype.Text
 	LocationCountry string
 	Discoverable    bool
+	IsAdmin         bool
+	BannedAt        pgtype.Timestamp
+	BannedUntil     pgtype.Timestamp
+	BanReason       pgtype.Text
+	LastSeenAt      pgtype.Timestamp
 }
 
 type UserAvatar struct {

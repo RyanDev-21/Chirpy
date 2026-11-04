@@ -52,7 +52,7 @@ func (q *Queries) AreFriendsSQL(ctx context.Context, arg AreFriendsSQLParams) (b
 const createUser = `-- name: CreateUser :one
 INSERT INTO users(id, name, created_at, updated_at, email, password)
 VALUES (gen_random_uuid(), $1, NOW(), NOW(), $2, $3)
-RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable
+RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at
 `
 
 type CreateUserParams struct {
@@ -79,6 +79,11 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.LocationID,
 		&i.LocationCountry,
 		&i.Discoverable,
+		&i.IsAdmin,
+		&i.BannedAt,
+		&i.BannedUntil,
+		&i.BanReason,
+		&i.LastSeenAt,
 	)
 	return i, err
 }
@@ -157,6 +162,7 @@ func (q *Queries) GetInterests(ctx context.Context, userID uuid.UUID) ([]string,
 const getPublicProfile = `-- name: GetPublicProfile :one
 SELECT u.id, u.name, u.bio, u.avatar_at, u.location_id, u.discoverable FROM users u
 WHERE u.id = $1
+  AND u.banned_at IS NULL
   AND NOT EXISTS (
       SELECT 1 FROM user_blocks b
       WHERE (b.blocker_id = u.id AND b.blocked_id = $2::uuid)
@@ -194,7 +200,7 @@ func (q *Queries) GetPublicProfile(ctx context.Context, arg GetPublicProfilePara
 }
 
 const getUserInfoByEmail = `-- name: GetUserInfoByEmail :one
-SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable FROM users WHERE email = $1
+SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, error) {
@@ -215,12 +221,17 @@ func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, e
 		&i.LocationID,
 		&i.LocationCountry,
 		&i.Discoverable,
+		&i.IsAdmin,
+		&i.BannedAt,
+		&i.BannedUntil,
+		&i.BanReason,
+		&i.LastSeenAt,
 	)
 	return i, err
 }
 
 const getUserInfoByID = `-- name: GetUserInfoByID :one
-SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable FROM users WHERE id = $1
+SELECT id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, error) {
@@ -241,6 +252,11 @@ func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, erro
 		&i.LocationID,
 		&i.LocationCountry,
 		&i.Discoverable,
+		&i.IsAdmin,
+		&i.BannedAt,
+		&i.BannedUntil,
+		&i.BanReason,
+		&i.LastSeenAt,
 	)
 	return i, err
 }
@@ -262,7 +278,7 @@ func (q *Queries) RemoveOtherInterests(ctx context.Context, arg RemoveOtherInter
 const renameUser = `-- name: RenameUser :one
 UPDATE users SET name = $1, name_changed_at = $2::timestamp, updated_at = $2::timestamp
 WHERE id = $3 AND (name_changed_at IS NULL OR name_changed_at < $4::timestamp)
-RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable
+RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at
 `
 
 type RenameUserParams struct {
@@ -297,6 +313,11 @@ func (q *Queries) RenameUser(ctx context.Context, arg RenameUserParams) (User, e
 		&i.LocationID,
 		&i.LocationCountry,
 		&i.Discoverable,
+		&i.IsAdmin,
+		&i.BannedAt,
+		&i.BannedUntil,
+		&i.BanReason,
+		&i.LastSeenAt,
 	)
 	return i, err
 }
@@ -305,6 +326,7 @@ const searchNameSiml = `-- name: SearchNameSiml :many
 SELECT u.id, u.name, u.avatar_at, similarity(u.name, $1::text) AS similarity
 FROM users u
 WHERE u.name % $1::text
+  AND u.banned_at IS NULL
   AND NOT EXISTS (
       SELECT 1 FROM user_blocks b
       WHERE (b.blocker_id = u.id AND b.blocked_id = $2::uuid)
@@ -372,7 +394,7 @@ func (q *Queries) SetAvatar(ctx context.Context, arg SetAvatarParams) error {
 }
 
 const setBio = `-- name: SetBio :one
-UPDATE users SET bio = $1, updated_at = NOW() WHERE id = $2 RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable
+UPDATE users SET bio = $1, updated_at = NOW() WHERE id = $2 RETURNING id, created_at, updated_at, email, password, is_chirpy_red, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at
 `
 
 type SetBioParams struct {
@@ -398,6 +420,11 @@ func (q *Queries) SetBio(ctx context.Context, arg SetBioParams) (User, error) {
 		&i.LocationID,
 		&i.LocationCountry,
 		&i.Discoverable,
+		&i.IsAdmin,
+		&i.BannedAt,
+		&i.BannedUntil,
+		&i.BanReason,
+		&i.LastSeenAt,
 	)
 	return i, err
 }

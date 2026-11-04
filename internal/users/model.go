@@ -56,6 +56,8 @@ type User struct {
 	Interests *[]string `json:"interests,omitempty"`
 	// Discoverable: shown to others in "people you may know".
 	Discoverable bool `json:"discoverable"`
+	// IsAdmin is never sent to clients; it gates the admin page.
+	IsAdmin bool `json:"-"`
 }
 
 // Profile is another user's public profile. Location and interests are

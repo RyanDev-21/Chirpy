@@ -41,6 +41,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		telemetry.Auth(r.Context(), "login", "failed") // a spike means password guessing
 	}
 	if err != nil {
+		if errors.Is(err, ErrSuspended) {
+			httpx.Error(w, http.StatusForbidden, "account suspended")
+			return
+		}
 		if errors.Is(err, ErrEmailNotVerified) {
 			httpx.Error(w, http.StatusForbidden, "email not verified")
 			return
@@ -91,6 +95,10 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accessToken, refreshToken, err := h.authService.Refresh(r.Context(), token)
+	if errors.Is(err, ErrSuspended) {
+		httpx.Error(w, http.StatusForbidden, "account suspended")
+		return
+	}
 	if err != nil {
 		if err == ErrNotAuthorized {
 			httpx.Error(w, 401, "unauthorized")

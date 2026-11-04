@@ -108,3 +108,40 @@ func MakeRefreshToken() (string, error) {
 	}
 	return hex.EncodeToString(key), nil
 }
+
+// adminIssuer marks admin-page tokens. The normal API checks issuer
+// "chirpy", so an admin token is useless there and an access token is
+// useless on the admin API.
+const adminIssuer = "chirpy-admin"
+
+// MakeAdminJWT is a short-lived token for the admin page, issued only after
+// password and an emailed code.
+func MakeAdminJWT(userID uuid.UUID, tokenSecret string, expiresIn time.Duration) (string, error) {
+	now := time.Now()
+	claims := jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(now.Add(expiresIn)),
+		Issuer:    adminIssuer,
+		IssuedAt:  jwt.NewNumericDate(now),
+		Subject:   userID.String(),
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(tokenSecret))
+}
+
+// ValidateAdminJWT checks an admin-page token and returns who and when.
+func ValidateAdminJWT(tokenString, tokenSecret string) (uuid.UUID, time.Time, error) {
+	claims := &jwt.RegisteredClaims{}
+	_, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return []byte(tokenSecret), nil
+	}, jwt.WithIssuer(adminIssuer), jwt.WithExpirationRequired())
+	if err != nil {
+		return uuid.Nil, time.Time{}, ErrInvalidToken
+	}
+	id, err := uuid.Parse(claims.Subject)
+	if err != nil || claims.IssuedAt == nil {
+		return uuid.Nil, time.Time{}, ErrInvalidToken
+	}
+	return id, claims.IssuedAt.Time, nil
+}

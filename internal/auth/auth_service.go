@@ -122,6 +122,18 @@ func (s *authService) Refresh(ctx context.Context, token string) (string, string
 }
 
 func (s *authService) issue(ctx context.Context, userID uuid.UUID) (string, string, error) {
+	// every way of getting a session (login, refresh, Google, email
+	// verification) comes through here, so a ban is enforced in one place
+	banned, _, err := s.authRepo.Suspension(ctx, userID)
+	if err != nil {
+		return "", "", err
+	}
+	if banned {
+		return "", "", ErrSuspended
+	}
+	if err := s.authRepo.TouchLastSeen(ctx, userID, time.Now().UTC()); err != nil {
+		s.logger.WarnContext(ctx, "failed to record last seen", "error", err)
+	}
 	accessToken, err := secure.MakeJWT(userID, s.secret, s.accessTTL)
 	if err != nil {
 		return "", "", fmt.Errorf("make access token: %w", err)

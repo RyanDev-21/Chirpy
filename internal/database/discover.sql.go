@@ -44,6 +44,7 @@ WITH me AS (
     LEFT JOIN mutual m ON m.uid = u.id
     LEFT JOIN shared s ON s.uid = u.id
     WHERE u.discoverable
+      AND u.banned_at IS NULL
       AND u.id <> $3::uuid
       AND u.id NOT IN (SELECT uid FROM connected)
       AND NOT EXISTS (
