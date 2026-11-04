@@ -181,6 +181,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	a.groups = groups.NewGroupService(groups.NewGroupRepo(db), groups.NewStore(rdb), a.hub, logger)
 	a.chat = chat.NewChatService(chat.NewChatRepo(queries), chat.NewCache(rdb), a.groups, a.friends, a.hub, a.queue, logger)
 	a.hub.SetPolicy(a.chat)
+	a.groups.SetFriends(a.friends)
 	presenceSvc := presence.NewService(queries, a.friends, a.hub, logger)
 	a.hub.OnPresence(presenceSvc.Changed)
 	a.groups.OnDelete(a.chat.ForgetGroup)
@@ -210,6 +211,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		d := push.NewDispatcher(a.queue, logger)
 		a.chat.SetNotifier(d)
 		a.friends.SetNotifier(d)
+		a.groups.SetNotifier(d)
 	} else {
 		logger.Warn("FIREBASE_SERVICE_ACCOUNT not set: push notifications disabled")
 	}

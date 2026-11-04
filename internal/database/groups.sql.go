@@ -69,6 +69,15 @@ func (q *Queries) CreateGroupLeaderRole(ctx context.Context, arg CreateGroupLead
 	return err
 }
 
+const deleteGroupAvatar = `-- name: DeleteGroupAvatar :exec
+DELETE FROM group_avatars WHERE group_id = $1
+`
+
+func (q *Queries) DeleteGroupAvatar(ctx context.Context, groupID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteGroupAvatar, groupID)
+	return err
+}
+
 const deleteMemFromGroup = `-- name: DeleteMemFromGroup :exec
 DELETE FROM member_table WHERE group_id = $1 AND member_id = $2
 `
@@ -109,7 +118,7 @@ func (q *Queries) GetGroupByInviteCode(ctx context.Context, inviteCode string) (
 }
 
 const getGroupInfoByID = `-- name: GetGroupInfoByID :one
-SELECT id, name, description, max_member, created_at, updated_at, current_member, invite_code FROM chat_groups WHERE id = $1
+SELECT id, name, description, max_member, created_at, updated_at, current_member, invite_code, avatar_at FROM chat_groups WHERE id = $1
 `
 
 func (q *Queries) GetGroupInfoByID(ctx context.Context, id uuid.UUID) (ChatGroup, error) {
@@ -124,6 +133,7 @@ func (q *Queries) GetGroupInfoByID(ctx context.Context, id uuid.UUID) (ChatGroup
 		&i.UpdatedAt,
 		&i.CurrentMember,
 		&i.InviteCode,
+		&i.AvatarAt,
 	)
 	return i, err
 }
@@ -190,6 +200,30 @@ func (q *Queries) GetMemberRole(ctx context.Context, arg GetMemberRoleParams) (s
 	return role, err
 }
 
+const groupAvatarForMember = `-- name: GroupAvatarForMember :one
+SELECT a.image, a.updated_at FROM group_avatars a
+JOIN member_table m ON m.group_id = a.group_id AND m.member_id = $1
+WHERE a.group_id = $2
+`
+
+type GroupAvatarForMemberParams struct {
+	Viewer  uuid.UUID
+	GroupID uuid.UUID
+}
+
+type GroupAvatarForMemberRow struct {
+	Image     []byte
+	UpdatedAt pgtype.Timestamp
+}
+
+// the picture, only for a member of the group
+func (q *Queries) GroupAvatarForMember(ctx context.Context, arg GroupAvatarForMemberParams) (GroupAvatarForMemberRow, error) {
+	row := q.db.QueryRow(ctx, groupAvatarForMember, arg.Viewer, arg.GroupID)
+	var i GroupAvatarForMemberRow
+	err := row.Scan(&i.Image, &i.UpdatedAt)
+	return i, err
+}
+
 const listGroupMembers = `-- name: ListGroupMembers :many
 SELECT m.member_id, u.name, u.display_name, u.avatar_at, m.role
 FROM member_table m
@@ -233,7 +267,7 @@ func (q *Queries) ListGroupMembers(ctx context.Context, groupID uuid.UUID) ([]Li
 }
 
 const listGroupsForUser = `-- name: ListGroupsForUser :many
-SELECT g.id, g.name, g.description, g.max_member, g.current_member, m.role
+SELECT g.id, g.name, g.description, g.max_member, g.current_member, g.avatar_at, m.role
 FROM member_table m
 JOIN chat_groups g ON g.id = m.group_id
 WHERE m.member_id = $1
@@ -246,6 +280,7 @@ type ListGroupsForUserRow struct {
 	Description   string
 	MaxMember     int16
 	CurrentMember int16
+	AvatarAt      pgtype.Timestamp
 	Role          string
 }
 
@@ -264,6 +299,7 @@ func (q *Queries) ListGroupsForUser(ctx context.Context, memberID uuid.UUID) ([]
 			&i.Description,
 			&i.MaxMember,
 			&i.CurrentMember,
+			&i.AvatarAt,
 			&i.Role,
 		); err != nil {
 			return nil, err
@@ -291,6 +327,20 @@ func (q *Queries) LockGroup(ctx context.Context, id uuid.UUID) (LockGroupRow, er
 	var i LockGroupRow
 	err := row.Scan(&i.MaxMember, &i.CurrentMember)
 	return i, err
+}
+
+const setGroupAvatarAt = `-- name: SetGroupAvatarAt :exec
+UPDATE chat_groups SET avatar_at = $1::timestamp, updated_at = NOW() WHERE id = $2
+`
+
+type SetGroupAvatarAtParams struct {
+	At pgtype.Timestamp
+	ID uuid.UUID
+}
+
+func (q *Queries) SetGroupAvatarAt(ctx context.Context, arg SetGroupAvatarAtParams) error {
+	_, err := q.db.Exec(ctx, setGroupAvatarAt, arg.At, arg.ID)
+	return err
 }
 
 const setGroupMemberCount = `-- name: SetGroupMemberCount :exec
@@ -362,4 +412,20 @@ func (q *Queries) UpdateGroupInfo(ctx context.Context, arg UpdateGroupInfoParams
 	var i UpdateGroupInfoRow
 	err := row.Scan(&i.Name, &i.Description)
 	return i, err
+}
+
+const upsertGroupAvatar = `-- name: UpsertGroupAvatar :exec
+INSERT INTO group_avatars (group_id, image, updated_at) VALUES ($1, $2, $3::timestamp)
+ON CONFLICT (group_id) DO UPDATE SET image = EXCLUDED.image, updated_at = EXCLUDED.updated_at
+`
+
+type UpsertGroupAvatarParams struct {
+	GroupID uuid.UUID
+	Image   []byte
+	At      pgtype.Timestamp
+}
+
+func (q *Queries) UpsertGroupAvatar(ctx context.Context, arg UpsertGroupAvatarParams) error {
+	_, err := q.db.Exec(ctx, upsertGroupAvatar, arg.GroupID, arg.Image, arg.At)
+	return err
 }

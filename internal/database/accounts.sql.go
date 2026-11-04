@@ -28,6 +28,21 @@ func (q *Queries) BumpEmailCodeAttempts(ctx context.Context, arg BumpEmailCodeAt
 	return attempts, err
 }
 
+const changeEmail = `-- name: ChangeEmail :exec
+UPDATE users SET email = $1, email_verified_at = NOW(), updated_at = NOW() WHERE id = $2
+`
+
+type ChangeEmailParams struct {
+	Email string
+	ID    uuid.UUID
+}
+
+// the new address was just proven with a code
+func (q *Queries) ChangeEmail(ctx context.Context, arg ChangeEmailParams) error {
+	_, err := q.db.Exec(ctx, changeEmail, arg.Email, arg.ID)
+	return err
+}
+
 const createIdentity = `-- name: CreateIdentity :exec
 INSERT INTO user_identities (provider, subject, user_id, email) VALUES ($1, $2, $3, $4)
 `
@@ -179,7 +194,7 @@ func (q *Queries) FriendIDsOf(ctx context.Context, userID uuid.UUID) ([]uuid.UUI
 }
 
 const getEmailCode = `-- name: GetEmailCode :one
-SELECT user_id, purpose, code_hash, attempts, expires_at, created_at FROM email_codes WHERE user_id = $1 AND purpose = $2
+SELECT user_id, purpose, code_hash, attempts, expires_at, created_at, new_email FROM email_codes WHERE user_id = $1 AND purpose = $2
 `
 
 type GetEmailCodeParams struct {
@@ -197,6 +212,7 @@ func (q *Queries) GetEmailCode(ctx context.Context, arg GetEmailCodeParams) (Ema
 		&i.Attempts,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.NewEmail,
 	)
 	return i, err
 }
@@ -316,6 +332,33 @@ type SetPasswordHashParams struct {
 
 func (q *Queries) SetPasswordHash(ctx context.Context, arg SetPasswordHashParams) error {
 	_, err := q.db.Exec(ctx, setPasswordHash, arg.ID, arg.Password)
+	return err
+}
+
+const upsertEmailChangeCode = `-- name: UpsertEmailChangeCode :exec
+INSERT INTO email_codes (user_id, purpose, code_hash, expires_at, created_at, new_email)
+VALUES ($1, 'change_email', $2, $3, $4::timestamp, $5)
+ON CONFLICT (user_id, purpose)
+DO UPDATE SET code_hash = EXCLUDED.code_hash, attempts = 0, expires_at = EXCLUDED.expires_at,
+              created_at = EXCLUDED.created_at, new_email = EXCLUDED.new_email
+`
+
+type UpsertEmailChangeCodeParams struct {
+	UserID    uuid.UUID
+	CodeHash  string
+	ExpiresAt pgtype.Timestamp
+	CreatedAt pgtype.Timestamp
+	NewEmail  pgtype.Text
+}
+
+func (q *Queries) UpsertEmailChangeCode(ctx context.Context, arg UpsertEmailChangeCodeParams) error {
+	_, err := q.db.Exec(ctx, upsertEmailChangeCode,
+		arg.UserID,
+		arg.CodeHash,
+		arg.ExpiresAt,
+		arg.CreatedAt,
+		arg.NewEmail,
+	)
 	return err
 }
 

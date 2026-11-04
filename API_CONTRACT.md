@@ -297,6 +297,23 @@ new password, `401` wrong old password, `409` the account signs in with Google
 only and has no password (set one with **Password reset**), `404` user not
 found. Maximum 5 requests/minute.
 
+### Change email
+
+1. `POST /api/users/me/email` with `{"email":"new@example.com","password":"…"}`
+   (or `"google_id_token"` for accounts without a password) → `202
+   {"status":"check_your_email"}`. A 6-digit code goes to the **new**
+   address and expires in 2 minutes. `401` wrong password, `400` invalid
+   address or your current one, `429` (with `Retry-After`) if a code was
+   sent less than a minute ago. If the new address already has an account,
+   the answer is the same but no code is sent (its owner gets a notice), so
+   this can't be used to find out who is registered.
+2. `POST /api/users/me/email/confirm` with `{"code":"123456"}` → `200` with
+   the same body as login (new `token` and `refresh_token`). **Every other
+   session ends**, and so does the token you called this with: switch to the
+   new tokens, reconnect the WebSocket and register the push token again.
+   The old address gets a notice. `400` wrong or expired code (5 wrong
+   tries end it), `409` if the address was taken in the meantime.
+
 ### Delete account
 
 `DELETE /api/users/me` — authenticated. Body `{"password":"…"}`, or for an
@@ -505,7 +522,7 @@ are case-insensitively unique (`409`). Maximum 10 groups created per minute.
 
 ```json
 {"groups":[{"id":"group-uuid","name":"devs","description":"Team chat",
-  "max_members":20,"member_count":3,"role":"Leader"}]}
+  "max_members":20,"member_count":3,"role":"Leader","avatar_url":null}]}
 ```
 
 Every group the caller belongs to, sorted by name. `role` is the caller's
@@ -517,7 +534,7 @@ role: `Leader` or `member`.
 
 ```json
 {"id":"group-uuid","name":"devs","description":"Team chat","max_members":20,
- "member_count":3,"is_member":true,
+ "member_count":3,"is_member":true,"avatar_url":"/api/chats/groups/group-uuid/avatar?v=1762300000000",
  "members":[{"user_id":"uuid","name":"alice","role":"Leader","avatar_url":null}]}
 ```
 
@@ -585,10 +602,32 @@ requests/minute across these routes.
   leave). `400` for yourself or a non-member.
 - `DELETE /api/chats/groups/{group_id}` → `204`: deletes the group with all
   its messages and reactions, for everyone.
+- `POST /api/chats/groups/{group_id}/members` with `{"user_id":"…"}` → `201`:
+  adds one of **your friends** directly, without an invite code. `403` if
+  they aren't your friend (blocking ends a friendship, so blocked people
+  can't be added), `409` if they're already in or the group is full. They
+  get `GroupAdded` on the WebSocket and, if offline, a `group_added` push.
 
 Members are told over the WebSocket: `GroupUpdated` for changes (refetch
 the group) and `GroupRemoved` for whoever was kicked, or for everyone when
 the group is deleted.
+
+### Group picture
+
+- `PUT /api/chats/groups/{group_id}/avatar` (leader) — the body is the image
+  itself (JPEG, PNG or WebP, at most 5 MB and 40 megapixels; any
+  Content-Type). → `200 {"avatar_url":"/api/chats/groups/…/avatar?v=…"}`. It
+  is cropped to the centre square, resized to 256×256 and re-encoded as JPEG
+  (metadata such as GPS is dropped). `400` not an image, `413` too large,
+  `403` not the leader. 5 uploads/minute.
+- `DELETE /api/chats/groups/{group_id}/avatar` (leader) → `204`.
+- `GET <avatar_url>` (members only, with the token) → the JPEG, with
+  `ETag` and a one-year private cache: the URL changes with every upload,
+  so keep cached copies. `404` without a picture or for non-members.
+
+`avatar_url` (or `null`) appears in My groups, Group details and the
+conversation list. Members get `GroupUpdated` with `change: "info"` when it
+changes.
 
 ## Messages
 
@@ -862,6 +901,7 @@ over the WebSocket (when the app is open, the live events are enough).
 |---|---|---|---|---|
 | `private` | sender name | message text (≤120 chars) | `from_id`, `msg_id` | one per chat |
 | `public` | group name | `sender: text` | `from_id`, `group_id`, `msg_id` | one per group |
+| `group_added` | group name | `bob added you to the group` | `from_id`, `group_id` | one per group |
 | `friend_request` | Friend request | `bob sent you a friend request` | `from_id` | |
 | `friend_accept` | Friend request accepted | `bob accepted your friend request` | `from_id` | |
 | `reaction` | reactor (`in <group>`) | `reacted ❤️ to your message` | `from_id`, `msg_id`, `group_id`? | one per message |
@@ -923,8 +963,9 @@ upgrade (no or bad token) returns `401` JSON instead of switching protocols.
 | `Reaction` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","emoji":"❤️"}`: `emoji` is `""` when the reaction was removed; `group_id` only for group messages |
 | `MsgEdited` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","msg":"new text","edited_at":"…"}`; `group_id` only for group messages |
 | `MsgDeleted` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…"}`: show the placeholder and drop its reactions |
-| `GroupUpdated` | `{"group_id":"…","change":"info|leader|members","user_id":"…"}`: `info` = name/description changed; `leader` = `user_id` is the new leader; `members` = `user_id` was removed. Refetch the group |
+| `GroupUpdated` | `{"group_id":"…","change":"info|leader|members|joined","user_id":"…"}`: `info` = name, description or picture changed; `leader` = `user_id` is the new leader; `members` = `user_id` was removed; `joined` = the leader added `user_id`. Refetch the group |
 | `GroupRemoved` | `{"group_id":"…","reason":"kicked|deleted"}`: you are no longer in that group; drop it from the list |
+| `GroupAdded` | `{"group_id":"…","by_id":"uuid"}`: the leader `by_id` added you to a group; refetch the group list |
 | `GroupRead` | `{"group_id":"…","user_id":"uuid","msg_id":"…"}`: `user_id` has read the group up to `msg_id` (and everything before it). Groups of up to 50 only |
 | `Presence` | `{"user_id":"uuid","online":true}`, `{"user_id":"uuid","online":false,"last_seen_at":"…"}`, or `{"user_id":"uuid","online":false,"hidden":true}`: a friend came online, went offline, or hid their last seen. Ignore it while you hide yours |
 

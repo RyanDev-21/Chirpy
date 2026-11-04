@@ -3,10 +3,13 @@ package groups
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"strconv"
 
 	"RyanDev-21.com/Chirpy/internal/platform/httpx"
 	"RyanDev-21.com/Chirpy/internal/platform/reqctx"
+	"RyanDev-21.com/Chirpy/internal/users"
 	"github.com/google/uuid"
 )
 
@@ -20,7 +23,7 @@ func NewGroupHandler(groupService GroupService) *GroupHandler {
 
 func writeGroupError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, ErrNotFoundGroup):
+	case errors.Is(err, ErrNotFoundGroup), errors.Is(err, ErrNoAvatar):
 		httpx.Error(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrDuplicateName), errors.Is(err, ErrAlreadyMember), errors.Is(err, ErrGroupFull):
 		httpx.Error(w, http.StatusConflict, err.Error())
@@ -28,10 +31,14 @@ func writeGroupError(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, ErrKickSelf), errors.Is(err, ErrAlreadyLeader), errors.Is(err, ErrNothingToUpdate),
 		errors.Is(err, ErrInvalidGroupInfo):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, users.ErrBadImage):
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, users.ErrImageTooLarge):
+		httpx.Error(w, http.StatusRequestEntityTooLarge, err.Error())
 	case errors.Is(err, ErrInvalidInviteCode):
 		// same answer as an unknown code: don't help anyone probe the format
 		httpx.Error(w, http.StatusNotFound, "invalid invite code")
-	case errors.Is(err, ErrLeaderCannotLeave), errors.Is(err, ErrNotLeader):
+	case errors.Is(err, ErrLeaderCannotLeave), errors.Is(err, ErrNotLeader), errors.Is(err, ErrNotFriend):
 		httpx.Error(w, http.StatusForbidden, err.Error())
 	default:
 		httpx.ServerError(w, r, err)
@@ -263,4 +270,86 @@ func (h *GroupHandler) TransferLeader(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// AddMember handles POST /api/chats/groups/{group_id}/members {"user_id"}:
+// the leader adds one of their friends.
+func (h *GroupHandler) AddMember(w http.ResponseWriter, r *http.Request) {
+	groupID, me, ok := leaderAction(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		UserID uuid.UUID `json:"user_id"`
+	}
+	if err := httpx.Decode(w, r, &body); err != nil || body.UserID == uuid.Nil {
+		httpx.Error(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	if err := h.groupService.AddFriend(r.Context(), groupID, me, body.UserID); err != nil {
+		writeGroupError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+}
+
+// UploadAvatar handles PUT /api/chats/groups/{group_id}/avatar (leader);
+// the body is the image (JPEG, PNG or WebP, at most 5 MB).
+func (h *GroupHandler) UploadAvatar(w http.ResponseWriter, r *http.Request) {
+	groupID, me, ok := leaderAction(w, r)
+	if !ok {
+		return
+	}
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, users.MaxAvatarUpload))
+	var tooBig *http.MaxBytesError
+	switch {
+	case errors.As(err, &tooBig):
+		httpx.Error(w, http.StatusRequestEntityTooLarge, users.ErrImageTooLarge.Error())
+		return
+	case err != nil:
+		httpx.Error(w, http.StatusBadRequest, "could not read the upload")
+		return
+	}
+	url, err := h.groupService.SetAvatar(r.Context(), groupID, me, raw)
+	if err != nil {
+		writeGroupError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]*string{"avatar_url": url})
+}
+
+// DeleteAvatar handles DELETE /api/chats/groups/{group_id}/avatar (leader).
+func (h *GroupHandler) DeleteAvatar(w http.ResponseWriter, r *http.Request) {
+	groupID, me, ok := leaderAction(w, r)
+	if !ok {
+		return
+	}
+	if err := h.groupService.DeleteAvatar(r.Context(), groupID, me); err != nil {
+		writeGroupError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Avatar handles GET /api/chats/groups/{group_id}/avatar (members): the JPEG.
+func (h *GroupHandler) Avatar(w http.ResponseWriter, r *http.Request) {
+	groupID, me, ok := leaderAction(w, r)
+	if !ok {
+		return
+	}
+	img, at, err := h.groupService.Avatar(r.Context(), groupID, me)
+	if err != nil {
+		writeGroupError(w, r, err)
+		return
+	}
+	etag := `"` + strconv.FormatInt(at.UnixMilli(), 10) + `"`
+	w.Header().Set("ETag", etag)
+	// versioned URL; private because only members may fetch it
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	_, _ = w.Write(img)
 }

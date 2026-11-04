@@ -34,7 +34,7 @@ DELETE FROM member_table WHERE group_id = $1 AND member_id = $2;
 UPDATE chat_groups SET current_member = $2, updated_at = NOW() WHERE id = $1;
 
 -- name: ListGroupsForUser :many
-SELECT g.id, g.name, g.description, g.max_member, g.current_member, m.role
+SELECT g.id, g.name, g.description, g.max_member, g.current_member, g.avatar_at, m.role
 FROM member_table m
 JOIN chat_groups g ON g.id = m.group_id
 WHERE m.member_id = $1
@@ -67,3 +67,19 @@ RETURNING name, description;
 
 -- name: SetMemberRole :exec
 UPDATE member_table SET role = @role WHERE group_id = @group_id AND member_id = @member_id;
+
+-- name: UpsertGroupAvatar :exec
+INSERT INTO group_avatars (group_id, image, updated_at) VALUES (@group_id, @image, @at::timestamp)
+ON CONFLICT (group_id) DO UPDATE SET image = EXCLUDED.image, updated_at = EXCLUDED.updated_at;
+
+-- name: SetGroupAvatarAt :exec
+UPDATE chat_groups SET avatar_at = sqlc.narg(at)::timestamp, updated_at = NOW() WHERE id = @id;
+
+-- name: DeleteGroupAvatar :exec
+DELETE FROM group_avatars WHERE group_id = $1;
+
+-- name: GroupAvatarForMember :one
+-- the picture, only for a member of the group
+SELECT a.image, a.updated_at FROM group_avatars a
+JOIN member_table m ON m.group_id = a.group_id AND m.member_id = @viewer
+WHERE a.group_id = @group_id;

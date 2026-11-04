@@ -48,6 +48,12 @@ type GroupRepo interface {
 	TransferLeader(ctx context.Context, groupID, leader, target uuid.UUID) error
 	// Delete removes the group with its messages; returns who was in it.
 	Delete(ctx context.Context, groupID, leader uuid.UUID) ([]uuid.UUID, error)
+	// AddMember adds target directly (ErrAlreadyMember, ErrGroupFull).
+	AddMember(ctx context.Context, groupID, leader, target uuid.UUID) error
+	SetAvatar(ctx context.Context, groupID, leader uuid.UUID, img []byte, at time.Time) error
+	DeleteAvatar(ctx context.Context, groupID, leader uuid.UUID) error
+	// Avatar is ErrNoAvatar without a picture or for a non-member.
+	Avatar(ctx context.Context, groupID, viewer uuid.UUID) ([]byte, time.Time, error)
 }
 
 type groupRepo struct {
@@ -209,7 +215,7 @@ func (r *groupRepo) ListForUser(ctx context.Context, userID uuid.UUID) ([]GroupS
 	}
 	out := make([]GroupSummary, 0, len(rows))
 	for _, g := range rows {
-		out = append(out, GroupSummary{ID: g.ID, Name: g.Name, Description: g.Description, MaxMembers: g.MaxMember, Members: g.CurrentMember, Role: g.Role})
+		out = append(out, GroupSummary{ID: g.ID, Name: g.Name, Description: g.Description, MaxMembers: g.MaxMember, Members: g.CurrentMember, Role: g.Role, AvatarURL: AvatarURL(g.ID, g.AvatarAt)})
 	}
 	return out, nil
 }
@@ -235,7 +241,8 @@ func (r *groupRepo) Detail(ctx context.Context, groupID, viewer uuid.UUID) (Grou
 		}
 	}
 	if d.IsMember {
-		d.Members = members // the member list is only shown to members
+		d.Members = members // the member list and picture are only shown to members
+		d.AvatarURL = AvatarURL(g.ID, g.AvatarAt)
 	}
 	return d, nil
 }
@@ -331,3 +338,54 @@ func (r *groupRepo) Delete(ctx context.Context, groupID, leader uuid.UUID) ([]uu
 // nowUTC is the server clock, which also stamps every message: comparing
 // join times with message times must not mix in the database's clock.
 func nowUTC() pgtype.Timestamp { return pgtype.Timestamp{Time: time.Now().UTC(), Valid: true} }
+
+// AddMember: the leader adds target (the caller checks friendship).
+func (r *groupRepo) AddMember(ctx context.Context, groupID, leader, target uuid.UUID) error {
+	return r.asLeader(ctx, groupID, leader, func(q *database.Queries, g database.LockGroupRow) error {
+		_, err := q.GetMemberRole(ctx, database.GetMemberRoleParams{GroupID: groupID, MemberID: target})
+		if err == nil {
+			return ErrAlreadyMember
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if g.CurrentMember >= g.MaxMember {
+			return ErrGroupFull
+		}
+		if err := q.AddMember(ctx, database.AddMemberParams{GroupID: groupID, MemberID: target, JoinedAt: nowUTC()}); err != nil {
+			return err
+		}
+		return q.SetGroupMemberCount(ctx, database.SetGroupMemberCountParams{ID: groupID, CurrentMember: g.CurrentMember + 1})
+	})
+}
+
+func (r *groupRepo) SetAvatar(ctx context.Context, groupID, leader uuid.UUID, img []byte, at time.Time) error {
+	return r.asLeader(ctx, groupID, leader, func(q *database.Queries, _ database.LockGroupRow) error {
+		t := pgtype.Timestamp{Time: at, Valid: true}
+		if err := q.UpsertGroupAvatar(ctx, database.UpsertGroupAvatarParams{GroupID: groupID, Image: img, At: t}); err != nil {
+			return err
+		}
+		return q.SetGroupAvatarAt(ctx, database.SetGroupAvatarAtParams{ID: groupID, At: t})
+	})
+}
+
+func (r *groupRepo) DeleteAvatar(ctx context.Context, groupID, leader uuid.UUID) error {
+	return r.asLeader(ctx, groupID, leader, func(q *database.Queries, _ database.LockGroupRow) error {
+		if err := q.DeleteGroupAvatar(ctx, groupID); err != nil {
+			return err
+		}
+		return q.SetGroupAvatarAt(ctx, database.SetGroupAvatarAtParams{ID: groupID})
+	})
+}
+
+// Avatar is ErrNoAvatar without a picture or for a non-member.
+func (r *groupRepo) Avatar(ctx context.Context, groupID, viewer uuid.UUID) ([]byte, time.Time, error) {
+	a, err := r.q.GroupAvatarForMember(ctx, database.GroupAvatarForMemberParams{GroupID: groupID, Viewer: viewer})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, time.Time{}, ErrNoAvatar
+	}
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return a.Image, a.UpdatedAt.Time.UTC(), nil
+}

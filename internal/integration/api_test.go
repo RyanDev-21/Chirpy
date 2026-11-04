@@ -236,10 +236,8 @@ func TestGroups(t *testing.T) {
 	e.expect(e.join(member.Token, code), 201)
 	e.expect(e.join(member.Token, code), 409)
 	e.expect(e.join(outsider.Token, code), 409) // full
-	// the old join-by-id route is gone: knowing a group id is not enough
-	if r := e.do("POST", members, outsider.Token, nil); r.code != 405 && r.code != 404 {
-		t.Fatalf("join by id status = %d, want 404/405", r.code)
-	}
+	// knowing a group id is not enough to join: only its leader adds people
+	e.expect(e.do("POST", members, outsider.Token, map[string]string{"user_id": outsider.ID}), 404)
 	e.now(`SELECT current_member::text FROM chat_groups WHERE id = $1`, "2", g.ChatID)
 
 	send := map[string]string{"msg": "standup?", "to_id": g.ChatID, "type": "public"}

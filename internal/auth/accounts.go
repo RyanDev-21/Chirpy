@@ -28,12 +28,16 @@ var (
 	// ErrGoogleUnavailable: GOOGLE_CLIENT_IDS is not set on this server
 	ErrGoogleUnavailable = errors.New("Google sign-in is not configured")
 	ErrReauthRequired    = errors.New("confirm with your password or a fresh Google sign-in")
+	ErrSameEmail         = errors.New("that is already your email address")
+	ErrCodeTooSoon       = errors.New("a code was just sent; wait a minute before asking for another")
+	ErrEmailTaken        = errors.New("that email address now belongs to another account")
 )
 
 const (
 	purposeVerify = "verify_email"
 	purposeReset  = "reset_password"
 	purposeAdmin  = "admin_login"
+	purposeEmail  = "change_email"
 	// AdminSessionTTL is how long an admin-page sign-in lasts.
 	AdminSessionTTL = 30 * time.Minute
 
@@ -95,6 +99,13 @@ type AccountService interface {
 	AdminStart(ctx context.Context, email, password string) error
 	// AdminVerify trades that code for an admin-page token.
 	AdminVerify(ctx context.Context, email, code string) (string, error)
+	// StartEmailChange (password or fresh Google token) mails a code to the
+	// new address. If that address already has an account, its owner is
+	// told instead, and the answer is the same.
+	StartEmailChange(ctx context.Context, userID uuid.UUID, newEmail, password, googleIDToken string) error
+	// ConfirmEmailChange switches to the new address, ends every session,
+	// tells the old address, and returns a fresh session for this device.
+	ConfirmEmailChange(ctx context.Context, userID uuid.UUID, code string) (*Session, error)
 }
 
 type tokenIssuer interface {
@@ -159,17 +170,31 @@ func (s *accountService) sendCode(ctx context.Context, u *users.User, purpose st
 // checkCode consumes a code. Wrong guesses count; the code dies after
 // codeMaxAttempts. Every failure is ErrInvalidCode.
 func (s *accountService) checkCode(ctx context.Context, userID uuid.UUID, purpose, code string) error {
+	_, err := s.checkCodeFor(ctx, userID, purpose, code)
+	return err
+}
+
+// checkCodeFor is checkCode returning the consumed code (with NewEmail).
+func (s *accountService) checkCodeFor(ctx context.Context, userID uuid.UUID, purpose, code string) (storedCode, error) {
 	c, err := s.repo.GetCode(ctx, userID, purpose)
 	if err != nil || s.now().After(c.ExpiresAt) {
-		return ErrInvalidCode
+		return storedCode{}, ErrInvalidCode
 	}
-	if !hmac.Equal([]byte(c.Hash), []byte(s.hashCode(userID, purpose, strings.TrimSpace(code)))) {
+	if !hmac.Equal([]byte(c.Hash), []byte(s.hashCode(userID, bound(purpose, c.NewEmail), strings.TrimSpace(code)))) {
 		if n, err := s.repo.BumpAttempts(ctx, userID, purpose); err == nil && n >= codeMaxAttempts {
 			_ = s.repo.DeleteCode(ctx, userID, purpose)
 		}
-		return ErrInvalidCode
+		return storedCode{}, ErrInvalidCode
 	}
-	return s.repo.DeleteCode(ctx, userID, purpose)
+	return c, s.repo.DeleteCode(ctx, userID, purpose)
+}
+
+// bound ties an email-change code to the address it was sent to.
+func bound(purpose, newEmail string) string {
+	if newEmail == "" {
+		return purpose
+	}
+	return purpose + "|" + newEmail
 }
 
 func (s *accountService) send(ctx context.Context, m mail.Message) error {
@@ -363,6 +388,23 @@ func (s *accountService) CompleteGoogleSignup(ctx context.Context, signupToken, 
 // DeleteAccount needs the password, or for an account without one a fresh
 // Google ID token for the same Google account.
 func (s *accountService) DeleteAccount(ctx context.Context, userID uuid.UUID, password, googleIDToken string) error {
+	if err := s.reauth(ctx, userID, password, googleIDToken); err != nil {
+		return err
+	}
+	friends, groups, err := s.repo.DeleteUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if s.invalidate != nil {
+		s.invalidate.AccountDeleted(ctx, userID, friends, groups)
+	}
+	s.logger.InfoContext(ctx, "account deleted", "user_id", userID)
+	return nil
+}
+
+// reauth checks the password, or for an account without one a fresh
+// Google ID token for the same Google account.
+func (s *accountService) reauth(ctx context.Context, userID uuid.UUID, password, googleIDToken string) error {
 	_, hash, err := s.userRepo.GetUserByID(ctx, userID)
 	if err != nil {
 		return err
@@ -384,17 +426,82 @@ func (s *accountService) DeleteAccount(ctx context.Context, userID uuid.UUID, pa
 			return ErrReauthRequired
 		}
 	default:
+		secure.BurnPasswordCheck(password) // same timing as a wrong password
 		return ErrReauthRequired
 	}
-	friends, groups, err := s.repo.DeleteUser(ctx, userID)
+	return nil
+}
+
+// --- changing the email address ---
+
+func (s *accountService) StartEmailChange(ctx context.Context, userID uuid.UUID, newEmail, password, googleIDToken string) error {
+	email := normEmail(newEmail)
+	if err := users.ValidateEmail(email); err != nil {
+		return err
+	}
+	if err := s.reauth(ctx, userID, password, googleIDToken); err != nil {
+		return err
+	}
+	u, _, err := s.userRepo.GetUserByID(ctx, userID)
 	if err != nil {
 		return err
 	}
-	if s.invalidate != nil {
-		s.invalidate.AccountDeleted(ctx, userID, friends, groups)
+	if email == u.Email {
+		return ErrSameEmail
 	}
-	s.logger.InfoContext(ctx, "account deleted", "user_id", userID)
-	return nil
+	if c, err := s.repo.GetCode(ctx, userID, purposeEmail); err == nil && s.now().Sub(c.CreatedAt) < codeResendGap {
+		return ErrCodeTooSoon
+	}
+	if other, _, err := s.userRepo.GetUserByEmail(ctx, email); err == nil {
+		// don't reveal that the address is registered: its owner hears about it
+		_ = s.repo.PutEmailChange(ctx, userID, "", email, s.now(), s.now()) // keeps the resend gap; can't match
+		return s.send(ctx, emailInUseNotice(other))
+	} else if !errors.Is(err, users.ErrUserNotFound) {
+		return err
+	}
+	code, err := newCode()
+	if err != nil {
+		return err
+	}
+	now := s.now()
+	if err := s.repo.PutEmailChange(ctx, userID, s.hashCode(userID, bound(purposeEmail, email), code), email, now, now.Add(codeTTL)); err != nil {
+		return err
+	}
+	to := *u
+	to.Email = email
+	return s.send(ctx, codeEmail(&to, purposeEmail, code))
+}
+
+func (s *accountService) ConfirmEmailChange(ctx context.Context, userID uuid.UUID, code string) (*Session, error) {
+	c, err := s.checkCodeFor(ctx, userID, purposeEmail, code)
+	if err != nil {
+		return nil, err
+	}
+	if c.NewEmail == "" {
+		return nil, ErrInvalidCode
+	}
+	u, _, err := s.userRepo.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	old := u.Email
+	if err := s.repo.ChangeEmail(ctx, userID, c.NewEmail); err != nil {
+		if errors.Is(err, users.ErrDuplicateEmail) {
+			return nil, ErrEmailTaken // registered between the code and now
+		}
+		return nil, err
+	}
+	// every device signs in again, except this one, which gets new tokens
+	if err := s.userRepo.RevokeAllRefreshTokens(ctx, userID); err != nil {
+		return nil, err
+	}
+	time.Sleep(2 * time.Millisecond) // new tokens must be issued after the revocation time (ms)
+	if err := s.send(ctx, emailChangedNotice(u, old, c.NewEmail)); err != nil {
+		s.logger.WarnContext(ctx, "could not tell the old address about the email change", "user_id", userID)
+	}
+	s.logger.InfoContext(ctx, "email changed", "user_id", userID)
+	u.Email, u.Verified = c.NewEmail, true
+	return s.session(ctx, u)
 }
 
 func (s *accountService) session(ctx context.Context, u *users.User) (*Session, error) {
@@ -414,6 +521,8 @@ func codeEmail(u *users.User, purpose, code string) mail.Message {
 		what, subject = "reset your password", "Your Chirpy password reset code"
 	case purposeAdmin:
 		what, subject = "sign in to the Chirpy admin page", "Your Chirpy admin sign-in code"
+	case purposeEmail:
+		what, subject = "use this address for your Chirpy account", "Confirm your new Chirpy email"
 	}
 	text := fmt.Sprintf("Hi %s,\n\nYour code to %s is %s.\nIt expires in %d minutes.\n\nIf you didn't ask for this, you can ignore this email.\n", u.Name, what, code, int(codeTTL.Minutes()))
 	html := fmt.Sprintf(`<p>Hi %s,</p><p>Your code to %s is</p><p style="font-size:28px;font-weight:bold;letter-spacing:4px">%s</p><p>It expires in %d minutes. If you didn't ask for this, you can ignore this email.</p>`,
@@ -425,6 +534,29 @@ func alreadyRegisteredEmail(u *users.User) mail.Message {
 	text := fmt.Sprintf("Hi %s,\n\nSomeone tried to create a new Chirpy account with this email address, which already has an account. If it was you, sign in instead or reset your password. If not, you can ignore this email.\n", u.Name)
 	return mail.Message{To: u.Email, Subject: "Someone tried to sign up with your email", Text: text,
 		HTML: "<p>" + strings.ReplaceAll(htmlEscape(text), "\n", "<br>") + "</p>"}
+}
+
+func emailInUseNotice(u *users.User) mail.Message {
+	text := fmt.Sprintf("Hi %s,\n\nSomeone tried to move another Chirpy account to this email address, which already has an account (yours). Nothing was changed. If you didn't expect this, you can ignore this email.\n", u.Name)
+	return mail.Message{To: u.Email, Subject: "Someone tried to use your email on Chirpy", Text: text,
+		HTML: "<p>" + strings.ReplaceAll(htmlEscape(text), "\n", "<br>") + "</p>"}
+}
+
+// emailChangedNotice goes to the old address after a change.
+func emailChangedNotice(u *users.User, old, now string) mail.Message {
+	text := fmt.Sprintf("Hi %s,\n\nThe email address of your Chirpy account was changed from %s to %s, and you were signed out on your other devices.\n\nIf you didn't do this, write to support@ponypigeon.com right away.\n", u.Name, old, maskEmail(now))
+	return mail.Message{To: old, Subject: "Your Chirpy email address was changed", Text: text,
+		HTML: "<p>" + strings.ReplaceAll(htmlEscape(text), "\n", "<br>") + "</p>"}
+}
+
+// maskEmail shows enough of an address to recognise it: al***@example.com.
+func maskEmail(e string) string {
+	at := strings.LastIndexByte(e, '@')
+	if at < 0 {
+		return "***"
+	}
+	keep := min(2, at)
+	return e[:keep] + "***" + e[at:]
 }
 
 func htmlEscape(s string) string {

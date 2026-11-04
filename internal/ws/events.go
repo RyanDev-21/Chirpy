@@ -16,21 +16,28 @@ type Event struct {
 
 // event names sent to clients
 const (
-	EventMessage   = "msg"
-	EventTyping    = "Typing"
-	EventSeen      = "Seen"
-	EventAddFriend = "AddFri"
-	EventAccept    = "AcceptFri"
-	EventDeny      = "DenyFri"
-	EventUnfriend  = "RemoveFri"
-	EventReaction  = "Reaction"
-	EventEdited    = "MsgEdited"
-	EventDeleted   = "MsgDeleted"
-	EventGroupUpd  = "GroupUpdated"
-	EventGroupGone = "GroupRemoved"
-	EventGroupRead = "GroupRead"
-	EventPresence  = "Presence"
+	EventMessage    = "msg"
+	EventTyping     = "Typing"
+	EventSeen       = "Seen"
+	EventAddFriend  = "AddFri"
+	EventAccept     = "AcceptFri"
+	EventDeny       = "DenyFri"
+	EventUnfriend   = "RemoveFri"
+	EventReaction   = "Reaction"
+	EventEdited     = "MsgEdited"
+	EventDeleted    = "MsgDeleted"
+	EventGroupUpd   = "GroupUpdated"
+	EventGroupGone  = "GroupRemoved"
+	EventGroupRead  = "GroupRead"
+	EventGroupAdded = "GroupAdded"
+	EventPresence   = "Presence"
 )
+
+// OutGroupAdded tells a user that by_id (the leader) added them to group_id.
+type OutGroupAdded struct {
+	GroupID string `json:"group_id"`
+	ByID    string `json:"by_id"`
+}
 
 // OutGroupReadEvent: user_id has read group_id up to msg_id (groups of up
 // to 50 members only).
@@ -111,8 +118,8 @@ type OutDeletedEvent struct {
 }
 
 // OutGroupUpdated tells members that a group changed; change is "info"
-// (name/description), "leader" (user_id is the new leader) or "members"
-// (user_id was removed). Clients refetch the group for details.
+// (name/description/picture), "leader" (user_id is the new leader),
+// "members" (user_id was removed) or "joined" (the leader added user_id). Clients refetch the group for details.
 type OutGroupUpdated struct {
 	GroupID string `json:"group_id"`
 	Change  string `json:"change"`
