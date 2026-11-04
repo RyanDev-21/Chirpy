@@ -41,7 +41,8 @@ type Config struct {
 	// billed per command: the stream readers poll even when idle.
 	QueueBackend string
 
-	JWTSecret       string
+	JWTSecret string
+	// Token lifetimes; zero means the defaults (15 minutes, 30 days).
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 
@@ -114,8 +115,6 @@ func Load() (Config, error) {
 		TLSCertFile:     os.Getenv("TLS_CERT_FILE"),
 		TLSKeyFile:      os.Getenv("TLS_KEY_FILE"),
 		CORSOrigins:     splitList(getenv("CORS_ALLOWED_ORIGINS", "")),
-		AccessTokenTTL:  time.Hour,
-		RefreshTokenTTL: 30 * 24 * time.Hour,
 		ShutdownTimeout: 15 * time.Second,
 		LogLevel:        getenv("LOG_LEVEL", "info"),
 		LogFormat:       getenv("LOG_FORMAT", "json"),

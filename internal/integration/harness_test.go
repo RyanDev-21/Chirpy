@@ -72,6 +72,7 @@ type env struct {
 	cancel context.CancelFunc
 	mail   *mail.Memory
 	google *fakeGoogle
+	app    *app.App
 }
 
 // fakeGoogle accepts ID tokens registered in tokens (token -> claims).
@@ -160,7 +161,7 @@ func newEnv(t *testing.T, opts ...func(*config.Config)) *env {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(a.Router())
-	e := &env{t: t, srv: srv, db: db, redis: rdb, cancel: cancel, mail: mem, google: gg}
+	e := &env{t: t, srv: srv, db: db, redis: rdb, cancel: cancel, mail: mem, google: gg, app: a}
 	t.Cleanup(func() {
 		srv.Close()
 		cancel()

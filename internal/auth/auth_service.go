@@ -24,15 +24,34 @@ type authService struct {
 	authRepo AuthRepo
 	userRepo users.UserRepo
 	secret   string
-	logger   *slog.Logger
+	// accessTTL is short because access tokens are stateless JWTs that cannot
+	// be revoked: a stolen one works until it expires. refreshTTL is how long
+	// a device stays signed in without using the app.
+	accessTTL  time.Duration
+	refreshTTL time.Duration
+	logger     *slog.Logger
 }
 
-func NewAuthService(userRepo users.UserRepo, authRepo AuthRepo, secret string, logger *slog.Logger) AuthService {
+// Default token lifetimes, used when the config leaves them unset.
+const (
+	DefaultAccessTTL  = 15 * time.Minute
+	DefaultRefreshTTL = 30 * 24 * time.Hour
+)
+
+func NewAuthService(userRepo users.UserRepo, authRepo AuthRepo, secret string, accessTTL, refreshTTL time.Duration, logger *slog.Logger) AuthService {
+	if accessTTL <= 0 {
+		accessTTL = DefaultAccessTTL
+	}
+	if refreshTTL <= 0 {
+		refreshTTL = DefaultRefreshTTL
+	}
 	return &authService{
-		authRepo: authRepo,
-		userRepo: userRepo,
-		secret:   secret,
-		logger:   logger,
+		authRepo:   authRepo,
+		userRepo:   userRepo,
+		secret:     secret,
+		accessTTL:  accessTTL,
+		refreshTTL: refreshTTL,
+		logger:     logger,
 	}
 }
 
@@ -102,13 +121,8 @@ func (s *authService) Refresh(ctx context.Context, token string) (string, string
 	return s.issue(ctx, rt.UserID)
 }
 
-const (
-	accessTokenTTL  = time.Hour
-	refreshTokenTTL = 30 * 24 * time.Hour
-)
-
 func (s *authService) issue(ctx context.Context, userID uuid.UUID) (string, string, error) {
-	accessToken, err := secure.MakeJWT(userID, s.secret, accessTokenTTL)
+	accessToken, err := secure.MakeJWT(userID, s.secret, s.accessTTL)
 	if err != nil {
 		return "", "", fmt.Errorf("make access token: %w", err)
 	}
@@ -119,7 +133,7 @@ func (s *authService) issue(ctx context.Context, userID uuid.UUID) (string, stri
 	if err := s.authRepo.CreateRefreshToken(ctx, PayloadForRefresh{
 		token:     refreshToken,
 		userID:    userID,
-		expiresAt: time.Now().Add(refreshTokenTTL),
+		expiresAt: time.Now().UTC().Add(s.refreshTTL),
 	}); err != nil {
 		return "", "", fmt.Errorf("store refresh token: %w", err)
 	}

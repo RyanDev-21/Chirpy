@@ -60,3 +60,6 @@ DELETE FROM users WHERE id = $1;
 UPDATE chat_groups
 SET current_member = (SELECT count(*) FROM member_table WHERE group_id = $1), updated_at = NOW()
 WHERE id = $1;
+
+-- name: DeleteExpiredEmailCodes :execrows
+DELETE FROM email_codes WHERE expires_at < @now::timestamp;

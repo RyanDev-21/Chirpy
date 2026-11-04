@@ -18,8 +18,9 @@ backend. It is intended for a frontend client (web or native).
   Authorization: Bearer <access-token>
   ```
 
-- Access tokens last one hour by default. Refresh tokens last 30 days and are
-  rotated on every successful refresh. Store the replacement refresh token;
+- Access tokens last 15 minutes. Refresh tokens last 30 days and are
+  rotated on every successful refresh. Refresh shortly before the access
+  token's `exp` (or when a request returns `401`) and retry once. Store the replacement refresh token;
   the previous one becomes invalid immediately.
 
 Unless stated otherwise, an error is JSON in this shape:
@@ -162,7 +163,7 @@ Success: `200`:
 `POST /api/revoke` (log out) — send the **refresh token** (not the access
 token) as the bearer credential. Shares the 10 requests/minute auth budget.
 Always `204 No Content`, including for a token that was already revoked or
-never existed. The access token stays valid until it expires (up to one hour),
+never existed. The access token stays valid until it expires (up to 15 minutes),
 so the client should also discard it.
 
 ### Current user

@@ -148,7 +148,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	a.groups = groups.NewGroupService(groups.NewGroupRepo(db), groups.NewStore(rdb), logger)
 	a.chat = chat.NewChatService(chat.NewChatRepo(queries), chat.NewCache(rdb), a.groups, a.friends, a.hub, a.queue, logger)
 	a.hub.SetPolicy(a.chat)
-	a.auth = authsvc.NewAuthService(users.NewUserRepo(queries), authsvc.NewAuthRepo(queries), cfg.JWTSecret, logger)
+	a.auth = authsvc.NewAuthService(users.NewUserRepo(queries), authsvc.NewAuthRepo(queries), cfg.JWTSecret,
+		cfg.AccessTokenTTL, cfg.RefreshTokenTTL, logger)
 	sender := o.mailer
 	switch {
 	case sender != nil:
@@ -193,6 +194,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 // Start runs the websocket hub and queue workers until ctx is cancelled.
 func (a *App) Start(ctx context.Context) error {
 	go a.hub.Run()
+	go a.runJanitor(ctx)
 	return a.startWorkers(ctx)
 }
 
