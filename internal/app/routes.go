@@ -38,6 +38,7 @@ var (
 	// the ranking query is the heaviest read; suggestions change slowly
 	limitDiscover = limitPolicy{"discover", 20, time.Minute}
 	limitDevices  = limitPolicy{"push_settings", 30, time.Minute}
+	limitMedia    = limitPolicy{"media_upload", 60, time.Minute}
 	// every authenticated route also shares one per-user budget, so routes
 	// without a tighter policy (reads, seen markers) can't be hammered
 	limitAPI = limitPolicy{"api", 300, time.Minute}
@@ -120,6 +121,9 @@ func (a *App) Router() http.Handler {
 			r.Get("/mutes", a.handlers.push.ListMutes)
 			r.With(limit(limitDevices)).Put("/mutes", a.handlers.push.Mute)
 			r.With(limit(limitDevices)).Delete("/mutes", a.handlers.push.Unmute)
+
+			r.With(limit(limitMedia)).Post("/media", a.handlers.media.Create)
+			r.Get("/media/{media_id}", a.handlers.media.Get)
 
 			r.Get("/discover/options", a.handlers.discover.Options)
 			r.With(limit(limitDiscover)).Get("/discover", a.handlers.discover.Suggest)

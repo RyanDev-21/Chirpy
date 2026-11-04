@@ -18,6 +18,7 @@ import (
 	"RyanDev-21.com/Chirpy/internal/discover"
 	"RyanDev-21.com/Chirpy/internal/friends"
 	"RyanDev-21.com/Chirpy/internal/groups"
+	"RyanDev-21.com/Chirpy/internal/media"
 	"RyanDev-21.com/Chirpy/internal/platform/mail"
 	"RyanDev-21.com/Chirpy/internal/platform/migrate"
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
@@ -43,6 +44,7 @@ type App struct {
 	// revoked ends access tokens early (password change, account deletion)
 	revoked *revoke.Store
 	pushSvc *push.Service
+	media   *media.Service
 	hub     *ws.Hub
 
 	users   users.UserService
@@ -64,6 +66,7 @@ type handlers struct {
 	admin    *adminHandler
 	discover *discover.Handler
 	push     *push.Handler
+	media    *media.Handler
 }
 
 // New connects to Postgres and Redis and builds all services.
@@ -74,7 +77,11 @@ type options struct {
 	mailer mail.Sender
 	google authsvc.GoogleVerifier
 	push   push.Sender
+	media  media.Storage
 }
+
+// WithMediaStorage replaces R2 (tests).
+func WithMediaStorage(s media.Storage) Option { return func(o *options) { o.media = s } }
 
 // WithPushSender replaces the FCM client (tests).
 func WithPushSender(s push.Sender) Option { return func(o *options) { o.push = s } }
@@ -196,6 +203,18 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		logger.Warn("FIREBASE_SERVICE_ACCOUNT not set: push notifications disabled")
 	}
 	userRepo.devices = a.pushSvc
+
+	// photos and videos: only with R2 configured (or a test store)
+	store := o.media
+	if store == nil && cfg.R2AccountID != "" && cfg.R2Bucket != "" && cfg.R2AccessKeyID != "" && cfg.R2SecretAccessKey != "" {
+		store = media.NewR2(cfg.R2AccountID, cfg.R2Bucket, cfg.R2AccessKeyID, cfg.R2SecretAccessKey)
+	}
+	a.media = media.NewService(queries, store, a.groups, logger)
+	if store != nil {
+		a.chat.SetMedia(a.media)
+	} else {
+		logger.Warn("R2 not configured (R2_ACCOUNT_ID, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY): photos and videos disabled")
+	}
 	a.auth = authsvc.NewAuthService(users.NewUserRepo(queries), authsvc.NewAuthRepo(queries), cfg.JWTSecret,
 		cfg.AccessTokenTTL, cfg.RefreshTokenTTL, logger)
 	sender := o.mailer
@@ -230,6 +249,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		admin:    &adminHandler{queries: queries},
 		discover: discover.NewHandler(discover.NewService(queries)),
 		push:     push.NewHandler(a.pushSvc),
+		media:    media.NewHandler(a.media),
 	}
 	return a, nil
 }
