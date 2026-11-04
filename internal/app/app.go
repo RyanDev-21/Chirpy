@@ -171,21 +171,21 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	// push notifications: only with a Firebase key (or a test sender)
 	pushSender := o.push
 	if pushSender == nil && cfg.FirebaseServiceAccount != "" {
-		fcm, err := push.NewFCM(ctx, []byte(cfg.FirebaseServiceAccount))
-		if err != nil {
-			a.Close()
-			return nil, err
+		// a bad key turns push off; it must not keep the server from starting
+		if fcm, err := push.NewFCM(ctx, []byte(cfg.FirebaseServiceAccount)); err != nil {
+			logger.Error("FIREBASE_SERVICE_ACCOUNT is not a valid service account key: push notifications disabled", "error", err)
+		} else {
+			pushSender = fcm
+			go func() { // proves the key works; the result is in the logs
+				cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+				defer cancel()
+				if err := fcm.Check(cctx); err != nil {
+					logger.Error("FCM credentials check failed: push notifications will not arrive", "error", err)
+				} else {
+					logger.Info("FCM credentials OK", "project", fcm.Project())
+				}
+			}()
 		}
-		pushSender = fcm
-		go func() { // proves the key works; the result is in the logs
-			cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
-			defer cancel()
-			if err := fcm.Check(cctx); err != nil {
-				logger.Error("FCM credentials check failed: push notifications will not arrive", "error", err)
-			} else {
-				logger.Info("FCM credentials OK", "project", fcm.Project())
-			}
-		}()
 	}
 	a.pushSvc = push.NewService(queries, pushSender, a.hub, pushNames{users: a.users, groups: a.groups}, logger)
 	if pushSender != nil {
