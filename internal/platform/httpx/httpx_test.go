@@ -110,10 +110,15 @@ func TestClientIP(t *testing.T) {
 		{"one proxy takes the last hop", 1, []string{"203.0.113.7"}, "203.0.113.7"},
 		{"spoofed left entries are ignored", 1, []string{"1.2.3.4, 9.9.9.9, 203.0.113.7"}, "203.0.113.7"},
 		{"multiple header lines are joined", 1, []string{"1.2.3.4", "203.0.113.7"}, "203.0.113.7"},
-		{"two proxies take the second from the right", 2, []string{"1.2.3.4, 203.0.113.7, 10.1.1.1"}, "203.0.113.7"},
+		{"two public proxies take the second public hop", 2, []string{"1.2.3.4, 203.0.113.7, 198.51.100.9"}, "203.0.113.7"},
+		{"render: internal hop after the client is skipped", 1, []string{"203.0.113.7, 10.26.141.160"}, "203.0.113.7"},
+		{"render: spoofed entry and several internal hops", 1, []string{"6.6.6.6, 203.0.113.7, 10.29.161.137, 172.16.0.4"}, "203.0.113.7"},
+		{"a spoofed private address is skipped, not trusted", 1, []string{"203.0.113.7, 192.168.1.5"}, "203.0.113.7"},
+		{"only internal hops falls back to the peer", 1, []string{"10.0.0.1, 10.0.0.2"}, "10.0.0.9"},
+		{"cgnat counts as internal", 1, []string{"203.0.113.7, 100.64.3.2"}, "203.0.113.7"},
 		{"missing header falls back to the peer", 1, nil, "10.0.0.9"},
 		{"garbage falls back to the peer", 1, []string{"not-an-ip"}, "10.0.0.9"},
-		{"fewer hops than proxies falls back", 2, []string{"203.0.113.7"}, "10.0.0.9"},
+		{"fewer public hops than proxies falls back", 2, []string{"203.0.113.7, 10.1.1.1"}, "10.0.0.9"},
 		{"ipv6 is normalised", 1, []string{"2001:DB8::1"}, "2001:db8::1"},
 	}
 	for _, tt := range tests {
