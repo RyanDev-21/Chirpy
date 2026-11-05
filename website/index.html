@@ -5,135 +5,86 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Chirpy - chat with your friends</title>
 <meta name="description" content="Chirpy is a free chat app for friends and small groups: messages, voice calls, voice messages, photos, videos and files. No ads, and your data is never sold.">
-<meta name="theme-color" content="#5b4cf0">
+<meta name="theme-color" content="#EEEDE8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171717" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body class="landing">
 
-<header class="nav">
-  <a class="brand" href="/" aria-label="Chirpy home">
-    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><use href="#mark"/></svg>
-    <span>Chirpy</span>
-  </a>
-  <nav class="nav-links" aria-label="Main">
+<header class="top">
+  <a class="wordmark" href="/">Chirpy</a>
+  <nav>
     <a href="#features">Features</a>
     <a href="#install">Install</a>
-    <a href="/privacy">Privacy</a>
+    <a class="pill pill-dark pill-sm" href="#get">Download</a>
   </nav>
-  <a class="btn btn-small" href="#get">Download</a>
 </header>
 
 <main>
   <section class="hero">
-    <div class="hero-text">
-      <p class="eyebrow">Free · No ads · Never sold</p>
-      <h1>Chat that stays <span class="grad">between friends.</span></h1>
-      <p class="lead">Messages, voice calls, voice notes, photos, videos and files for you and the people you actually know. In any language, on all your devices.</p>
-      <div class="cta" id="get">
-        <a id="download" class="btn" href="#install" aria-disabled="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 19h16"/></svg>
-          <span id="download-label">Download for Android</span>
-        </a>
-        <a class="btn btn-ghost" href="#install">How to install</a>
-      </div>
-      <p id="version" class="fine">Checking the latest version…</p>
-      <p id="notes" class="fine"></p>
+    <p class="label">Free · No ads · Never sold</p>
+    <h1>Chat with your friends.<br>Nothing else.</h1>
+    <p class="sub">Messages, voice calls, voice notes, photos and files for the people you actually know. In any language, on every device.</p>
+    <div class="actions" id="get">
+      <a id="download" class="pill pill-dark" href="#install" aria-disabled="true"><span id="download-label">Download for Android</span></a>
+      <a class="pill pill-line" href="#install">How to install</a>
     </div>
+    <p id="version" class="fine">Checking the latest version…</p>
+    <p id="notes" class="fine"></p>
 
-    <div class="phone" aria-hidden="true">
-      <div class="phone-screen">
-        <div class="chat-head">
-          <span class="avatar a1">M</span>
-          <div><strong>Mia</strong><small>online</small></div>
-          <svg class="call" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 005 5L15 13l5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2z"/></svg>
-        </div>
-        <div class="bubbles">
-          <p class="b in">Dinner tonight? 🍜</p>
-          <p class="b out">ไปกินข้าวกันไหม 😄</p>
-          <p class="b in voice"><span class="play">▶</span><span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="dur">0:12</span></p>
-          <p class="b out">See you at 7 ✓✓</p>
-          <p class="b in react">Perfect!<span class="emoji">❤️</span></p>
-          <p class="b out photo"><span class="pic"></span>Here's the place 📍</p>
-        </div>
-        <div class="composer"><span>Message</span><span class="mic">🎤</span></div>
+    <div class="preview" aria-hidden="true">
+      <div class="preview-head">
+        <span class="avatar">MI</span>
+        <div><strong>Mia</strong><small>online</small></div>
       </div>
+      <div class="thread">
+        <p class="day">TODAY</p>
+        <p class="msg in">Dinner tonight?</p>
+        <p class="msg out">ไปกินข้าวกันไหม</p>
+        <p class="msg in voice"><span class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span>0:12</span></p>
+        <p class="msg out">See you at 7</p>
+        <p class="meta">Seen</p>
+      </div>
+      <div class="composer"><span>+</span><span class="field">Message</span></div>
     </div>
   </section>
 
-  <section id="features" class="features">
-    <h2 class="section-title">Everything a chat app should do. Nothing it shouldn't.</h2>
-    <div class="grid">
-      <article class="feature">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/></svg>
-        <h3>Private chats and groups</h3>
-        <p>Talk one-to-one with friends, or in groups with an admin and moderators. Groups can be private (invite code only) or public.</p>
-      </article>
-      <article class="feature">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 005 5L15 13l5 2v4a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2z"/></svg>
-        <h3>Voice calls</h3>
-        <p>Call your friends for free. The audio goes straight between your phones, encrypted.</p>
-      </article>
-      <article class="feature">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 013 3v6a3 3 0 01-6 0V6a3 3 0 013-3zm7 9a7 7 0 01-14 0m7 7v2"/></svg>
-        <h3>Voice messages, photos and files</h3>
-        <p>Send voice notes, photos, videos up to 10 minutes, and documents. Apps and programs are blocked, so nobody can send you malware.</p>
-      </article>
-      <article class="feature">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 4a6.5 6.5 0 015.2 10.4L20 18.7 18.7 20l-4.3-4.3A6.5 6.5 0 1110.5 4z"/></svg>
-        <h3>Search in any language</h3>
-        <p>Find old messages in Thai, Burmese, English, Chinese and more, even languages without spaces between words.</p>
-      </article>
-      <article class="feature">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v18H7zM11 18h2"/></svg>
-        <h3>All your devices</h3>
-        <p>Use Chirpy on up to five devices at once. Every message, read tick and reaction stays in sync.</p>
-      </article>
-      <article class="feature">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>
-        <h3>You're in control</h3>
-        <p>Hide your last seen, block and report people, mute chats, and delete your account whenever you want.</p>
-      </article>
-    </div>
+  <section id="features" class="block">
+    <p class="label">What it does</p>
+    <dl class="list">
+      <div><dt>Private chats and groups</dt><dd>One-to-one, or groups with an admin and moderators. Private with an invite code, or public.</dd></div>
+      <div><dt>Voice calls</dt><dd>Free calls between friends. The audio goes straight between your phones, encrypted.</dd></div>
+      <div><dt>Voice notes, photos and files</dt><dd>Videos up to 10 minutes, documents and audio. Apps and programs are blocked.</dd></div>
+      <div><dt>Search in any language</dt><dd>Thai, Burmese, English, Chinese, even languages without spaces between words.</dd></div>
+      <div><dt>Every device</dt><dd>Up to five at once. Messages, read receipts and reactions stay in sync.</dd></div>
+      <div><dt>Your choices</dt><dd>Hide your last seen, block and report, mute chats, delete your account any time.</dd></div>
+    </dl>
   </section>
 
-  <section id="install" class="install">
-    <div class="install-head">
-      <h2 class="section-title">Install in a minute</h2>
-      <p>Chirpy isn't on Google Play yet, so Android asks you to confirm the install. That's normal for apps from a website.</p>
-    </div>
+  <section id="install" class="block">
+    <p class="label">Install</p>
+    <p class="block-sub">Chirpy isn't on Google Play yet, so Android asks you to confirm the install. That's normal for apps from a website.</p>
     <ol class="steps">
-      <li><span class="num">1</span><div><strong>Download</strong><p>Tap <em>Download for Android</em> above and open the file when it's done.</p></div></li>
-      <li><span class="num">2</span><div><strong>Allow this source</strong><p>If Android says installing unknown apps isn't allowed, tap <em>Settings</em>, turn on <em>Allow from this source</em> for your browser, then go back.</p></div></li>
-      <li><span class="num">3</span><div><strong>Install</strong><p>Tap <em>Install</em>. If Play Protect doesn't recognise the app, tap <em>More details → Install anyway</em>.</p></div></li>
-      <li><span class="num">4</span><div><strong>Sign up</strong><p>Open Chirpy and sign up with your email or with Google.</p></div></li>
+      <li><strong>Download.</strong> Tap <em>Download for Android</em> and open the file.</li>
+      <li><strong>Allow this source.</strong> If Android blocks unknown apps, tap <em>Settings</em> and turn on <em>Allow from this source</em> for your browser.</li>
+      <li><strong>Install.</strong> If Play Protect doesn't recognise the app, tap <em>More details → Install anyway</em>.</li>
+      <li><strong>Sign up</strong> with your email or with Google.</li>
     </ol>
-    <p class="fine safety">Only download Chirpy from this page. The SHA-256 checksum shown under the button lets you check the file wasn't changed. Chirpy tells you when a new version is out.</p>
+    <p class="fine">Only download Chirpy from this page. Compare the SHA-256 checksum under the button to check the file wasn't changed.</p>
   </section>
 
-  <section class="privacy-band">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>
-    <div>
-      <h2>Your chats are yours</h2>
-      <p>No ads. Your data is never sold, and never used to train AI. Our admins can't read your messages, except ones someone reports to them. Photos, videos and files are deleted from our servers within days.</p>
-      <p><a href="/privacy">Read the privacy policy</a> · <a href="/terms">Terms of use</a></p>
-    </div>
+  <section class="block">
+    <p class="label">Your data</p>
+    <p class="statement">No ads. Never sold. Never used to train AI. Our admins can't read your messages, except ones someone reports to them.</p>
+    <p class="links"><a href="/privacy">Privacy policy</a><a href="/terms">Terms of use</a></p>
   </section>
 </main>
 
-<footer class="site-footer">
-  <span>© 2026 Chirpy by ponypigeon</span>
-  <nav aria-label="Legal"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="mailto:support@ponypigeon.com">Support</a></nav>
+<footer class="foot">
+  <span>Chirpy by ponypigeon</span>
+  <span><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="mailto:support@ponypigeon.com">Support</a></span>
 </footer>
-
-<svg class="sprite" aria-hidden="true">
-  <symbol id="mark" viewBox="0 0 32 32">
-    <rect width="32" height="32" rx="9" fill="url(#g)"/>
-    <path d="M9 20.5c0-5 3.5-9 8.5-9 2.6 0 4.6 1.2 5.5 3l2.5-.5-1.6 2.3c.1.4.1.8.1 1.2 0 4.4-3.6 7.5-8.5 7.5H9.5l1.8-2.2A5.5 5.5 0 019 20.5z" fill="#fff"/>
-    <circle cx="20" cy="16" r="1.2" fill="#5b4cf0"/>
-    <defs><linearGradient id="g" x1="0" y1="0" x2="32" y2="32"><stop stop-color="#7c5cff"/><stop offset="1" stop-color="#1fb6c9"/></linearGradient></defs>
-  </symbol>
-</svg>
 <script src="/app.js"></script>
 </body>
 </html>
