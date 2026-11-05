@@ -31,3 +31,11 @@ SELECT started_at FROM calls WHERE id = @id AND (caller_id = @me::uuid OR callee
 
 -- name: PurgeOldCalls :execrows
 DELETE FROM calls WHERE started_at < @before::timestamp;
+
+-- name: CallSecondsSince :one
+-- answered call time of a user since @since (calls in progress count up to now)
+SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(ended_at, @now::timestamp) - GREATEST(answered_at, @since::timestamp)))), 0)::bigint
+FROM calls
+WHERE (caller_id = @user_id::uuid OR callee_id = @user_id::uuid)
+  AND answered_at IS NOT NULL
+  AND COALESCE(ended_at, @now::timestamp) > @since::timestamp;

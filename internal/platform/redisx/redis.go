@@ -3,6 +3,7 @@
 package redisx
 
 import (
+	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
 	"encoding/json"
 	"errors"
@@ -34,6 +35,7 @@ func NewClient(ctx context.Context, o Options) (*redis.Client, error) {
 	}
 	opts.PoolSize = o.PoolSize
 	rdb := redis.NewClient(opts)
+	rdb.AddHook(countHook{})
 	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := rdb.Ping(pingCtx).Err(); err != nil {
@@ -79,4 +81,24 @@ func ScriptErrCode(err error) string {
 		return msg[4:]
 	}
 	return msg
+}
+
+// countHook counts commands sent to Redis (a pipeline's commands each
+// count; a script counts once), as Upstash bills them.
+type countHook struct{}
+
+func (countHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (countHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		telemetry.RedisCommands(ctx, 1)
+		return next(ctx, cmd)
+	}
+}
+
+func (countHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		telemetry.RedisCommands(ctx, int64(len(cmds)))
+		return next(ctx, cmds)
+	}
 }

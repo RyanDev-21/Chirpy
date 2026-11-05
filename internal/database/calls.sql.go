@@ -26,6 +26,28 @@ func (q *Queries) AnswerCall(ctx context.Context, arg AnswerCallParams) error {
 	return err
 }
 
+const callSecondsSince = `-- name: CallSecondsSince :one
+SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(ended_at, $1::timestamp) - GREATEST(answered_at, $2::timestamp)))), 0)::bigint
+FROM calls
+WHERE (caller_id = $3::uuid OR callee_id = $3::uuid)
+  AND answered_at IS NOT NULL
+  AND COALESCE(ended_at, $1::timestamp) > $2::timestamp
+`
+
+type CallSecondsSinceParams struct {
+	Now    pgtype.Timestamp
+	Since  pgtype.Timestamp
+	UserID uuid.UUID
+}
+
+// answered call time of a user since @since (calls in progress count up to now)
+func (q *Queries) CallSecondsSince(ctx context.Context, arg CallSecondsSinceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, callSecondsSince, arg.Now, arg.Since, arg.UserID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const callStartedAt = `-- name: CallStartedAt :one
 SELECT started_at FROM calls WHERE id = $1 AND (caller_id = $2::uuid OR callee_id = $2::uuid)
 `

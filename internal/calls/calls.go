@@ -52,6 +52,7 @@ const (
 	ReasonDisconnected = "disconnected"       // a phone lost its connection for too long
 	ReasonElsewhere    = "answered_elsewhere" // to the callee's other devices
 	ReasonUnfriended   = "unfriended"         // the friendship ended mid-call
+	ReasonLimit        = "daily_limit"        // one of you used up today's call minutes
 )
 
 // Errors (CallError.error).
@@ -62,6 +63,7 @@ const (
 	ErrUnknownCall = "unknown_call"
 	ErrBadRequest  = "bad_request"
 	ErrUnavailable = "unavailable"
+	ErrDailyLimit  = "daily_limit" // you used up your call minutes for today
 )
 
 const (
@@ -92,6 +94,7 @@ type Store interface {
 	AnswerCall(ctx context.Context, arg database.AnswerCallParams) error
 	FinishCall(ctx context.Context, arg database.FinishCallParams) error
 	InterruptOpenCalls(ctx context.Context, at pgtype.Timestamp) (int64, error)
+	CallSecondsSince(ctx context.Context, arg database.CallSecondsSinceParams) (int64, error)
 }
 
 type call struct {
@@ -130,6 +133,8 @@ type Manager struct {
 	now     func() time.Time
 	ring    time.Duration
 	grace   time.Duration
+	// daily: answered call time a user may have in 24 h (0 = no cap)
+	daily time.Duration
 
 	mu     sync.Mutex
 	calls  map[uuid.UUID]*call
@@ -141,6 +146,23 @@ func NewManager(hub Hub, friends Friends, db Store, logger *slog.Logger) *Manage
 	return &Manager{hub: hub, friends: friends, db: db, logger: logger, now: time.Now,
 		ring: RingTimeout, grace: ReconnectGrace,
 		calls: map[uuid.UUID]*call{}, byUser: map[uuid.UUID]*call{}, starts: map[uuid.UUID][]time.Time{}}
+}
+
+// SetDailyLimit caps each user's answered call time per 24 h (0: none),
+// so the free TURN relay allowance can't be used up.
+func (m *Manager) SetDailyLimit(d time.Duration) { m.daily = d }
+
+// remaining is how much call time user has left today (MaxDuration when
+// there's no cap).
+func (m *Manager) remaining(ctx context.Context, user uuid.UUID, now time.Time) (time.Duration, error) {
+	if m.daily <= 0 {
+		return MaxDuration, nil
+	}
+	used, err := m.db.CallSecondsSince(ctx, database.CallSecondsSinceParams{UserID: user, Since: ts(now.Add(-24 * time.Hour)), Now: ts(now)})
+	if err != nil {
+		return 0, err
+	}
+	return min(m.daily-time.Duration(used)*time.Second, MaxDuration), nil
 }
 
 // SetNotifier enables ringing and missed-call pushes.
@@ -227,6 +249,13 @@ func (m *Manager) start(ctx context.Context, from ws.Conn, to uuid.UUID) {
 	}
 	now := m.now()
 	id, _ := uuid.NewV7()
+	if left, err := m.remaining(ctx, from.User, now); err != nil {
+		m.fail(from, uuid.Nil, ErrUnavailable)
+		return
+	} else if left <= 0 {
+		m.fail(from, uuid.Nil, ErrDailyLimit)
+		return
+	}
 
 	m.mu.Lock()
 	if !m.allowStart(from.User, now) {
@@ -280,6 +309,25 @@ func (m *Manager) record(ctx context.Context, p database.InsertCallParams) {
 
 func (m *Manager) accept(ctx context.Context, from ws.Conn, id uuid.UUID) {
 	now := m.now()
+	// the call may last as long as the one with less time left today allows
+	m.mu.Lock()
+	pending := m.calls[id]
+	m.mu.Unlock()
+	limit := MaxDuration
+	if pending != nil && pending.callee == from.User {
+		for _, u := range []uuid.UUID{pending.caller, pending.callee} {
+			left, err := m.remaining(ctx, u, now)
+			if err != nil {
+				m.fail(from, id, ErrUnavailable)
+				return
+			}
+			limit = min(limit, left)
+		}
+		if limit <= 0 {
+			m.end(ctx, id, ReasonLimit)
+			return
+		}
+	}
 	m.mu.Lock()
 	c := m.calls[id]
 	if c == nil || c.callee != from.User || c.active {
@@ -289,7 +337,11 @@ func (m *Manager) accept(ctx context.Context, from ws.Conn, id uuid.UUID) {
 	}
 	c.active, c.calleeConn, c.answered = true, from.ID, now
 	c.timer.Stop()
-	c.timer = time.AfterFunc(MaxDuration, func() { m.end(context.Background(), id, ReasonEnded) })
+	endReason := ReasonEnded
+	if limit < MaxDuration {
+		endReason = ReasonLimit
+	}
+	c.timer = time.AfterFunc(limit, func() { m.end(context.Background(), id, endReason) })
 	callerConn := ws.Conn{User: c.caller, ID: c.callerConn}
 	m.mu.Unlock()
 
@@ -382,13 +434,14 @@ func (m *Manager) end(ctx context.Context, id uuid.UUID, reason string) {
 	switch {
 	case wasActive:
 		state = ReasonEnded // answered: the log says "ended", the reason says why
-	case reason == ReasonDisconnected || reason == ReasonUnfriended:
+	case reason == ReasonDisconnected || reason == ReasonUnfriended || reason == ReasonLimit:
 		state = "failed"
 	}
 	if err := m.db.FinishCall(ctx, database.FinishCallParams{ID: id, State: state, EndReason: pgtype.Text{String: reason, Valid: true}, At: ts(now)}); err != nil {
 		m.logger.WarnContext(ctx, "failed to record call end", "error", err)
 	}
 	telemetry.Call(ctx, reason)
+	telemetry.CallSeconds(ctx, int64(talked.Seconds()))
 	_ = m.hub.WriteToUsers([]uuid.UUID{c.caller, c.callee}, ws.Event{Event: EvEnded, Payload: endedPayload(id, reason, talked)})
 	if reason == ReasonMissed && m.notify != nil {
 		m.notify.Notify(ctx, push.Job{Kind: push.KindMissedCall, To: []uuid.UUID{c.callee}, From: c.caller, CallID: id})
