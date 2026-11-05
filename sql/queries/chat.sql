@@ -32,7 +32,7 @@ LIMIT @lim;
 INSERT INTO seen_messages(chat_id, message_id, seen_id)
 VALUES ($1, $2, $3)
 ON CONFLICT (chat_id, seen_id)
-DO UPDATE SET message_id = EXCLUDED.message_id, updated_time = NOW();
+DO UPDATE SET message_id = EXCLUDED.message_id;
 
 -- name: PrivateMessageInChat :one
 SELECT EXISTS (
@@ -132,17 +132,17 @@ WHERE m.member_id = @me::uuid
 ORDER BY lm.created_at DESC NULLS LAST, lower(g.name);
 
 -- name: EditPrivateMessage :execrows
-UPDATE message SET content = @content, edited_at = @at::timestamp, updated_at = @at::timestamp
+UPDATE message SET content = @content, edited_at = @at::timestamp
 WHERE id = @id AND deleted_at IS NULL;
 
 -- name: EditGroupMessage :execrows
-UPDATE GroupMessage SET content = @content, edited_at = @at::timestamp, updated_at = @at::timestamp
+UPDATE GroupMessage SET content = @content, edited_at = @at::timestamp
 WHERE id = @id AND deleted_at IS NULL;
 
 -- name: DeletePrivateMessage :one
 -- wipes the content, keeps the row as a placeholder, drops its reactions
 WITH d AS (
-    UPDATE message SET content = NULL, deleted_at = @at::timestamp, updated_at = @at::timestamp
+    UPDATE message SET content = NULL, deleted_at = @at::timestamp
     WHERE id = @id AND deleted_at IS NULL
     RETURNING id
 ), r AS (
@@ -152,7 +152,7 @@ SELECT count(*)::int FROM d;
 
 -- name: DeleteGroupMessage :one
 WITH d AS (
-    UPDATE GroupMessage SET content = NULL, deleted_at = @at::timestamp, updated_at = @at::timestamp
+    UPDATE GroupMessage SET content = NULL, deleted_at = @at::timestamp
     WHERE id = @id AND deleted_at IS NULL
     RETURNING id
 ), r AS (

@@ -147,6 +147,7 @@ func TestDeviceLifecycle(t *testing.T) {
 	e.befriend(alice, bob)
 	e.expect(e.do("POST", "/api/devices", bob.Token, map[string]string{"token": ""}), 400)
 	e.expect(e.do("POST", "/api/devices", bob.Token, map[string]string{"token": "t", "platform": "windows-phone"}), 400)
+	e.expect(e.do("POST", "/api/devices", bob.Token, map[string]string{"token": "web-tok", "platform": "web"}), 204)
 
 	// a token FCM reports dead is forgotten
 	e.device(bob, "tok-dead")

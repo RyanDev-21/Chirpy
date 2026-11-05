@@ -126,7 +126,7 @@ Success: `200`:
 ```json
 {
   "id":"uuid", "name":"alice", "created_at":"...", "updated_at":"...",
-  "email":"alice@example.com", "is_chirpy_red":false,
+  "email":"alice@example.com",
   "token":"<access-token>", "refresh_token":"<refresh-token>"
 }
 ```
@@ -218,7 +218,7 @@ exists.
  "bio":"hello","name_change_available_at":null,"avatar_url":null,
  "location":{"id":"th-bangkok","name":"Bangkok","country":"th"},
  "interests":["gaming","kpop"],"discoverable":false,"hide_last_seen":false,
- "created_at":"…","updated_at":"…","is_chirpy_red":false}
+ "created_at":"…","updated_at":"…"}
 ```
 
 `name_change_available_at` is when the username may next be changed (`null`
@@ -1019,7 +1019,7 @@ over the WebSocket (when the app is open, the live events are enough).
 
 - After login (and whenever Firebase gives the app a new token):
   `POST /api/devices` with `{"token":"<FCM registration token>","platform":"android"}`
-  → `204`. `platform` is `android` (default) or `ios`. The token goes in the
+  → `204`. `platform` is `android` (default), `ios` or `web` (a browser's FCM web-push token). The token goes in the
   body, never the URL. A phone that signs in as another user moves to that
   user.
 - On logout: `DELETE /api/devices` with `{"token":"…"}` → `204`.
@@ -1145,9 +1145,23 @@ in the chat timeline too, by time.
 ## WebSocket
 
 Connect to `wss://api.ponypigeon.com/api/chats/ws` (or the equivalent `ws://`
-local URL). The connection requires the same `Authorization: Bearer` header
-used by REST. Tokens in `?token=` are rejected. Maximum 20 connection attempts
-per minute.
+local URL). Maximum 20 connection attempts per minute.
+
+- **Apps (Android, iOS)** send the same `Authorization: Bearer` header used by
+  REST on the upgrade request.
+- **Browsers (React Native Web)** can't set headers on a WebSocket. Get a
+  ticket first: `POST /api/chats/ws/ticket` (with the Bearer header) →
+  `200 {"ticket":"…","expires_in":30}`, then connect to
+  `wss://api.ponypigeon.com/api/chats/ws?ticket=<ticket>`. A ticket works
+  **once**, within 30 seconds, so ask for a new one on every (re)connect.
+  Signing out everywhere makes earlier tickets useless.
+- Tokens in `?token=` are always rejected (a reusable token must never sit
+  in a URL).
+
+The web app's origin (for example `https://chirpy.ponypigeon.com`) must be
+in the server's `CORS_ORIGINS`, for both REST and the WebSocket. Browsers
+uploading photos and files straight to storage also need a CORS rule on the
+R2 bucket (see DEPLOY.md).
 
 Every WebSocket message is an envelope:
 

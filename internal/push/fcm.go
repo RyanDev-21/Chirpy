@@ -78,6 +78,7 @@ type fcmMessage struct {
 	Notification map[string]string `json:"notification,omitempty"`
 	Data         map[string]string `json:"data,omitempty"`
 	Android      map[string]any    `json:"android,omitempty"`
+	Webpush      map[string]any    `json:"webpush,omitempty"`
 }
 
 func (f *FCM) post(ctx context.Context, req fcmRequest) error {
@@ -109,10 +110,13 @@ func (f *FCM) post(ctx context.Context, req fcmRequest) error {
 func (f *FCM) Send(ctx context.Context, m Message) error {
 	if m.DataOnly {
 		android := map[string]any{"priority": "high"}
+		web := map[string]string{"Urgency": "high"}
 		if m.TTL > 0 {
 			android["ttl"] = fmt.Sprintf("%ds", int(m.TTL.Seconds()))
+			web["TTL"] = fmt.Sprint(int(m.TTL.Seconds()))
 		}
-		return f.post(ctx, fcmRequest{Message: fcmMessage{Token: m.Token, Data: m.Data, Android: android}})
+		return f.post(ctx, fcmRequest{Message: fcmMessage{Token: m.Token, Data: m.Data, Android: android,
+			Webpush: map[string]any{"headers": web}}})
 	}
 	return f.post(ctx, fcmRequest{Message: fcmMessage{
 		Token:        m.Token,

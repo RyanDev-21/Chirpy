@@ -280,13 +280,13 @@ func (s *Service) Mutes(ctx context.Context, user uuid.UUID) ([]Mute, error) {
 
 // --- devices ---
 
-var ErrBadDevice = errors.New("token is required (at most 4096 characters); platform is \"android\" or \"ios\"")
+var ErrBadDevice = errors.New("token is required (at most 4096 characters); platform is \"android\", \"ios\" or \"web\"")
 
 func (s *Service) RegisterDevice(ctx context.Context, user uuid.UUID, token, platform string) error {
 	if platform == "" {
 		platform = "android"
 	}
-	if token == "" || len(token) > 4096 || (platform != "android" && platform != "ios") {
+	if token == "" || len(token) > 4096 || (platform != "android" && platform != "ios" && platform != "web") {
 		return ErrBadDevice
 	}
 	return s.q.UpsertDevice(ctx, database.UpsertDeviceParams{Token: token, UserID: user, Platform: platform})

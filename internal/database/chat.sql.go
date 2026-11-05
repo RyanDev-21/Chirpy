@@ -16,13 +16,13 @@ const addLastSeenMessage = `-- name: AddLastSeenMessage :exec
 INSERT INTO seen_messages(chat_id, message_id, seen_id)
 VALUES ($1, $2, $3)
 ON CONFLICT (chat_id, seen_id)
-DO UPDATE SET message_id = EXCLUDED.message_id, updated_time = NOW()
+DO UPDATE SET message_id = EXCLUDED.message_id
 `
 
 type AddLastSeenMessageParams struct {
 	ChatID    string
 	MessageID uuid.UUID
-	SeenID    pgtype.UUID
+	SeenID    uuid.UUID
 }
 
 func (q *Queries) AddLastSeenMessage(ctx context.Context, arg AddLastSeenMessageParams) error {
@@ -85,7 +85,7 @@ func (q *Queries) AddMessagePublic(ctx context.Context, arg AddMessagePublicPara
 
 const deleteGroupMessage = `-- name: DeleteGroupMessage :one
 WITH d AS (
-    UPDATE GroupMessage SET content = NULL, deleted_at = $1::timestamp, updated_at = $1::timestamp
+    UPDATE GroupMessage SET content = NULL, deleted_at = $1::timestamp
     WHERE id = $2 AND deleted_at IS NULL
     RETURNING id
 ), r AS (
@@ -108,7 +108,7 @@ func (q *Queries) DeleteGroupMessage(ctx context.Context, arg DeleteGroupMessage
 
 const deletePrivateMessage = `-- name: DeletePrivateMessage :one
 WITH d AS (
-    UPDATE message SET content = NULL, deleted_at = $1::timestamp, updated_at = $1::timestamp
+    UPDATE message SET content = NULL, deleted_at = $1::timestamp
     WHERE id = $2 AND deleted_at IS NULL
     RETURNING id
 ), r AS (
@@ -131,7 +131,7 @@ func (q *Queries) DeletePrivateMessage(ctx context.Context, arg DeletePrivateMes
 }
 
 const editGroupMessage = `-- name: EditGroupMessage :execrows
-UPDATE GroupMessage SET content = $1, edited_at = $2::timestamp, updated_at = $2::timestamp
+UPDATE GroupMessage SET content = $1, edited_at = $2::timestamp
 WHERE id = $3 AND deleted_at IS NULL
 `
 
@@ -150,7 +150,7 @@ func (q *Queries) EditGroupMessage(ctx context.Context, arg EditGroupMessagePara
 }
 
 const editPrivateMessage = `-- name: EditPrivateMessage :execrows
-UPDATE message SET content = $1, edited_at = $2::timestamp, updated_at = $2::timestamp
+UPDATE message SET content = $1, edited_at = $2::timestamp
 WHERE id = $3 AND deleted_at IS NULL
 `
 
@@ -169,7 +169,7 @@ func (q *Queries) EditPrivateMessage(ctx context.Context, arg EditPrivateMessage
 }
 
 const getGroupMessagesBefore = `-- name: GetGroupMessagesBefore :many
-SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.updated_at, g.deleted_at, g.edited_at, g.searchable FROM GroupMessage g
+SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.deleted_at, g.edited_at, g.searchable FROM GroupMessage g
 WHERE g.group_id = $1
   AND (g.created_at, g.id) < ($2::timestamp, $3::uuid)
   AND g.created_at >= (SELECT mt.joined_at FROM member_table mt WHERE mt.group_id = $1 AND mt.member_id = $4::uuid)
@@ -207,7 +207,6 @@ func (q *Queries) GetGroupMessagesBefore(ctx context.Context, arg GetGroupMessag
 			&i.FromID,
 			&i.ParentID,
 			&i.CreatedAt,
-			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.EditedAt,
 			&i.Searchable,
@@ -223,7 +222,7 @@ func (q *Queries) GetGroupMessagesBefore(ctx context.Context, arg GetGroupMessag
 }
 
 const getPrivateMessagesBefore = `-- name: GetPrivateMessagesBefore :many
-SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at, edited_at FROM message
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at FROM message
 WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
   AND (created_at, id) < ($3::timestamp, $4::uuid)
 ORDER BY created_at DESC, id DESC
@@ -262,7 +261,6 @@ func (q *Queries) GetPrivateMessagesBefore(ctx context.Context, arg GetPrivateMe
 			&i.ToID,
 			&i.DeletedAt,
 			&i.CreatedAt,
-			&i.UpdatedAt,
 			&i.EditedAt,
 		); err != nil {
 			return nil, err
@@ -276,7 +274,7 @@ func (q *Queries) GetPrivateMessagesBefore(ctx context.Context, arg GetPrivateMe
 }
 
 const getPrivateMessagesSince = `-- name: GetPrivateMessagesSince :many
-SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at, edited_at FROM message
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at FROM message
 WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
   AND created_at > $3
 ORDER BY created_at ASC
@@ -312,7 +310,6 @@ func (q *Queries) GetPrivateMessagesSince(ctx context.Context, arg GetPrivateMes
 			&i.ToID,
 			&i.DeletedAt,
 			&i.CreatedAt,
-			&i.UpdatedAt,
 			&i.EditedAt,
 		); err != nil {
 			return nil, err
@@ -326,7 +323,7 @@ func (q *Queries) GetPrivateMessagesSince(ctx context.Context, arg GetPrivateMes
 }
 
 const getRecentGroupMessages = `-- name: GetRecentGroupMessages :many
-SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.updated_at, g.deleted_at, g.edited_at, g.searchable FROM GroupMessage g
+SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.deleted_at, g.edited_at, g.searchable FROM GroupMessage g
 WHERE g.group_id = $1
   AND g.created_at >= (SELECT mt.joined_at FROM member_table mt WHERE mt.group_id = $1 AND mt.member_id = $2::uuid)
 ORDER BY g.created_at DESC
@@ -356,7 +353,6 @@ func (q *Queries) GetRecentGroupMessages(ctx context.Context, arg GetRecentGroup
 			&i.FromID,
 			&i.ParentID,
 			&i.CreatedAt,
-			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.EditedAt,
 			&i.Searchable,
@@ -372,7 +368,7 @@ func (q *Queries) GetRecentGroupMessages(ctx context.Context, arg GetRecentGroup
 }
 
 const getRecentPrivateMessages = `-- name: GetRecentPrivateMessages :many
-SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, updated_at, edited_at FROM message
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at FROM message
 WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
 ORDER BY created_at DESC
 LIMIT $3
@@ -401,7 +397,6 @@ func (q *Queries) GetRecentPrivateMessages(ctx context.Context, arg GetRecentPri
 			&i.ToID,
 			&i.DeletedAt,
 			&i.CreatedAt,
-			&i.UpdatedAt,
 			&i.EditedAt,
 		); err != nil {
 			return nil, err

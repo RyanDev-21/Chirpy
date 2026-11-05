@@ -54,7 +54,6 @@ func toUser(u database.User) *User {
 		CreatedAt:   u.CreatedAt,
 		UpdatedAt:   u.UpdatedAt,
 		Email:       u.Email,
-		IsRED:       u.IsChirpyRed.Bool,
 		Verified:    u.EmailVerifiedAt.Valid,
 		DisplayName: ShownName(u.Name, u.DisplayName),
 		IsAdmin:     u.IsAdmin,

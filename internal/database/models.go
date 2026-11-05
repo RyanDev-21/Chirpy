@@ -52,14 +52,6 @@ type ChatMute struct {
 	Until    pgtype.Timestamp
 }
 
-type Chirp struct {
-	ID        uuid.UUID
-	CreatedAt pgtype.Timestamp
-	UpdatedAt pgtype.Timestamp
-	Body      string
-	UserID    uuid.UUID
-}
-
 type EmailCode struct {
 	UserID    uuid.UUID
 	Purpose   string
@@ -97,7 +89,6 @@ type Groupmessage struct {
 	FromID     pgtype.UUID
 	ParentID   pgtype.UUID
 	CreatedAt  pgtype.Timestamp
-	UpdatedAt  pgtype.Timestamp
 	DeletedAt  pgtype.Timestamp
 	EditedAt   pgtype.Timestamp
 	Searchable bool
@@ -132,7 +123,6 @@ type Medium struct {
 }
 
 type MemberTable struct {
-	ID          uuid.UUID
 	GroupID     uuid.UUID
 	MemberID    uuid.UUID
 	JoinedAt    pgtype.Timestamp
@@ -148,7 +138,6 @@ type Message struct {
 	ToID      pgtype.UUID
 	DeletedAt pgtype.Timestamp
 	CreatedAt pgtype.Timestamp
-	UpdatedAt pgtype.Timestamp
 	EditedAt  pgtype.Timestamp
 }
 
@@ -201,11 +190,9 @@ type ReportMessage struct {
 }
 
 type SeenMessage struct {
-	ID          uuid.UUID
-	ChatID      string
-	MessageID   uuid.UUID
-	SeenID      pgtype.UUID
-	UpdatedTime pgtype.Timestamp
+	ChatID    string
+	MessageID uuid.UUID
+	SeenID    uuid.UUID
 }
 
 type User struct {
@@ -214,7 +201,6 @@ type User struct {
 	UpdatedAt       time.Time
 	Email           string
 	Password        pgtype.Text
-	IsChirpyRed     pgtype.Bool
 	Name            string
 	EmailVerifiedAt pgtype.Timestamp
 	Bio             string
@@ -269,7 +255,6 @@ type UserRelationship struct {
 	ID          uuid.UUID
 	UserID      uuid.UUID
 	OtheruserID uuid.UUID
-	Label       string
 	Status      string
 	CreatedAt   pgtype.Timestamp
 	UpdatedAt   time.Time
