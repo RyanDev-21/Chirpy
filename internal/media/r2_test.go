@@ -51,7 +51,7 @@ func TestCleanFileName(t *testing.T) {
 		"report.pdf":             {"application/pdf", "report.pdf"},
 		"C:\\Users\\me\\cv.DOCX": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "cv.DOCX"},
 		"../../etc/song.mp3":     {"audio/mpeg", "song.mp3"},
-		"รายงาน ไตรมาส.xlsx": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "รายงาน ไตรมาส.xlsx"},
+		"รายงาน ไตรมาส.xlsx":     {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "รายงาน ไตรมาส.xlsx"},
 	}
 	for in, want := range ok {
 		if got, good := cleanFileName(in, want[0]); !good || got != want[1] {
