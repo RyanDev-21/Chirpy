@@ -25,6 +25,7 @@ var (
 	limitSearch      = limitPolicy{"search", 20, time.Minute}
 	limitGroupSearch = limitPolicy{"group_search", 20, time.Minute}
 	limitICE         = limitPolicy{"call_ice", 20, time.Minute}
+	limitMsgSearch   = limitPolicy{"msg_search", 20, time.Minute}
 	limitFriendRq    = limitPolicy{"friend_request", 10, time.Minute}
 	limitFriendUp    = limitPolicy{"friend_update", 30, time.Minute}
 	limitSend        = limitPolicy{"send_message", 120, time.Minute}
@@ -184,6 +185,7 @@ func (a *App) Router() http.Handler {
 			})
 			r.With(limit(limitSend)).Post("/chats/message", a.handlers.chat.SendMessage)
 			r.Get("/chats", a.handlers.chat.Conversations)
+			r.With(limit(limitMsgSearch)).Get("/chats/search", a.handlers.search.Search)
 			r.Get("/calls", a.handlers.calls.List)
 			r.With(limit(limitICE)).Get("/calls/ice", a.handlers.calls.ICE)
 

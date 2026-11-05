@@ -867,6 +867,37 @@ deleted their account. If the last message was deleted for everyone,
 `last_message.deleted` is `true` and `msg` is `""`. If its sender is
 suspended, `last_message.sender_suspended` is `true` and `msg` is `""`.
 
+### Search messages
+
+Search the phone's own copy first. Call the server only for messages older
+than what the phone has, with `before` = the time of its oldest local
+message in that scope.
+
+`GET /api/chats/search?q=dinner&type=private&chat_id={user_id}&before=2026-11-01T10:00:00Z&limit=20` → `200`:
+
+```json
+{"results":[{"message_id":"…","type":"private","chat_id":"bob-uuid","from_id":"…",
+  "msg":"Dinner at the Thai place?","created_at":"…"}],
+ "next_before":"2026-10-30T18:21:07.123456Z","next_before_id":"…"}
+```
+
+- `q`: 3–100 characters (2 within one chat), case-insensitive. It matches
+  **anywhere in the text**, so it works for Thai, Burmese, Chinese and
+  other languages without spaces. `%` and `_` are literal.
+- `type` + `chat_id` (optional, together): `private` with the other
+  person's id, or `public` with a group id. Without them it searches all
+  your chats.
+- `before` (RFC3339, optional): only older messages. To fetch the next page,
+  pass `next_before` and `next_before_id` back as `before` and `before_id`.
+- `limit`: 1–50, default 20. Newest first. `chat_id` is the other person
+  (private) or the group.
+- Only **private chats and groups of up to 50 members** are indexed. A
+  group's messages are searchable if the group had at most 50 members when
+  they were sent. Results only include your chats, and group messages sent
+  since you joined. Deleted messages and suspended senders' messages never
+  match. Photos without text aren't searchable.
+- `400` for a bad `q` or parameters. 20 searches/minute.
+
 ### Mark a private message seen
 
 `POST /api/chat/{otherUser_id}/messages` with `{"msg_id":"message-uuid"}`.

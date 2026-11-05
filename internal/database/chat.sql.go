@@ -57,8 +57,8 @@ func (q *Queries) AddMessagePrivate(ctx context.Context, arg AddMessagePrivatePa
 }
 
 const addMessagePublic = `-- name: AddMessagePublic :exec
-INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable)
+VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = $3), false))
 `
 
 type AddMessagePublicParams struct {
@@ -70,6 +70,7 @@ type AddMessagePublicParams struct {
 	CreatedAt pgtype.Timestamp
 }
 
+// searchable: groups of up to 50 members are indexed for search
 func (q *Queries) AddMessagePublic(ctx context.Context, arg AddMessagePublicParams) error {
 	_, err := q.db.Exec(ctx, addMessagePublic,
 		arg.ID,
@@ -168,7 +169,7 @@ func (q *Queries) EditPrivateMessage(ctx context.Context, arg EditPrivateMessage
 }
 
 const getGroupMessagesBefore = `-- name: GetGroupMessagesBefore :many
-SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.updated_at, g.deleted_at, g.edited_at FROM GroupMessage g
+SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.updated_at, g.deleted_at, g.edited_at, g.searchable FROM GroupMessage g
 WHERE g.group_id = $1
   AND (g.created_at, g.id) < ($2::timestamp, $3::uuid)
   AND g.created_at >= (SELECT mt.joined_at FROM member_table mt WHERE mt.group_id = $1 AND mt.member_id = $4::uuid)
@@ -209,6 +210,7 @@ func (q *Queries) GetGroupMessagesBefore(ctx context.Context, arg GetGroupMessag
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.EditedAt,
+			&i.Searchable,
 		); err != nil {
 			return nil, err
 		}
@@ -324,7 +326,7 @@ func (q *Queries) GetPrivateMessagesSince(ctx context.Context, arg GetPrivateMes
 }
 
 const getRecentGroupMessages = `-- name: GetRecentGroupMessages :many
-SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.updated_at, g.deleted_at, g.edited_at FROM GroupMessage g
+SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.updated_at, g.deleted_at, g.edited_at, g.searchable FROM GroupMessage g
 WHERE g.group_id = $1
   AND g.created_at >= (SELECT mt.joined_at FROM member_table mt WHERE mt.group_id = $1 AND mt.member_id = $2::uuid)
 ORDER BY g.created_at DESC
@@ -357,6 +359,7 @@ func (q *Queries) GetRecentGroupMessages(ctx context.Context, arg GetRecentGroup
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.EditedAt,
+			&i.Searchable,
 		); err != nil {
 			return nil, err
 		}
@@ -753,6 +756,134 @@ func (q *Queries) RecentGroupSenders(ctx context.Context, arg RecentGroupSenders
 			return nil, err
 		}
 		items = append(items, t_from_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchGroupMessages = `-- name: SearchGroupMessages :many
+SELECT g.id, g.content, g.from_id, g.group_id, g.created_at FROM GroupMessage g
+JOIN member_table mt ON mt.group_id = g.group_id AND mt.member_id = $1::uuid
+WHERE g.searchable AND g.deleted_at IS NULL
+  AND lower(g.content) LIKE '%' || $2::text || '%' ESCAPE '\'
+  AND g.created_at >= mt.joined_at
+  AND ($3::uuid IS NULL OR g.group_id = $3::uuid)
+  AND (g.created_at, g.id) < ($4::timestamp, $5::uuid)
+ORDER BY g.created_at DESC, g.id DESC
+LIMIT $6
+`
+
+type SearchGroupMessagesParams struct {
+	Me       uuid.UUID
+	Q        string
+	InGroup  pgtype.UUID
+	BeforeAt pgtype.Timestamp
+	BeforeID uuid.UUID
+	Lim      int32
+}
+
+type SearchGroupMessagesRow struct {
+	ID        uuid.UUID
+	Content   pgtype.Text
+	FromID    pgtype.UUID
+	GroupID   pgtype.UUID
+	CreatedAt pgtype.Timestamp
+}
+
+// searchable messages of my groups containing q, sent since I joined
+func (q *Queries) SearchGroupMessages(ctx context.Context, arg SearchGroupMessagesParams) ([]SearchGroupMessagesRow, error) {
+	rows, err := q.db.Query(ctx, searchGroupMessages,
+		arg.Me,
+		arg.Q,
+		arg.InGroup,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchGroupMessagesRow
+	for rows.Next() {
+		var i SearchGroupMessagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.FromID,
+			&i.GroupID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchPrivateMessages = `-- name: SearchPrivateMessages :many
+SELECT m.id, m.content, m.from_id, m.to_id, m.created_at FROM message m
+WHERE (m.from_id = $1::uuid OR m.to_id = $1::uuid)
+  AND m.deleted_at IS NULL
+  AND lower(m.content) LIKE '%' || $2::text || '%' ESCAPE '\'
+  AND ($3::uuid IS NULL
+       OR (m.from_id = $1::uuid AND m.to_id = $3::uuid)
+       OR (m.to_id = $1::uuid AND m.from_id = $3::uuid))
+  AND (m.created_at, m.id) < ($4::timestamp, $5::uuid)
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT $6
+`
+
+type SearchPrivateMessagesParams struct {
+	Me       uuid.UUID
+	Q        string
+	WithUser pgtype.UUID
+	BeforeAt pgtype.Timestamp
+	BeforeID uuid.UUID
+	Lim      int32
+}
+
+type SearchPrivateMessagesRow struct {
+	ID        uuid.UUID
+	Content   pgtype.Text
+	FromID    pgtype.UUID
+	ToID      pgtype.UUID
+	CreatedAt pgtype.Timestamp
+}
+
+// my private messages containing q (lower-cased, LIKE-escaped), newest
+// first, optionally with one person, older than the cursor
+func (q *Queries) SearchPrivateMessages(ctx context.Context, arg SearchPrivateMessagesParams) ([]SearchPrivateMessagesRow, error) {
+	rows, err := q.db.Query(ctx, searchPrivateMessages,
+		arg.Me,
+		arg.Q,
+		arg.WithUser,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchPrivateMessagesRow
+	for rows.Next() {
+		var i SearchPrivateMessagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.FromID,
+			&i.ToID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
