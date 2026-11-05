@@ -17,7 +17,7 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrDisabled):
 		httpx.Error(w, http.StatusServiceUnavailable, err.Error())
-	case errors.Is(err, ErrBadMedia), errors.Is(err, ErrBadThumbnail):
+	case errors.Is(err, ErrBadMedia), errors.Is(err, ErrBadThumbnail), errors.Is(err, ErrBadFile):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrThumbnailSet):
 		httpx.Error(w, http.StatusConflict, err.Error())
@@ -42,17 +42,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	var b struct {
-		Kind        string `json:"kind"`
-		ContentType string `json:"content_type"`
-		Size        int64  `json:"size"`
-		Dims
-	}
+	var b NewUploadRequest
 	if err := httpx.Decode(w, r, &b); err != nil {
 		httpx.Error(w, http.StatusBadRequest, ErrBadMedia.Error())
 		return
 	}
-	up, err := h.svc.NewUpload(r.Context(), me, b.Kind, b.ContentType, b.Size, b.Dims)
+	up, err := h.svc.NewUpload(r.Context(), me, b)
 	if err != nil {
 		h.fail(w, r, err)
 		return

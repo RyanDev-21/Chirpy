@@ -67,7 +67,7 @@ func newFakeR2(t *testing.T) *fakeR2 {
 func (f *fakeR2) PresignPut(key, ct string, size int64, _ time.Duration) (string, error) {
 	return f.srv.URL + "/" + key + "?ct=" + url.QueryEscape(ct) + "&size=" + strconv.FormatInt(size, 10), nil
 }
-func (f *fakeR2) PresignGet(key, _ string, _ time.Duration) (string, error) {
+func (f *fakeR2) PresignGet(key, _, _ string, _ time.Duration) (string, error) {
 	return f.srv.URL + "/" + key, nil
 }
 func (f *fakeR2) Size(_ context.Context, key string) (int64, error) {
@@ -201,7 +201,7 @@ func TestMediaValidationAndLimits(t *testing.T) {
 	for _, c := range []struct {
 		kind, ct string
 		size     int
-	}{{"image", "image/gif", 10}, {"image", "image/jpeg", 6 << 20}, {"video", "video/mp4", 26 << 20}, {"audio", "audio/mpeg", 10}, {"image", "image/jpeg", 0}} {
+	}{{"image", "image/gif", 10}, {"image", "image/jpeg", 6 << 20}, {"video", "video/mp4", 101 << 20}, {"audio", "audio/mpeg", 10}, {"image", "image/jpeg", 0}} {
 		if got := post(c.kind, c.ct, c.size); got != 400 {
 			t.Errorf("%+v: %d, want 400", c, got)
 		}
@@ -240,7 +240,7 @@ func TestMediaValidationAndLimits(t *testing.T) {
 
 	// daily quota and global cap
 	if _, err := e.db.Exec(`INSERT INTO media (id, owner_id, kind, content_type, size, created_at, expires_at, last_access_at)
-		VALUES (gen_random_uuid(), $1, 'video', 'video/mp4', 199000000, NOW(), NOW() + interval '7 days', NOW())`, alice.ID); err != nil {
+		VALUES (gen_random_uuid(), $1, 'video', 'video/mp4', 299000000, NOW(), NOW() + interval '7 days', NOW())`, alice.ID); err != nil {
 		t.Fatal(err)
 	}
 	if got := post("video", "video/mp4", 20<<20); got != 429 {

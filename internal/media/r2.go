@@ -23,9 +23,9 @@ type Storage interface {
 	// once: it can't overwrite a file that is already there.
 	PresignPut(key, contentType string, size int64, ttl time.Duration) (string, error)
 	// PresignGet is a download link that makes browsers save the file
-	// (Content-Disposition: attachment) with the given type, never display
-	// or sniff it.
-	PresignGet(key, contentType string, ttl time.Duration) (string, error)
+	// (Content-Disposition: attachment, with fileName if set) with the given
+	// type, never display or sniff it.
+	PresignGet(key, contentType, fileName string, ttl time.Duration) (string, error)
 	// Size is the stored object's size; ErrNoObject if it isn't there.
 	Size(ctx context.Context, key string) (int64, error)
 	Delete(ctx context.Context, key string) error
@@ -62,9 +62,9 @@ func (r *R2) PresignPut(key, contentType string, size int64, ttl time.Duration) 
 	}, nil, ttl, time.Now()), nil
 }
 
-func (r *R2) PresignGet(key, contentType string, ttl time.Duration) (string, error) {
+func (r *R2) PresignGet(key, contentType, fileName string, ttl time.Duration) (string, error) {
 	return r.signer.presign(http.MethodGet, r.host, r.path(key), nil, map[string]string{
-		"response-content-disposition": "attachment",
+		"response-content-disposition": disposition(fileName),
 		"response-content-type":        contentType,
 	}, ttl, time.Now()), nil
 }
@@ -209,4 +209,13 @@ func (r *R2) Put(ctx context.Context, key, contentType string, data []byte) erro
 		return fmt.Errorf("r2 put: %s", res.Status)
 	}
 	return nil
+}
+
+// disposition is "attachment", with the file name in RFC 6266 / 5987 form
+// (UTF-8, percent-encoded) when there is one.
+func disposition(fileName string) string {
+	if fileName == "" {
+		return "attachment"
+	}
+	return "attachment; filename*=UTF-8''" + url.PathEscape(fileName)
 }

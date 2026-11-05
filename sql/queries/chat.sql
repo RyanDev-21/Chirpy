@@ -196,6 +196,7 @@ WHERE (m.from_id = @me::uuid OR m.to_id = @me::uuid)
        OR (m.from_id = @me::uuid AND m.to_id = sqlc.narg(with_user)::uuid)
        OR (m.to_id = @me::uuid AND m.from_id = sqlc.narg(with_user)::uuid))
   AND (m.created_at, m.id) < (@before_at::timestamp, @before_id::uuid)
+  AND (sqlc.narg(after_at)::timestamp IS NULL OR m.created_at >= sqlc.narg(after_at)::timestamp)
 ORDER BY m.created_at DESC, m.id DESC
 LIMIT @lim;
 
@@ -208,5 +209,6 @@ WHERE g.searchable AND g.deleted_at IS NULL
   AND g.created_at >= mt.joined_at
   AND (sqlc.narg(in_group)::uuid IS NULL OR g.group_id = sqlc.narg(in_group)::uuid)
   AND (g.created_at, g.id) < (@before_at::timestamp, @before_id::uuid)
+  AND (sqlc.narg(after_at)::timestamp IS NULL OR g.created_at >= sqlc.narg(after_at)::timestamp)
 ORDER BY g.created_at DESC, g.id DESC
 LIMIT @lim;

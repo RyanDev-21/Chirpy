@@ -5,6 +5,7 @@ package integration
 import (
 	"net/url"
 	"testing"
+	"time"
 )
 
 type msgSearchResult struct {
@@ -89,6 +90,17 @@ func TestMessageSearch(t *testing.T) {
 	if got := hitTexts(r); len(got) != 1 || got[0] != "Dinner at the Thai place?" {
 		t.Fatalf("page 2 %v", got)
 	}
+
+	// a date range: nothing after now; after must come before before
+	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	if got := hitTexts(e.searchMsgs(alice, url.Values{"q": {"dinner"}, "after": {future}}, 200)); len(got) != 0 {
+		t.Fatalf("after the future: %v", got)
+	}
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	if got := hitTexts(e.searchMsgs(alice, url.Values{"q": {"dinner"}, "after": {past}}, 200)); len(got) != 3 {
+		t.Fatalf("since an hour ago: %v", got)
+	}
+	e.searchMsgs(alice, url.Values{"q": {"dinner"}, "after": {future}, "before": {past}}, 400)
 
 	// big groups aren't indexed
 	big := e.adminGroup("big", alice)

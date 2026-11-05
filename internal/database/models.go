@@ -127,6 +127,8 @@ type Medium struct {
 	Width        pgtype.Int4
 	Height       pgtype.Int4
 	HasThumbnail bool
+	FileName     pgtype.Text
+	Waveform     []byte
 }
 
 type MemberTable struct {
