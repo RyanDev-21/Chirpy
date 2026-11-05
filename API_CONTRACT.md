@@ -1159,7 +1159,7 @@ local URL). Maximum 20 connection attempts per minute.
   in a URL).
 
 The web app's origin (for example `https://chirpy.ponypigeon.com`) must be
-in the server's `CORS_ORIGINS`, for both REST and the WebSocket. Browsers
+in the server's `CORS_ALLOWED_ORIGINS`, for both REST and the WebSocket. Browsers
 uploading photos and files straight to storage also need a CORS rule on the
 R2 bucket (see DEPLOY.md).
 
