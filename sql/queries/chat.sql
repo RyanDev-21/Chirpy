@@ -3,8 +3,9 @@ INSERT INTO message(id, content, parentId, from_id, to_id, created_at)
 VALUES ($1, $2, $3, $4, $5, $6);
 
 -- name: AddMessagePublic :exec
-INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at)
-VALUES ($1, $2, $3, $4, $5, $6);
+-- searchable: groups of up to 50 members are indexed for search
+INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable)
+VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = $3), false));
 
 -- name: GetRecentPrivateMessages :many
 SELECT * FROM message
@@ -183,3 +184,29 @@ SELECT DISTINCT t.from_id::uuid FROM (
 
 -- name: GroupJoinedAt :one
 SELECT joined_at FROM member_table WHERE group_id = @group_id AND member_id = @member_id;
+
+-- name: SearchPrivateMessages :many
+-- my private messages containing q (lower-cased, LIKE-escaped), newest
+-- first, optionally with one person, older than the cursor
+SELECT m.id, m.content, m.from_id, m.to_id, m.created_at FROM message m
+WHERE (m.from_id = @me::uuid OR m.to_id = @me::uuid)
+  AND m.deleted_at IS NULL
+  AND lower(m.content) LIKE '%' || @q::text || '%' ESCAPE '\'
+  AND (sqlc.narg(with_user)::uuid IS NULL
+       OR (m.from_id = @me::uuid AND m.to_id = sqlc.narg(with_user)::uuid)
+       OR (m.to_id = @me::uuid AND m.from_id = sqlc.narg(with_user)::uuid))
+  AND (m.created_at, m.id) < (@before_at::timestamp, @before_id::uuid)
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT @lim;
+
+-- name: SearchGroupMessages :many
+-- searchable messages of my groups containing q, sent since I joined
+SELECT g.id, g.content, g.from_id, g.group_id, g.created_at FROM GroupMessage g
+JOIN member_table mt ON mt.group_id = g.group_id AND mt.member_id = @me::uuid
+WHERE g.searchable AND g.deleted_at IS NULL
+  AND lower(g.content) LIKE '%' || @q::text || '%' ESCAPE '\'
+  AND g.created_at >= mt.joined_at
+  AND (sqlc.narg(in_group)::uuid IS NULL OR g.group_id = sqlc.narg(in_group)::uuid)
+  AND (g.created_at, g.id) < (@before_at::timestamp, @before_id::uuid)
+ORDER BY g.created_at DESC, g.id DESC
+LIMIT @lim;

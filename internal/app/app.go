@@ -31,6 +31,7 @@ import (
 	"RyanDev-21.com/Chirpy/internal/platform/revoke"
 	"RyanDev-21.com/Chirpy/internal/presence"
 	"RyanDev-21.com/Chirpy/internal/push"
+	"RyanDev-21.com/Chirpy/internal/search"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/internal/ws"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -79,6 +80,7 @@ type handlers struct {
 	media    *media.Handler
 	presence *presence.Handler
 	calls    *calls.Handler
+	search   *search.Handler
 }
 
 // New connects to Postgres and Redis and builds all services.
@@ -182,7 +184,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	a.users = users.NewUserService(userRepo, users.NewStore(rdb), logger)
 	a.friends = friends.NewService(friends.NewRepo(queries), friends.NewStore(rdb), a.users, a.hub, logger)
 	a.groups = groups.NewGroupService(groups.NewGroupRepo(db), groups.NewStore(rdb), a.hub, logger)
-	a.chat = chat.NewChatService(chat.NewChatRepo(queries), chat.NewCache(rdb), a.groups, a.friends, a.hub, a.queue, logger)
+	chatRepo := chat.NewChatRepo(queries)
+	a.chat = chat.NewChatService(chatRepo, chat.NewCache(rdb), a.groups, a.friends, a.hub, a.queue, logger)
 	a.hub.SetPolicy(a.chat)
 	a.groups.SetFriends(a.friends)
 	presenceSvc := presence.NewService(queries, a.friends, a.hub, logger)
@@ -282,6 +285,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		media:    media.NewHandler(a.media),
 		presence: presence.NewHandler(presenceSvc),
 		calls:    calls.NewHandler(calls.NewTURN(cfg.TURNKeyID, cfg.TURNToken), queries, logger),
+		search:   search.NewHandler(search.NewService(queries, chatRepo)),
 	}
 	return a, nil
 }

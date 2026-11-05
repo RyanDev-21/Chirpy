@@ -91,15 +91,16 @@ type GroupRead struct {
 }
 
 type Groupmessage struct {
-	ID        uuid.UUID
-	Content   pgtype.Text
-	GroupID   pgtype.UUID
-	FromID    pgtype.UUID
-	ParentID  pgtype.UUID
-	CreatedAt pgtype.Timestamp
-	UpdatedAt pgtype.Timestamp
-	DeletedAt pgtype.Timestamp
-	EditedAt  pgtype.Timestamp
+	ID         uuid.UUID
+	Content    pgtype.Text
+	GroupID    pgtype.UUID
+	FromID     pgtype.UUID
+	ParentID   pgtype.UUID
+	CreatedAt  pgtype.Timestamp
+	UpdatedAt  pgtype.Timestamp
+	DeletedAt  pgtype.Timestamp
+	EditedAt   pgtype.Timestamp
+	Searchable bool
 }
 
 type MediaDownload struct {
