@@ -41,7 +41,6 @@ type User struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	Email       string    `json:"email"`
-	IsRED       bool      `json:"is_chirpy_red"`
 	// Verified is true once the email address has been confirmed.
 	Verified bool   `json:"email_verified"`
 	Bio      string `json:"bio"`

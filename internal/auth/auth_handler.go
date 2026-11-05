@@ -63,7 +63,6 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Name:         user.Name,
 		CreatedAt:    user.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:    user.UpdatedAt.Format(time.RFC3339),
-		IsChirpyRed:  user.IsRED,
 		Token:        accessToken,
 		RefreshToken: refreshToken,
 	})

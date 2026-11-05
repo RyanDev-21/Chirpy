@@ -50,6 +50,7 @@ type App struct {
 	queue      queue.Broker
 	// revoked ends access tokens early (password change, account deletion)
 	revoked *revoke.Store
+	tickets *ws.Tickets
 	pushSvc *push.Service
 	admin   *admin.Service
 	media   *media.Service
@@ -177,6 +178,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		accessTTL = authsvc.DefaultAccessTTL
 	}
 	a.revoked = revoke.New(rdb, accessTTL)
+	a.tickets = ws.NewTickets(cfg.JWTSecret)
 	// every "sign out everywhere" (password change or reset, takeover of an
 	// unverified account) also ends the access tokens already issued
 	userRepo := &sessionEnder{UserRepo: users.NewUserRepo(queries), revoked: a.revoked, hub: a.hub}

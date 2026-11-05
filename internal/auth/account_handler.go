@@ -25,7 +25,6 @@ func writeSession(w http.ResponseWriter, s *Session) {
 		Name:         s.User.Name,
 		CreatedAt:    s.User.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:    s.User.UpdatedAt.Format(time.RFC3339),
-		IsChirpyRed:  s.User.IsRED,
 		Token:        s.AccessToken,
 		RefreshToken: s.RefreshToken,
 	})

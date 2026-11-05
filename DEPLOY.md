@@ -151,3 +151,22 @@ fails (strict NATs, some mobile networks). Free up to 1,000 GB a month
 4. Check: `GET /api/calls/ice` (signed in) answers `"relay":true`.
 
 Without them calls still work where STUN suffices (`"relay":false`).
+
+## Web app (React Native Web)
+
+1. Render → `CORS_ORIGINS`: add the web app's origin, e.g.
+   `https://chirpy.ponypigeon.com` (comma-separated with the others).
+2. Cloudflare → R2 → `chirpy-media` → **Settings → CORS policy**, so
+   browsers can upload and download directly:
+   ```json
+   [{"AllowedOrigins":["https://chirpy.ponypigeon.com"],
+     "AllowedMethods":["GET","PUT"],
+     "AllowedHeaders":["Content-Type","If-None-Match"],
+     "ExposeHeaders":["ETag"],"MaxAgeSeconds":3600}]
+   ```
+3. Google sign-in on the web uses the same **Web** client ID
+   (`GOOGLE_CLIENT_IDS`); add the web origin under **Authorized JavaScript
+   origins** of that client in Google Cloud Console.
+4. Web push: Firebase → Project settings → Cloud Messaging → **Web Push
+   certificates** → generate a key pair; the web app registers its FCM token
+   with `POST /api/devices` and `"platform":"web"`.

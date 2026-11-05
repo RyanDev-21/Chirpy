@@ -106,9 +106,11 @@ func (a *App) Router() http.Handler {
 			r.Post("/revoke", a.handlers.auth.Revoke)
 		})
 
-		// websocket: the Android client sends the Authorization header on the
-		// upgrade request (OkHttp/Ktor support it); ?token= is not accepted
-		r.With(authed, limit(limitAPI), limit(limitWS)).Get("/chats/ws", a.handlers.chat.ServeWs)
+		// websocket: apps send the Authorization header on the upgrade
+		// request; browsers can't, so they get a one-time ?ticket= first.
+		// ?token= (a reusable token in a URL) is never accepted.
+		r.With(authed, limit(limitAPI)).Post("/chats/ws/ticket", a.wsTicket)
+		r.With(a.wsAuth(authed), limit(limitAPI), limit(limitWS)).Get("/chats/ws", a.handlers.chat.ServeWs)
 
 		// authenticated
 		r.Group(func(r chi.Router) {
