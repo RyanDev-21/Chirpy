@@ -1,8 +1,10 @@
-// Package media handles photos and videos in messages. Files live in
+// Package media handles photos, videos and files in messages. They live in
 // Cloudflare R2 (free tier: 10 GB); phones upload and download them
-// directly with short-lived signed links. To stay free, files are deleted
-// 24 h after every recipient downloaded them, after 7 days at most, and by
-// least-recently-used cleanup when storage nears 10 GB.
+// directly with short-lived signed links. To stay free:
+//   - small uploads (up to 16 MB) are deleted 24 h after every recipient
+//     downloaded them, after 7 days at most;
+//   - large ones (16-100 MB) 24 h after upload, whatever happens;
+//   - least-recently-used cleanup runs when storage nears 10 GB.
 package media
 
 import (
@@ -21,9 +23,16 @@ import (
 
 const (
 	MaxImageBytes  = 5 << 20
-	MaxVideoBytes  = 25 << 20
-	DailyUserBytes = 200 << 20
+	MaxVideoBytes  = 100 << 20
+	MaxFileBytes   = 100 << 20
+	DailyUserBytes = 300 << 20
 	MaxPerMessage  = 10
+	// LargeBytes: bigger uploads only stay largeLifetime.
+	LargeBytes = 16 << 20
+	// video length: up to 3 minutes when small, 10 when large (with slack
+	// for rounding on the phone)
+	maxSmallVideoMs = 3*60_000 + 5_000
+	maxLargeVideoMs = 10*60_000 + 5_000
 
 	// R2's free tier is 10 GB: new uploads stop at 9.5 GB, and the cleanup
 	// deletes least-recently-downloaded files above 9 GB down to 8 GB.
@@ -31,19 +40,21 @@ const (
 	lruHighBytes   = 9 << 30
 	lruLowBytes    = 8 << 30
 
-	maxLifetime  = 7 * 24 * time.Hour
-	keepAfterAll = 24 * time.Hour // after every recipient downloaded it
-	pendingTTL   = time.Hour      // an upload link nobody attached
-	uploadTTL    = 10 * time.Minute
-	downloadTTL  = 5 * time.Minute
+	maxLifetime   = 7 * 24 * time.Hour
+	largeLifetime = 24 * time.Hour
+	keepAfterAll  = 24 * time.Hour // after every recipient downloaded it
+	pendingTTL    = time.Hour      // an upload link nobody attached
+	uploadTTL     = 10 * time.Minute
+	downloadTTL   = 5 * time.Minute
 	// groups bigger than this skip per-member delivery tracking (7-day rule only)
 	trackGroupsUpTo = 50
 )
 
 var (
 	ErrDisabled      = errors.New("media is not configured on this server")
-	ErrBadMedia      = errors.New("kind must be image (JPEG, PNG, WebP, HEIC; max 5 MB) or video (MP4, MOV, WebM; max 25 MB, 60 s) with its size in bytes; width/height up to 8192")
-	ErrDailyQuota    = errors.New("daily upload limit reached (200 MB per day)")
+	ErrBadMedia      = errors.New("kind must be image (JPEG, PNG, WebP, HEIC; max 5 MB), video (MP4, MOV, WebM; max 100 MB; 3 min, or 10 min above 16 MB) or file (documents, archives, audio; max 100 MB; with file_name) with its size in bytes; width/height up to 8192")
+	ErrBadFile       = errors.New("this kind of file can't be sent: allowed are documents (PDF, Word, Excel, PowerPoint, OpenDocument, text, CSV), archives (ZIP, 7z, RAR), e-books and audio; apps and programs are not")
+	ErrDailyQuota    = errors.New("daily upload limit reached (300 MB per day)")
 	ErrStorageFull   = errors.New("media storage is full right now; try again later")
 	ErrNotFound      = errors.New("media not found")
 	ErrExpired       = errors.New("this media has expired")
@@ -70,6 +81,8 @@ type Attachment struct {
 	Height     int `json:"height,omitempty"`
 	// Thumbnail: a still is available at GET /api/media/{id}/thumbnail.
 	Thumbnail bool `json:"thumbnail"`
+	// FileName: files only, as the sender named it.
+	FileName string `json:"file_name,omitempty"`
 }
 
 // Members lists a group's members (groups.GroupService).
@@ -112,28 +125,66 @@ type Dims struct {
 	Height     int `json:"height"`
 }
 
-func (d Dims) ok(kind string) bool {
+func (d Dims) ok(kind string, size int64) bool {
 	if d.Width < 0 || d.Height < 0 || d.Width > 8192 || d.Height > 8192 || d.DurationMs < 0 {
 		return false
 	}
-	// videos are cut to 60 s on the phone; a little slack for rounding
-	return kind == "video" && d.DurationMs <= 65_000 || kind == "image" && d.DurationMs == 0
+	switch kind {
+	case "video":
+		if size > LargeBytes {
+			return d.DurationMs <= maxLargeVideoMs
+		}
+		return d.DurationMs <= maxSmallVideoMs
+	case "image":
+		return d.DurationMs == 0
+	}
+	return d == Dims{} // files have no dimensions
+}
+
+// NewUploadRequest is POST /api/media.
+type NewUploadRequest struct {
+	Kind        string `json:"kind"`
+	ContentType string `json:"content_type"`
+	Size        int64  `json:"size"`
+	FileName    string `json:"file_name"` // files only
+	Dims
 }
 
 func optInt(n int) pgtype.Int4 { return pgtype.Int4{Int32: int32(n), Valid: n > 0} }
 
-func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, kind, contentType string, size int64, dims Dims) (Upload, error) {
+func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, req NewUploadRequest) (Upload, error) {
 	if s.store == nil {
 		return Upload{}, ErrDisabled
 	}
-	limit := int64(MaxImageBytes)
-	if kind == "video" {
+	kind, contentType, size, dims := req.Kind, req.ContentType, req.Size, req.Dims
+	var limit int64
+	var fileName pgtype.Text
+	switch kind {
+	case "image":
+		limit = MaxImageBytes
+	case "video":
 		limit = MaxVideoBytes
+	case "file":
+		limit = MaxFileBytes
+		name, ok := cleanFileName(req.FileName, contentType)
+		if !ok {
+			return Upload{}, ErrBadFile
+		}
+		fileName = pgtype.Text{String: name, Valid: true}
+	default:
+		return Upload{}, ErrBadMedia
 	}
-	if !allowedTypes[kind][contentType] || size <= 0 || size > limit || !dims.ok(kind) {
+	if kind != "file" && (!allowedTypes[kind][contentType] || req.FileName != "") {
+		return Upload{}, ErrBadMedia
+	}
+	if size <= 0 || size > limit || !dims.ok(kind, size) {
 		return Upload{}, ErrBadMedia
 	}
 	now := s.now()
+	lifetime := maxLifetime
+	if size > LargeBytes {
+		lifetime = largeLifetime
+	}
 	used, err := s.q.MediaUploadedSince(ctx, database.MediaUploadedSinceParams{OwnerID: pu(owner), Since: ts(now.Add(-24 * time.Hour))})
 	if err != nil {
 		return Upload{}, err
@@ -154,8 +205,8 @@ func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, kind, contentT
 	}
 	if err := s.q.CreateMedia(ctx, database.CreateMediaParams{
 		ID: id, OwnerID: pu(owner), Kind: kind, ContentType: contentType, Size: size,
-		Now: ts(now), ExpiresAt: ts(now.Add(maxLifetime)),
-		DurationMs: optInt(dims.DurationMs), Width: optInt(dims.Width), Height: optInt(dims.Height),
+		Now: ts(now), ExpiresAt: ts(now.Add(lifetime)),
+		DurationMs: optInt(dims.DurationMs), Width: optInt(dims.Width), Height: optInt(dims.Height), FileName: fileName,
 	}); err != nil {
 		return Upload{}, err
 	}
@@ -204,7 +255,7 @@ func (s *Service) Attach(ctx context.Context, owner uuid.UUID, ids []uuid.UUID, 
 			return nil, err
 		}
 		out = append(out, Attachment{ID: id, Kind: m.Kind, ContentType: m.ContentType, Size: m.Size, ExpiresAt: m.ExpiresAt.Time.UTC(),
-			DurationMs: int(m.DurationMs.Int32), Width: int(m.Width.Int32), Height: int(m.Height.Int32), Thumbnail: m.HasThumbnail})
+			DurationMs: int(m.DurationMs.Int32), Width: int(m.Width.Int32), Height: int(m.Height.Int32), Thumbnail: m.HasThumbnail, FileName: m.FileName.String})
 	}
 	for _, id := range ids {
 		n, err := s.q.AttachMedia(ctx, database.AttachMediaParams{
@@ -235,7 +286,8 @@ func (s *Service) ForMessages(ctx context.Context, msgIDs []uuid.UUID) (map[uuid
 		mid := uuid.UUID(r.MessageID.Bytes)
 		out[mid] = append(out[mid], Attachment{ID: r.ID, Kind: r.Kind, ContentType: r.ContentType, Size: r.Size,
 			ExpiresAt: r.ExpiresAt.Time.UTC(), Expired: r.DeletedAt.Valid,
-			DurationMs: int(r.DurationMs.Int32), Width: int(r.Width.Int32), Height: int(r.Height.Int32), Thumbnail: r.HasThumbnail && !r.DeletedAt.Valid})
+			DurationMs: int(r.DurationMs.Int32), Width: int(r.Width.Int32), Height: int(r.Height.Int32), Thumbnail: r.HasThumbnail && !r.DeletedAt.Valid,
+			FileName: r.FileName.String})
 	}
 	return out, nil
 }
@@ -255,6 +307,7 @@ func (s *Service) ExpireMessage(ctx context.Context, msgID uuid.UUID) error {
 // Download is the answer to GET /api/media/{id}.
 type Download struct {
 	URL         string `json:"url"`
+	FileName    string `json:"file_name,omitempty"`
 	ContentType string `json:"content_type"`
 	Size        int64  `json:"size"`
 	ExpiresIn   int    `json:"expires_in"`
@@ -284,12 +337,12 @@ func (s *Service) Download(ctx context.Context, viewer, id uuid.UUID) (Download,
 			}
 		}
 	}
-	u, err := s.store.PresignGet(key(id), m.ContentType, downloadTTL)
+	u, err := s.store.PresignGet(key(id), m.ContentType, m.FileName.String, downloadTTL)
 	if err != nil {
 		return Download{}, err
 	}
 	telemetry.Media(ctx, "download", m.Kind)
-	return Download{URL: u, ContentType: m.ContentType, Size: m.Size, ExpiresIn: int(downloadTTL.Seconds())}, nil
+	return Download{URL: u, FileName: m.FileName.String, ContentType: m.ContentType, Size: m.Size, ExpiresIn: int(downloadTTL.Seconds())}, nil
 }
 
 // Cleanup deletes expired files, then the least recently downloaded ones
@@ -462,7 +515,7 @@ func (s *Service) Thumbnail(ctx context.Context, viewer, id uuid.UUID) (Download
 	if !m.HasThumbnail {
 		return Download{}, ErrNotFound
 	}
-	u, err := s.store.PresignGet(thumbKey(id), "image/jpeg", downloadTTL)
+	u, err := s.store.PresignGet(thumbKey(id), "image/jpeg", "", downloadTTL)
 	if err != nil {
 		return Download{}, err
 	}

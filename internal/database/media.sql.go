@@ -52,9 +52,9 @@ func (q *Queries) CountMediaDownloads(ctx context.Context, mediaID uuid.UUID) (i
 }
 
 const createMedia = `-- name: CreateMedia :exec
-INSERT INTO media (id, owner_id, kind, content_type, size, created_at, expires_at, last_access_at, duration_ms, width, height)
+INSERT INTO media (id, owner_id, kind, content_type, size, created_at, expires_at, last_access_at, duration_ms, width, height, file_name)
 VALUES ($1, $2, $3, $4, $5, $6::timestamp, $7::timestamp, $6::timestamp,
-        $8, $9, $10)
+        $8, $9, $10, $11)
 `
 
 type CreateMediaParams struct {
@@ -68,6 +68,7 @@ type CreateMediaParams struct {
 	DurationMs  pgtype.Int4
 	Width       pgtype.Int4
 	Height      pgtype.Int4
+	FileName    pgtype.Text
 }
 
 func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) error {
@@ -82,6 +83,7 @@ func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) error 
 		arg.DurationMs,
 		arg.Width,
 		arg.Height,
+		arg.FileName,
 	)
 	return err
 }
@@ -118,7 +120,7 @@ func (q *Queries) ExpireMediaOfMessage(ctx context.Context, arg ExpireMediaOfMes
 }
 
 const getMedia = `-- name: GetMedia :one
-SELECT id, owner_id, kind, content_type, size, status, chat_type, chat_id, message_id, created_at, expires_at, delivered_at, last_access_at, deleted_at, duration_ms, width, height, has_thumbnail FROM media WHERE id = $1
+SELECT id, owner_id, kind, content_type, size, status, chat_type, chat_id, message_id, created_at, expires_at, delivered_at, last_access_at, deleted_at, duration_ms, width, height, has_thumbnail, file_name FROM media WHERE id = $1
 `
 
 func (q *Queries) GetMedia(ctx context.Context, id uuid.UUID) (Medium, error) {
@@ -143,6 +145,7 @@ func (q *Queries) GetMedia(ctx context.Context, id uuid.UUID) (Medium, error) {
 		&i.Width,
 		&i.Height,
 		&i.HasThumbnail,
+		&i.FileName,
 	)
 	return i, err
 }
@@ -234,7 +237,7 @@ func (q *Queries) MarkMediaDelivered(ctx context.Context, arg MarkMediaDelivered
 }
 
 const mediaForMessages = `-- name: MediaForMessages :many
-SELECT id, message_id, kind, content_type, size, expires_at, deleted_at, duration_ms, width, height, has_thumbnail FROM media
+SELECT id, message_id, kind, content_type, size, expires_at, deleted_at, duration_ms, width, height, has_thumbnail, file_name FROM media
 WHERE message_id = ANY($1::uuid[]) ORDER BY created_at, id
 `
 
@@ -250,6 +253,7 @@ type MediaForMessagesRow struct {
 	Width        pgtype.Int4
 	Height       pgtype.Int4
 	HasThumbnail bool
+	FileName     pgtype.Text
 }
 
 func (q *Queries) MediaForMessages(ctx context.Context, ids []uuid.UUID) ([]MediaForMessagesRow, error) {
@@ -273,6 +277,7 @@ func (q *Queries) MediaForMessages(ctx context.Context, ids []uuid.UUID) ([]Medi
 			&i.Width,
 			&i.Height,
 			&i.HasThumbnail,
+			&i.FileName,
 		); err != nil {
 			return nil, err
 		}

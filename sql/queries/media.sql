@@ -1,7 +1,7 @@
 -- name: CreateMedia :exec
-INSERT INTO media (id, owner_id, kind, content_type, size, created_at, expires_at, last_access_at, duration_ms, width, height)
+INSERT INTO media (id, owner_id, kind, content_type, size, created_at, expires_at, last_access_at, duration_ms, width, height, file_name)
 VALUES (@id, @owner_id, @kind, @content_type, @size, @now::timestamp, @expires_at::timestamp, @now::timestamp,
-        sqlc.narg(duration_ms), sqlc.narg(width), sqlc.narg(height));
+        sqlc.narg(duration_ms), sqlc.narg(width), sqlc.narg(height), sqlc.narg(file_name));
 
 -- name: MediaUploadedSince :one
 -- bytes a user started uploading since @since (daily quota)
@@ -20,7 +20,7 @@ UPDATE media SET status = 'ready', chat_type = @chat_type, chat_id = @chat_id, m
 WHERE id = @id AND owner_id = @owner_id AND status = 'pending' AND deleted_at IS NULL;
 
 -- name: MediaForMessages :many
-SELECT id, message_id, kind, content_type, size, expires_at, deleted_at, duration_ms, width, height, has_thumbnail FROM media
+SELECT id, message_id, kind, content_type, size, expires_at, deleted_at, duration_ms, width, height, has_thumbnail, file_name FROM media
 WHERE message_id = ANY(@ids::uuid[]) ORDER BY created_at, id;
 
 -- name: RecordMediaDownload :exec

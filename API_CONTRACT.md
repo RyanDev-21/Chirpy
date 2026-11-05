@@ -889,6 +889,8 @@ message in that scope.
   your chats.
 - `before` (RFC3339, optional): only older messages. To fetch the next page,
   pass `next_before` and `next_before_id` back as `before` and `before_id`.
+- `after` (RFC3339, optional): only messages from then on. With `before`
+  it is a date range ("in March"); `after` must be earlier than `before`.
 - `limit`: 1–50, default 20. Newest first. `chat_id` is the other person
   (private) or the group.
 - Only **private chats and groups of up to 50 members** are indexed. A
@@ -905,29 +907,60 @@ Success is `201` with an empty body. The message must belong to this private
 chat; otherwise the endpoint returns `400`. The other user receives a `Seen`
 event only if you are friends.
 
-## Photos and videos
+## Photos, videos and files
 
-Files go **straight from the phone to storage** (Cloudflare R2) with
+Uploads go **straight from the phone to storage** (Cloudflare R2) with
 short-lived signed links; the API only hands out links and tracks them.
 If the server has no storage configured, these routes return `503`.
 
 ### Limits
 
-| | Accepted types | Max size |
-|---|---|---|
-| `image` | `image/jpeg`, `image/png`, `image/webp`, `image/heic` | 5 MB |
-| `video` | `video/mp4`, `video/quicktime`, `video/webm` | 25 MB |
+| | Accepted types | Max size | Length |
+|---|---|---|---|
+| `image` | `image/jpeg`, `image/png`, `image/webp`, `image/heic` | 5 MB | |
+| `video` | `video/mp4`, `video/quicktime`, `video/webm` | 100 MB | 3 min up to 16 MB, 10 min above |
+| `file` | see below, with `file_name` | 100 MB | |
 
-Shrink before uploading: photos to ~1600 px, videos to 720p and at most 60
-seconds; make the video thumbnail on the phone. At most **200 MB per user per
-24 h** (`429`), **10 files per message**. When storage is nearly full new
-uploads get `507` for a while.
+**How long the server keeps them** (phones keep their own copies):
+
+| Size | Kept |
+|---|---|
+| up to 16 MB ("small") | 24 h after everyone in the chat downloaded it, 7 days at most |
+| over 16 MB ("large") | **24 h after upload**, whatever happens |
+
+Show the expiry (`expires_at`) for large uploads ("available until …"), and
+download them automatically on Wi-Fi so recipients don't miss them.
+
+Shrink before uploading: photos to ~1600 px, videos to 720p (a 720p minute
+is ~10–15 MB, so most videos stay small); make the video thumbnail on the
+phone. At most **300 MB per user per 24 h** (`429`), **10 per message**.
+When storage is nearly full, new uploads get `507` for a while.
+
+**Files** (`kind: "file"`) need `file_name`, and its extension must match
+`content_type`:
+
+| Extensions | Content type |
+|---|---|
+| pdf | `application/pdf` |
+| doc, docx, xls, xlsx, ppt, pptx | the Microsoft Office types (`application/msword`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, …) |
+| odt, ods, odp | `application/vnd.oasis.opendocument.*` |
+| rtf, txt, csv, md | `application/rtf`, `text/plain`, `text/csv`, `text/markdown` |
+| epub | `application/epub+zip` |
+| zip, 7z, rar | `application/zip`, `application/x-7z-compressed`, `application/vnd.rar` |
+| mp3, m4a, ogg, opus, wav, aac | `audio/mpeg`, `audio/mp4`, `audio/ogg`, `audio/wav`, `audio/aac` |
+
+Anything else is `400`, in particular **apps and programs** (APK, EXE,
+scripts): they are a common way to spread malware and nothing scans files.
+The name is cleaned (no folders, control or text-direction characters, at
+most 200 characters) and shown to recipients as `file_name`. Downloads save
+under that name. Treat received files as untrusted: open them with other
+apps, never execute them.
 
 ### Sending
 
 1. `POST /api/media` with `{"kind":"image","content_type":"image/jpeg","size":123456}`
    (size in bytes, exact; optionally `"width"`, `"height"`, and for videos
-   `"duration_ms"`, up to 65 000) → `201`:
+   `"duration_ms"`; for files `"file_name":"report.pdf"`) → `201`:
    ```json
    {"media_id":"uuid","upload_url":"https://…","method":"PUT",
     "headers":{"Content-Type":"image/jpeg","If-None-Match":"*"},"expires_in":600}

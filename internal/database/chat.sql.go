@@ -771,8 +771,9 @@ WHERE g.searchable AND g.deleted_at IS NULL
   AND g.created_at >= mt.joined_at
   AND ($3::uuid IS NULL OR g.group_id = $3::uuid)
   AND (g.created_at, g.id) < ($4::timestamp, $5::uuid)
+  AND ($6::timestamp IS NULL OR g.created_at >= $6::timestamp)
 ORDER BY g.created_at DESC, g.id DESC
-LIMIT $6
+LIMIT $7
 `
 
 type SearchGroupMessagesParams struct {
@@ -781,6 +782,7 @@ type SearchGroupMessagesParams struct {
 	InGroup  pgtype.UUID
 	BeforeAt pgtype.Timestamp
 	BeforeID uuid.UUID
+	AfterAt  pgtype.Timestamp
 	Lim      int32
 }
 
@@ -800,6 +802,7 @@ func (q *Queries) SearchGroupMessages(ctx context.Context, arg SearchGroupMessag
 		arg.InGroup,
 		arg.BeforeAt,
 		arg.BeforeID,
+		arg.AfterAt,
 		arg.Lim,
 	)
 	if err != nil {
@@ -835,8 +838,9 @@ WHERE (m.from_id = $1::uuid OR m.to_id = $1::uuid)
        OR (m.from_id = $1::uuid AND m.to_id = $3::uuid)
        OR (m.to_id = $1::uuid AND m.from_id = $3::uuid))
   AND (m.created_at, m.id) < ($4::timestamp, $5::uuid)
+  AND ($6::timestamp IS NULL OR m.created_at >= $6::timestamp)
 ORDER BY m.created_at DESC, m.id DESC
-LIMIT $6
+LIMIT $7
 `
 
 type SearchPrivateMessagesParams struct {
@@ -845,6 +849,7 @@ type SearchPrivateMessagesParams struct {
 	WithUser pgtype.UUID
 	BeforeAt pgtype.Timestamp
 	BeforeID uuid.UUID
+	AfterAt  pgtype.Timestamp
 	Lim      int32
 }
 
@@ -865,6 +870,7 @@ func (q *Queries) SearchPrivateMessages(ctx context.Context, arg SearchPrivateMe
 		arg.WithUser,
 		arg.BeforeAt,
 		arg.BeforeID,
+		arg.AfterAt,
 		arg.Lim,
 	)
 	if err != nil {

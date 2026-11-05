@@ -631,15 +631,22 @@ func mediaPreview(text string, att []media.Attachment) string {
 	if text != "" || len(att) == 0 {
 		return text
 	}
-	photos, videos := 0, 0
+	photos, videos, files := 0, 0, 0
 	for _, a := range att {
-		if a.Kind == "video" {
+		switch a.Kind {
+		case "video":
 			videos++
-		} else {
+		case "file":
+			files++
+		default:
 			photos++
 		}
 	}
 	switch {
+	case files == 1 && photos+videos == 0:
+		return "📎 " + att[0].FileName
+	case files > 0:
+		return fmt.Sprintf("📎 %d files", len(att))
 	case videos == 0 && photos == 1:
 		return "📷 Photo"
 	case photos == 0 && videos == 1:

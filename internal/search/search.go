@@ -37,7 +37,7 @@ const (
 
 var (
 	ErrBadQuery  = errors.New("q must be 3-100 characters (2 when searching one chat)")
-	ErrBadParams = errors.New("type must be private or public with chat_id; before must be RFC3339; limit 1-50")
+	ErrBadParams = errors.New("type must be private or public with chat_id; after and before must be RFC3339 (after earlier than before); limit 1-50")
 )
 
 // Store is implemented by *database.Queries.
@@ -69,6 +69,7 @@ type Query struct {
 	Before time.Time // zero = newest
 	// BeforeID with Before continues exactly after a result (next_before_id)
 	BeforeID uuid.UUID
+	After    time.Time // zero = no lower bound: with Before, a date range
 	Limit    int
 }
 
@@ -101,6 +102,13 @@ func (s *Service) Search(ctx context.Context, me uuid.UUID, q Query) ([]Hit, err
 	if q.Limit == 0 {
 		q.Limit = defaultLimit
 	}
+	if !q.After.IsZero() && !q.Before.IsZero() && !q.After.Before(q.Before) {
+		return nil, ErrBadParams
+	}
+	var after pgtype.Timestamp
+	if !q.After.IsZero() {
+		after = ts(q.After)
+	}
 	if q.Limit < 1 || q.Limit > maxLimit || (q.Type != "" && q.Type != "private" && q.Type != "public") || (q.Type != "") != (q.ChatID != uuid.Nil) {
 		return nil, ErrBadParams
 	}
@@ -118,7 +126,7 @@ func (s *Service) Search(ctx context.Context, me uuid.UUID, q Query) ([]Hit, err
 
 	var hits []Hit
 	if q.Type == "" || q.Type == "private" {
-		p := database.SearchPrivateMessagesParams{Me: me, Q: pattern, BeforeAt: ts(before), BeforeID: beforeID, Lim: lim}
+		p := database.SearchPrivateMessagesParams{Me: me, Q: pattern, BeforeAt: ts(before), BeforeID: beforeID, AfterAt: after, Lim: lim}
 		if q.Type == "private" {
 			p.WithUser = pgtype.UUID{Bytes: q.ChatID, Valid: true}
 		}
@@ -136,7 +144,7 @@ func (s *Service) Search(ctx context.Context, me uuid.UUID, q Query) ([]Hit, err
 		}
 	}
 	if q.Type == "" || q.Type == "public" {
-		p := database.SearchGroupMessagesParams{Me: me, Q: pattern, BeforeAt: ts(before), BeforeID: beforeID, Lim: lim}
+		p := database.SearchGroupMessagesParams{Me: me, Q: pattern, BeforeAt: ts(before), BeforeID: beforeID, AfterAt: after, Lim: lim}
 		if q.Type == "public" {
 			p.InGroup = pgtype.UUID{Bytes: q.ChatID, Valid: true}
 		}
@@ -178,7 +186,7 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
-// Search handles GET /api/chats/search?q=&type=&chat_id=&before=&limit=.
+// Search handles GET /api/chats/search?q=&type=&chat_id=&after=&before=&before_id=&limit=.
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	me, err := reqctx.User(r.Context())
 	if err != nil {
@@ -195,6 +203,12 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	}
 	if s := v.Get("before"); s != "" {
 		if q.Before, err = time.Parse(time.RFC3339Nano, s); err != nil {
+			httpx.Error(w, http.StatusBadRequest, ErrBadParams.Error())
+			return
+		}
+	}
+	if s := v.Get("after"); s != "" {
+		if q.After, err = time.Parse(time.RFC3339Nano, s); err != nil {
 			httpx.Error(w, http.StatusBadRequest, ErrBadParams.Error())
 			return
 		}
