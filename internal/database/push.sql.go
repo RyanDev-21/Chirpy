@@ -128,6 +128,7 @@ WHERE d.user_id = ANY($1::uuid[])
         WHEN 'public' THEN COALESCE(p.groups, true)
         WHEN 'friends' THEN COALESCE(p.friends, true)
         WHEN 'reactions' THEN COALESCE(p.reactions, true)
+        WHEN 'calls' THEN true -- calls always ring (mute the person to stop it)
         ELSE false END
   AND NOT EXISTS (
       SELECT 1 FROM chat_mutes m

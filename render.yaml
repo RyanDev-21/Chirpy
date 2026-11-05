@@ -33,6 +33,11 @@ services:
           # Firebase service account key (JSON) for push; set in the dashboard
           - key: FIREBASE_SERVICE_ACCOUNT
             sync: false
+          # Cloudflare Realtime TURN for voice calls (set in the dashboard)
+          - key: CF_TURN_KEY_ID
+            sync: false
+          - key: CF_TURN_API_TOKEN
+            sync: false
           # Cloudflare R2 for photos and videos (set in the dashboard)
           - key: R2_ACCOUNT_ID
             sync: false

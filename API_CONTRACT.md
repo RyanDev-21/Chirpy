@@ -961,6 +961,8 @@ over the WebSocket (when the app is open, the live events are enough).
 | `private` | sender name | message text (≤120 chars) | `from_id`, `msg_id` | one per chat |
 | `public` | group name | `sender: text` | `from_id`, `group_id`, `msg_id` | one per group |
 | `group_added` | group name | `bob added you to the group` | `from_id`, `group_id` | one per group |
+| `call` | (data-only, no visible notification) | | `from_id`, `call_id`, `from_name` | see Voice calls |
+| `missed_call` | Missed call | caller's name | `from_id`, `call_id` | one per caller |
 | `friend_request` | Friend request | `bob sent you a friend request` | `from_id` | |
 | `friend_accept` | Friend request accepted | `bob accepted your friend request` | `from_id` | |
 | `reaction` | reactor (`in <group>`) | `reacted ❤️ to your message` | `from_id`, `msg_id`, `group_id`? | one per message |
@@ -982,6 +984,91 @@ Android channel id: `messages`. Tapping should open the chat from `data`.
   (active mutes only).
 
 Maximum 30 changes per minute across these routes.
+
+## Voice calls
+
+1:1 voice calls between **friends** (blocking ends a friendship, so blocked
+people can't call). The audio goes phone to phone over WebRTC (encrypted,
+DTLS-SRTP); when a direct path fails it goes through Cloudflare's TURN relay,
+still encrypted. The server never receives audio: it checks who may call
+whom, rings the callee, passes the WebRTC signalling between the two devices
+over the WebSocket, and keeps a call log. On Android use the WebRTC library
+(`org.webrtc`) with audio only, and a `ConnectionService` / full-screen
+notification for ringing.
+
+### ICE servers
+
+`GET /api/calls/ice` → `200`:
+
+```json
+{"ice_servers":[{"urls":["stun:stun.cloudflare.com:3478","turn:turn.cloudflare.com:3478?transport=udp","turns:turn.cloudflare.com:443?transport=tcp"],
+  "username":"…","credential":"…"}],"relay":true,"expires_in":14400}
+```
+
+Pass `ice_servers` as `RTCConfiguration.iceServers`. Fetch it right before
+each call (both caller and callee); the credentials are short-lived and must
+not be stored. `relay` is `false` when only STUN is available (some
+networks then can't connect). 20/minute.
+
+### Signalling (WebSocket)
+
+| Step | Who sends | Event and payload |
+|---|---|---|
+| 1. call | caller | `CallStart {"to_id":"friend-uuid"}` |
+| 2. ringing | server → caller's device | `CallRinging {"call_id","to_id"}` |
+| 2. incoming | server → every device of the callee | `CallIncoming {"call_id","from_id"}` (an offline phone gets the push below, then this event when it connects) |
+| 3. answer | callee's device | `CallAccept {"call_id"}` |
+| 4. accepted | server → caller's device | `CallAccepted {"call_id"}`; the callee's other devices get `CallEnded` with reason `answered_elsewhere` |
+| 5. negotiate | either device | `CallSignal {"call_id","data":{…}}`: the caller sends the SDP offer, the callee the answer, both send ICE candidates. `data` is any JSON (at most 16 KB) and reaches the other device unchanged, as `CallSignal {"call_id","from_id","data"}` |
+| 6. hang up | either | `CallEnd {"call_id"}` (or `CallDecline` while ringing) |
+| 6. ended | server → both users | `CallEnded {"call_id","reason","duration_ms"}` |
+
+Only the two devices in the call can signal (the callee's device that
+answered, and the caller's device that called). `CallSignal` is only
+accepted after `CallAccepted`.
+
+`reason` is one of: `ended` (hung up after talking), `missed` (no answer in
+45 seconds), `declined`, `cancelled` (the caller gave up while ringing),
+`busy` (the callee is in another call), `disconnected` (a device was gone
+for more than 30 seconds), `unfriended`, `answered_elsewhere`.
+
+Refused actions answer `CallError {"error","call_id"?}` to that device only:
+`not_friends`, `already_in_a_call`, `rate_limited` (10 calls/minute, 500
+signals per side per call), `unknown_call` (not your call, or it ended),
+`bad_request`, `unavailable`.
+
+**Connection drops.** If a device in an active call loses its WebSocket, it
+has 30 seconds to reconnect. The call moves to the reconnected device, and
+both sides get `CallResumed {"call_id","peer_id"}`: restart ICE (a new offer
+with `iceRestart`) if the audio stopped. The media keeps flowing directly
+meanwhile when it can. Calls last at most 4 hours. Calls in progress when the
+server restarts end (logged as `interrupted`).
+
+### Push
+
+An offline callee's phones get a **data-only, high-priority** push
+(`data.type = "call"`, with `call_id`, `from_id`, `from_name`) that expires
+after 45 seconds: show the ringing screen, connect the WebSocket, and wait
+for `CallIncoming`. A missed call also sends a normal notification
+(`missed_call`, title "Missed call", body the caller's name). Calls ignore
+the notification settings, except that muting the person's chat also
+silences their calls.
+
+### Call log
+
+`GET /api/calls?limit=30&before={call_id}` → `200`, newest first:
+
+```json
+{"calls":[{"id":"call-uuid","direction":"outgoing","state":"ended","reason":"ended",
+  "peer":{"user_id":"uuid","name":"bob","display_name":"Bob","avatar_url":null},
+  "started_at":"…","answered_at":"…","ended_at":"…","duration_ms":61234}]}
+```
+
+`state` is `ended` (it was answered), `missed`, `declined`, `cancelled`,
+`busy` or `failed`; `ringing` or `active` for a call in progress. `peer`
+fields are null if they deleted their account. `limit` is 1–100; `before`
+must be a call from your log (`400`). Entries are kept 180 days. Show them
+in the chat timeline too, by time.
 
 ## WebSocket
 
@@ -1005,7 +1092,10 @@ carry `to_id`, so your other devices know which chat a message you sent
 belongs to. Clients should handle reconnects and reload missed history using the
 REST endpoints. The server sends WebSocket text messages and periodic ping
 frames, and closes connections that stop answering pings for 60 seconds.
-A client message larger than 4096 bytes **closes the connection**. A failed
+A client message larger than 24 KB **closes the connection**. **One
+WebSocket frame can carry several events**, separated by newlines (`\n`),
+when they are sent close together: split each frame on newlines and parse
+every line as its own envelope. A failed
 upgrade (no or bad token) returns `401` JSON instead of switching protocols.
 
 ### Server events

@@ -342,13 +342,39 @@ func readEvent(t *testing.T, conn *websocket.Conn) wsEvent {
 	}
 }
 
+// pending holds events that arrived in the same frame as an earlier one:
+// the server batches queued events into one frame, newline-separated.
+var (
+	pendingMu sync.Mutex
+	pending   = map[*websocket.Conn][][]byte{}
+)
+
 func readAnyEvent(t *testing.T, conn *websocket.Conn) wsEvent {
 	t.Helper()
+	pendingMu.Lock()
+	if q := pending[conn]; len(q) > 0 {
+		raw := q[0]
+		pending[conn] = q[1:]
+		pendingMu.Unlock()
+		return decodeEvent(t, raw)
+	}
+	pendingMu.Unlock()
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	_, raw, err := conn.ReadMessage()
+	_, frame, err := conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("websocket read: %v", err)
 	}
+	parts := bytes.Split(frame, []byte("\n"))
+	if len(parts) > 1 {
+		pendingMu.Lock()
+		pending[conn] = append(pending[conn], parts[1:]...)
+		pendingMu.Unlock()
+	}
+	return decodeEvent(t, parts[0])
+}
+
+func decodeEvent(t *testing.T, raw []byte) wsEvent {
+	t.Helper()
 	var ev wsEvent
 	if err := json.Unmarshal(raw, &ev); err != nil {
 		t.Fatalf("bad event %s", raw)

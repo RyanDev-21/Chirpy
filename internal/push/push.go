@@ -30,8 +30,13 @@ const (
 	KindFriendRequest = "friend_request" // someone sent me a request
 	KindFriendAccept  = "friend_accept"  // someone accepted my request
 	KindReaction      = "reaction"       // someone reacted to my message
-	KindGroupAdded    = "group_added"    // a group leader added me
+	KindGroupAdded    = "group_added"    // a group admin or moderator added me
+	KindCall          = "call"           // incoming call: data-only, rings the phone
+	KindMissedCall    = "missed_call"    // a call I didn't answer
 )
+
+// CallRingTTL: an incoming-call push that arrives later than this is useless.
+const CallRingTTL = 45 * time.Second
 
 // Job describes something to tell users about.
 type Job struct {
@@ -42,6 +47,7 @@ type Job struct {
 	Group   uuid.UUID `json:"group,omitempty"`
 	MsgID   uuid.UUID `json:"msg_id,omitempty"`
 	Preview string    `json:"preview,omitempty"` // message text, or the emoji for reactions
+	CallID  uuid.UUID `json:"call_id,omitempty"`
 }
 
 const maxPreview = 120
@@ -110,6 +116,8 @@ func prefKind(kind string) string {
 		return "reactions"
 	case KindGroupAdded:
 		return KindGroup
+	case KindCall, KindMissedCall:
+		return "calls"
 	}
 	return kind
 }
@@ -190,6 +198,12 @@ func (s *Service) render(ctx context.Context, j Job) (Message, error) {
 		m.Title, m.Body, m.Tag = "Friend request accepted", from+" accepted your friend request", "friends"
 	case KindGroupAdded:
 		m.Title, m.Body, m.Tag = group, from+" added you to the group", "group:"+j.Group.String()
+	case KindCall:
+		m.DataOnly, m.TTL = true, CallRingTTL
+		m.Data["call_id"], m.Data["from_name"] = j.CallID.String(), from
+	case KindMissedCall:
+		m.Title, m.Body, m.Tag = "Missed call", from, "call:"+j.From.String()
+		m.Data["call_id"] = j.CallID.String()
 	case KindReaction:
 		m.Title, m.Body, m.Tag = from, "reacted "+j.Preview+" to your message", "reaction:"+j.MsgID.String()
 		if group != "" {

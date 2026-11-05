@@ -30,6 +30,7 @@ long it is kept, and what you can do about it. Questions: <a href="mailto:privac
 <tr><td><strong>Online status:</strong> whether the app is connected, and when you were last seen</td><td>Shown only to your friends. You can hide it in settings (then you also don't see theirs)</td></tr>
 <tr><td><strong>Group pictures</strong> set by a group leader</td><td>To show the group to its members. Resized, metadata removed; deleted with the group</td></tr>
 <tr><td><strong>Photos and videos</strong> you send</td><td>To deliver them. Pictures are resized and their metadata (such as location in photos) is removed</td></tr>
+<tr><td><strong>Calls:</strong> who called whom, when, whether it was answered and how long it lasted. <em>Not</em> the audio</td><td>To connect calls and show your call history. Audio goes directly between the phones, or through Cloudflare's relay, encrypted; we never receive or record it</td></tr>
 <tr><td><strong>Device:</strong> a push-notification token from your phone</td><td>To notify you of new messages while the app is closed</td></tr>
 <tr><td><strong>Technical:</strong> IP address, time and type of requests</td><td>Security, preventing abuse (rate limits) and fixing problems</td></tr>
 <tr><td><strong>Reports:</strong> when someone reports a user, the reason, their note, and the messages they choose to attach</td><td>Keeping Chirpy safe</td></tr>
@@ -53,7 +54,7 @@ use your messages to train AI.</p>
 <tr><td>Render</td><td>Runs the Chirpy server</td><td>Singapore</td></tr>
 <tr><td>Neon</td><td>Database (accounts, messages)</td><td>Singapore</td></tr>
 <tr><td>Upstash</td><td>Short-term data (rate limits, caches, sign-out records)</td><td>Singapore</td></tr>
-<tr><td>Cloudflare</td><td>Domain, website, and photo/video storage (R2)</td><td>Asia-Pacific</td></tr>
+<tr><td>Cloudflare</td><td>Domain, website, photo/video storage (R2), and relaying call audio when phones can't connect directly (encrypted; Cloudflare can't listen)</td><td>Asia-Pacific</td></tr>
 <tr><td>Resend</td><td>Sending email codes</td><td>United States</td></tr>
 <tr><td>Google</td><td>Google sign-in, and delivering push notifications (Firebase Cloud Messaging). Notifications contain the sender's name and a preview of the message</td><td>Global</td></tr>
 <tr><td>Grafana Labs</td><td>Service health statistics (counts only, no personal data)</td><td>Singapore</td></tr>
@@ -69,6 +70,7 @@ transferred abroad. We only use providers that protect it.</p>
 <li><strong>Email codes:</strong> 2 minutes.</li>
 <li><strong>Server logs:</strong> a short time, as kept by our hosting provider.</li>
 <li><strong>Reports:</strong> until handled, then 180 days.</li>
+<li><strong>Call history:</strong> 180 days.</li>
 </ul>
 
 <h2>Deleting your account</h2>

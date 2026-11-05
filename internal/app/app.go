@@ -16,6 +16,7 @@ import (
 	"time"
 
 	authsvc "RyanDev-21.com/Chirpy/internal/auth"
+	"RyanDev-21.com/Chirpy/internal/calls"
 	"RyanDev-21.com/Chirpy/internal/chat"
 	"RyanDev-21.com/Chirpy/internal/config"
 	"RyanDev-21.com/Chirpy/internal/database"
@@ -52,6 +53,7 @@ type App struct {
 	admin   *admin.Service
 	media   *media.Service
 	hub     *ws.Hub
+	calls   *calls.Manager
 
 	users   users.UserService
 	friends friends.Service
@@ -76,6 +78,7 @@ type handlers struct {
 	reports  *reports.Handler
 	media    *media.Handler
 	presence *presence.Handler
+	calls    *calls.Handler
 }
 
 // New connects to Postgres and Redis and builds all services.
@@ -184,6 +187,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	a.groups.SetFriends(a.friends)
 	presenceSvc := presence.NewService(queries, a.friends, a.hub, logger)
 	a.hub.OnPresence(presenceSvc.Changed)
+	a.calls = calls.NewManager(a.hub, a.friends, queries, logger)
+	a.hub.SetCalls(a.calls)
+	a.friends.OnBreak(a.calls.EndBetween)
 	a.groups.OnDelete(a.chat.ForgetGroup)
 	a.users.OnRename(a.friends.ForgetNames)
 
@@ -212,6 +218,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		a.chat.SetNotifier(d)
 		a.friends.SetNotifier(d)
 		a.groups.SetNotifier(d)
+		a.calls.SetNotifier(d)
 	} else {
 		logger.Warn("FIREBASE_SERVICE_ACCOUNT not set: push notifications disabled")
 	}
@@ -274,12 +281,14 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		reports:  reports.NewHandler(reports.NewService(db, logger)),
 		media:    media.NewHandler(a.media),
 		presence: presence.NewHandler(presenceSvc),
+		calls:    calls.NewHandler(calls.NewTURN(cfg.TURNKeyID, cfg.TURNToken), queries, logger),
 	}
 	return a, nil
 }
 
 // Start runs the websocket hub and queue workers until ctx is cancelled.
 func (a *App) Start(ctx context.Context) error {
+	a.calls.Recover(ctx)
 	go a.hub.Run()
 	go a.runJanitor(ctx)
 	if err := telemetry.ObserveGauges(a.hub.Count, func() telemetry.DBStats {
