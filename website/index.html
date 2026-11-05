@@ -4,35 +4,87 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Chirpy - chat with your friends</title>
-<meta name="description" content="Chirpy is a simple chat app for friends and small groups.">
+<meta name="description" content="Chirpy is a free chat app for friends and small groups: messages, voice calls, voice messages, photos, videos and files. No ads, and your data is never sold.">
+<meta name="theme-color" content="#EEEDE8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171717" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
 </head>
-<body>
-<header><a href="/">Chirpy</a></header>
+<body class="landing">
+
+<header class="top">
+  <a class="wordmark" href="/">Chirpy</a>
+  <nav>
+    <a href="#features">Features</a>
+    <a href="#install">Install</a>
+    <a class="pill pill-dark pill-sm" href="#get">Download</a>
+  </nav>
+</header>
+
 <main>
-  <h1>Chat with your friends and groups.</h1>
-  <p>Private chats, groups with invite codes, photos and videos, reactions, and people near you who share your interests.</p>
+  <section class="hero">
+    <p class="label">Free · No ads · Never sold</p>
+    <h1>Chat with your friends.<br>Nothing else.</h1>
+    <p class="sub">Messages, voice calls, voice notes, photos and files for the people you actually know. In any language, on every device.</p>
+    <div class="actions" id="get">
+      <a id="download" class="pill pill-dark" href="#install" aria-disabled="true"><span id="download-label">Download for Android</span></a>
+      <a class="pill pill-line" href="#install">How to install</a>
+    </div>
+    <p id="version" class="fine">Checking the latest version…</p>
+    <p id="notes" class="fine"></p>
 
-  <div class="card">
-    <a id="download" class="button" href="#" aria-disabled="true">Download for Android</a>
-    <p id="version" class="muted">Checking the latest version…</p>
-    <p id="notes" class="muted"></p>
-  </div>
+    <div class="preview" aria-hidden="true">
+      <div class="preview-head">
+        <span class="avatar">MI</span>
+        <div><strong>Mia</strong><small>online</small></div>
+      </div>
+      <div class="thread">
+        <p class="day">TODAY</p>
+        <p class="msg in">Dinner tonight?</p>
+        <p class="msg out">ไปกินข้าวกันไหม</p>
+        <p class="msg in voice"><span class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span>0:12</span></p>
+        <p class="msg out">See you at 7</p>
+        <p class="meta">Seen</p>
+      </div>
+      <div class="composer"><span>+</span><span class="field">Message</span></div>
+    </div>
+  </section>
 
-  <h2>How to install</h2>
-  <p>Chirpy isn't on Google Play yet, so Android asks you to confirm the install.</p>
-  <ol>
-    <li>Tap <strong>Download</strong> above and open the file when it's done.</li>
-    <li>If Android says installing unknown apps isn't allowed, tap <strong>Settings</strong> and turn on <strong>Allow from this source</strong> for your browser, then go back.</li>
-    <li>Tap <strong>Install</strong>. If Play Protect warns that it doesn't recognise the app, tap <strong>More details → Install anyway</strong>.</li>
-    <li>Open Chirpy and sign up with your email or Google.</li>
-  </ol>
-  <p class="muted">Only download Chirpy from this page. To check the file wasn't changed, its SHA-256 checksum must match the one shown above. Chirpy tells you when a new version is out.</p>
+  <section id="features" class="block">
+    <p class="label">What it does</p>
+    <dl class="list">
+      <div><dt>Private chats and groups</dt><dd>One-to-one, or groups with an admin and moderators. Private with an invite code, or public.</dd></div>
+      <div><dt>Voice calls</dt><dd>Free calls between friends. The audio goes straight between your phones, encrypted.</dd></div>
+      <div><dt>Voice notes, photos and files</dt><dd>Videos up to 10 minutes, documents and audio. Apps and programs are blocked.</dd></div>
+      <div><dt>Search in any language</dt><dd>Thai, Burmese, English, Chinese, even languages without spaces between words.</dd></div>
+      <div><dt>Every device</dt><dd>Up to five at once. Messages, read receipts and reactions stay in sync.</dd></div>
+      <div><dt>Your choices</dt><dd>Hide your last seen, block and report, mute chats, delete your account any time.</dd></div>
+    </dl>
+  </section>
 
-  <h2>Your data</h2>
-  <p>No ads, and your data is never sold. Read the <a href="/privacy.html">privacy policy</a> and the <a href="/terms.html">terms of use</a>.</p>
+  <section id="install" class="block">
+    <p class="label">Install</p>
+    <p class="block-sub">Chirpy isn't on Google Play yet, so Android asks you to confirm the install. That's normal for apps from a website.</p>
+    <ol class="steps">
+      <li><strong>Download.</strong> Tap <em>Download for Android</em> and open the file.</li>
+      <li><strong>Allow this source.</strong> If Android blocks unknown apps, tap <em>Settings</em> and turn on <em>Allow from this source</em> for your browser.</li>
+      <li><strong>Install.</strong> If Play Protect doesn't recognise the app, tap <em>More details → Install anyway</em>.</li>
+      <li><strong>Sign up</strong> with your email or with Google.</li>
+    </ol>
+    <p class="fine">Only download Chirpy from this page. Compare the SHA-256 checksum under the button to check the file wasn't changed.</p>
+  </section>
+
+  <section class="block">
+    <p class="label">Your data</p>
+    <p class="statement">No ads. Never sold. Never used to train AI. Our admins can't read your messages, except ones someone reports to them.</p>
+    <p class="links"><a href="/privacy">Privacy policy</a><a href="/terms">Terms of use</a></p>
+  </section>
 </main>
-<footer><a href="/privacy.html">Privacy</a> · <a href="/terms.html">Terms</a></footer>
+
+<footer class="foot">
+  <span>Chirpy by ponypigeon</span>
+  <span><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="mailto:support@ponypigeon.com">Support</a></span>
+</footer>
 <script src="/app.js"></script>
 </body>
 </html>

@@ -133,8 +133,10 @@ The download page, privacy policy and terms are static files in `website/`.
    `APP_RELEASE_NOTES` on Render. No website change needed.
 6. Google sign-in for everyone: Google Cloud → Google Auth Platform → **Branding**:
    homepage `https://chirpy.ponypigeon.com`, privacy policy
-   `https://chirpy.ponypigeon.com/privacy.html`, terms
-   `https://chirpy.ponypigeon.com/terms.html`; then **Audience → Publish app**.
+   `https://chirpy.ponypigeon.com/privacy`, terms
+   `https://chirpy.ponypigeon.com/terms` (Pages serves them without `.html`;
+   the `.html` links redirect there); authorized domain `ponypigeon.com`;
+   then **Audience → Publish app**.
 
 ## Voice calls: Cloudflare TURN
 

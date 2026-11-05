@@ -4,20 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Privacy policy - Chirpy</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <!--
-  DRAFT written from what the Chirpy server does (November 2026). It is not
-  legal advice: review it, fill in the [FILL IN] parts, and keep it in sync
-  when features change.
+  Written from what the Chirpy server does (November 2026). Not legal
+  advice. Keep it in sync when features change, and update the date.
 -->
 <header><a href="/">Chirpy</a></header>
 <main>
 <h1>Privacy policy</h1>
-<p class="muted">Last updated: [FILL IN date of publishing]</p>
+<p class="muted">Last updated: 5 November 2026</p>
 
-<p>Chirpy is a chat app run by [FILL IN: your name or organisation] ("we").
+<p>Chirpy is a chat app run by Ryan (Htet Lin Zaw), under the name ponypigeon ("we").
 This page explains what data Chirpy collects, why, where it is stored, how
 long it is kept, and what you can do about it. Questions: <a href="mailto:privacy@ponypigeon.com">privacy@ponypigeon.com</a>.</p>
 
@@ -26,10 +26,10 @@ long it is kept, and what you can do about it. Questions: <a href="mailto:privac
 <tr><th>Data</th><th>Why</th></tr>
 <tr><td><strong>Account:</strong> email address, username, display name, password (stored only as a one-way hash), and your Google account ID if you sign in with Google</td><td>To create your account, sign you in, send sign-in and password codes, and let people find you by username</td></tr>
 <tr><td><strong>Profile</strong> (all optional): bio, profile picture, the city or region you pick, interests, whether you're discoverable</td><td>To show your profile and, only if you turn on discovery, suggest people with shared interests nearby. We never use GPS or store your exact location</td></tr>
-<tr><td><strong>Messages and activity:</strong> messages you send, edits, reactions, read markers, friends, friend requests, blocks, groups</td><td>To deliver your chats and keep your history</td></tr>
+<tr><td><strong>Messages and activity:</strong> messages you send, edits, reactions, read markers, friends, friend requests, blocks, groups</td><td>To deliver your chats, keep your history and let you search it (only your own chats, and groups of up to 50 people, are searchable)</td></tr>
 <tr><td><strong>Online status:</strong> whether the app is connected, and when you were last seen</td><td>Shown only to your friends. You can hide it in settings (then you also don't see theirs)</td></tr>
 <tr><td><strong>Group pictures</strong> set by a group leader</td><td>To show the group to its members. Resized, metadata removed; deleted with the group</td></tr>
-<tr><td><strong>Photos, videos and files</strong> you send (and the file names)</td><td>To deliver them. Profile and group pictures are resized and their metadata (such as location) is removed</td></tr>
+<tr><td><strong>Photos, videos, voice messages and files</strong> you send (and the file names)</td><td>To deliver them. Profile and group pictures are resized and their metadata (such as location) is removed</td></tr>
 <tr><td><strong>Calls:</strong> who called whom, when, whether it was answered and how long it lasted. <em>Not</em> the audio</td><td>To connect calls and show your call history. Audio goes directly between the phones, or through Cloudflare's relay, encrypted; we never receive or record it</td></tr>
 <tr><td><strong>Device:</strong> a push-notification token from your phone</td><td>To notify you of new messages while the app is closed</td></tr>
 <tr><td><strong>Technical:</strong> IP address, time and type of requests</td><td>Security, preventing abuse (rate limits) and fixing problems</td></tr>
@@ -37,6 +37,22 @@ long it is kept, and what you can do about it. Questions: <a href="mailto:privac
 </table>
 <p>We don't show ads, don't sell or share your data for advertising, and don't
 use your messages to train AI.</p>
+
+<h2>Why we're allowed to use it</h2>
+<table>
+<tr><th>Use</th><th>Legal basis</th></tr>
+<tr><td>Your account, delivering chats, calls and media, push notifications, search</td><td>Needed to provide the service you signed up for (contract)</td></tr>
+<tr><td>Security, rate limits, preventing abuse, handling reports, keeping logs</td><td>Our legitimate interest in keeping Chirpy safe and working</td></tr>
+<tr><td>Discovery ("people you may know"), showing your online status</td><td>Your choice: you can turn them off at any time in settings</td></tr>
+<tr><td>Keeping records the law requires</td><td>Legal obligation</td></tr>
+</table>
+
+<h2>Signing in with Google</h2>
+<p>If you sign in with Google, we receive your <strong>Google account ID and
+email address</strong> from Google, and use them only to create your account and
+sign you in. We don't ask for, see or store anything else from your Google
+account (no contacts, files or calendar), and we don't share Google data with
+anyone. You can disconnect Chirpy in your Google account settings at any time.</p>
 
 <h2>Who can see what</h2>
 <ul>
@@ -64,7 +80,7 @@ transferred abroad. We only use providers that protect it.</p>
 
 <h2>How long we keep it</h2>
 <ul>
-<li><strong>Photos, videos and files:</strong> up to 16 MB, deleted from our storage 24 hours after everyone in the chat has received them, and after 7 days at most; larger ones 24 hours after they were sent. Copies stay on the phones that downloaded them.</li>
+<li><strong>Photos, videos, voice messages and files:</strong> up to 16 MB, deleted from our storage 24 hours after everyone in the chat has received them, and after 7 days at most; larger ones 24 hours after they were sent. Copies stay on the phones that downloaded them.</li>
 <li><strong>Messages:</strong> until you delete them (delete for everyone) or the account is deleted.</li>
 <li><strong>Sign-in sessions:</strong> up to 30 days of inactivity.</li>
 <li><strong>Email codes:</strong> 2 minutes.</li>
@@ -72,6 +88,29 @@ transferred abroad. We only use providers that protect it.</p>
 <li><strong>Reports:</strong> until handled, then 180 days.</li>
 <li><strong>Call history:</strong> 180 days.</li>
 </ul>
+
+<h2>How we protect it</h2>
+<ul>
+<li>Everything travels encrypted (HTTPS/TLS), and our providers encrypt the stored data on their disks.</li>
+<li>Passwords are stored only as a one-way hash (Argon2id), and email codes only as a keyed hash. Sign-in tokens expire after 15 minutes, and signing out everywhere ends every session at once.</li>
+<li>Calls go directly between the phones (or through an encrypted relay); we never receive the audio.</li>
+<li>Photos, videos and files can only be downloaded by the people in that chat, through links that expire after 5 minutes.</li>
+<li>Admin access needs a password and a code sent by email, can't show message contents, and every admin action is logged.</li>
+</ul>
+<p>No system is perfectly secure. If a breach puts your data at risk, we'll tell
+you and, where the law requires it, the data protection authority, without
+undue delay.</p>
+
+<h2>Cookies and tracking</h2>
+<p>This website uses <strong>no cookies, no analytics and no trackers</strong>.
+The app keeps your sign-in on your phone and doesn't track you across other
+apps or websites. We count totals (such as how many messages were sent in an
+hour) to keep the service healthy, without personal data.</p>
+
+<h2>Automated decisions</h2>
+<p>We don't profile you or make automated decisions with legal or similar
+effects on you. Automatic limits, such as how many messages can be sent per
+minute, apply to everyone equally to prevent spam.</p>
 
 <h2>Deleting your account</h2>
 <p>Delete your account in the app under your profile settings. This removes
@@ -85,8 +124,10 @@ deleted account. You can also email us to ask for deletion.</p>
 account, and turn off discovery and individual notification types. Depending
 on where you live (for example under Thailand's Personal Data Protection Act
 or the EU's GDPR) you may also have the right to get a copy of your data,
-object to processing, or complain to a data protection authority. To use
-these rights, email <a href="mailto:privacy@ponypigeon.com">privacy@ponypigeon.com</a>.</p>
+object to or restrict processing, withdraw a consent you gave, or complain to
+a data protection authority. To use these rights, email
+<a href="mailto:privacy@ponypigeon.com">privacy@ponypigeon.com</a> from your
+account's email address. We answer within 30 days.</p>
 
 <h2>Children</h2>
 <p>Chirpy is not for children under 13 (or the minimum age for this kind of
