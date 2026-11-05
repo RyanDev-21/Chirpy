@@ -135,3 +135,19 @@ The download page, privacy policy and terms are static files in `website/`.
    homepage `https://chirpy.ponypigeon.com`, privacy policy
    `https://chirpy.ponypigeon.com/privacy.html`, terms
    `https://chirpy.ponypigeon.com/terms.html`; then **Audience → Publish app**.
+
+## Voice calls: Cloudflare TURN
+
+Calls connect phone to phone; the TURN relay carries the audio when that
+fails (strict NATs, some mobile networks). Free up to 1,000 GB a month
+(about 28,000 hours of relayed voice).
+
+1. Cloudflare dashboard → **Realtime** → **TURN Server** → **Create**, name
+   `chirpy`.
+2. Copy the **Turn Token ID** and the **API Token** it shows (the token is
+   shown once).
+3. Render → chirpy → **Environment**: `CF_TURN_KEY_ID` = the token ID,
+   `CF_TURN_API_TOKEN` = the API token. Save and deploy.
+4. Check: `GET /api/calls/ice` (signed in) answers `"relay":true`.
+
+Without them calls still work where STUN suffices (`"relay":false`).

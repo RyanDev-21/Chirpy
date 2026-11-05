@@ -57,6 +57,9 @@ type Config struct {
 	// FirebaseServiceAccount is the service account key JSON for push
 	// notifications (FCM). Empty disables push.
 	FirebaseServiceAccount string
+	// Cloudflare Realtime TURN key for calls (CF_TURN_KEY_ID,
+	// CF_TURN_API_TOKEN). Without it calls use STUN only.
+	TURNKeyID, TURNToken string
 	// App release info for GET /api/app/version (the Android APK is
 	// downloaded from the website, so the app checks for updates itself).
 	// AppMinVersion forces an update below it.
@@ -119,6 +122,8 @@ func Load() (Config, error) {
 		ResendAPIKey:           os.Getenv("RESEND_API_KEY"),
 		MailFrom:               getenv("MAIL_FROM", "Chirpy <no-reply@mail.ponypigeon.com>"),
 		GoogleClientIDs:        splitList(os.Getenv("GOOGLE_CLIENT_IDS")),
+		TURNKeyID:              os.Getenv("CF_TURN_KEY_ID"),
+		TURNToken:              os.Getenv("CF_TURN_API_TOKEN"),
 		FirebaseServiceAccount: os.Getenv("FIREBASE_SERVICE_ACCOUNT"),
 		AppLatestVersion:       os.Getenv("APP_LATEST_VERSION"),
 		AppMinVersion:          os.Getenv("APP_MIN_VERSION"),

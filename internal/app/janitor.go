@@ -14,6 +14,8 @@ const (
 	// revoked refresh tokens are kept this long so a "refresh rejected"
 	// log line can still be matched to a row when investigating
 	revokedKeep = 24 * time.Hour
+	// the call log (who, when, how long) is kept 180 days
+	callLogKeep = 180 * 24 * time.Hour
 )
 
 // runJanitor deletes rows nothing will read again: expired or revoked
@@ -49,6 +51,11 @@ func (a *App) Cleanup(ctx context.Context) error {
 	codes, err := q.DeleteExpiredEmailCodes(ctx, ts(now))
 	if err != nil {
 		return err
+	}
+	if n, err := q.PurgeOldCalls(ctx, ts(now.Add(-callLogKeep))); err != nil {
+		a.logger.WarnContext(ctx, "failed to purge old calls", "error", err)
+	} else if n > 0 {
+		a.logger.InfoContext(ctx, "old call log entries deleted", "calls", n)
 	}
 	if n, err := a.admin.PurgeOldReports(ctx); err != nil {
 		a.logger.WarnContext(ctx, "failed to purge old reports", "error", err)

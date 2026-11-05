@@ -39,6 +39,8 @@ type Service interface {
 	// ForgetNames drops cached relationship lists that show userID's name
 	// (theirs, their friends' and their requests'), after a rename.
 	ForgetNames(ctx context.Context, userID uuid.UUID)
+	// OnBreak registers a hook for a friendship ending (unfriend or block).
+	OnBreak(fn func(ctx context.Context, a, b uuid.UUID))
 	// SetNotifier enables push notifications for requests and acceptances.
 	SetNotifier(n push.Notifier)
 }
@@ -50,6 +52,17 @@ type service struct {
 	notify Notifier
 	alerts push.Notifier // nil: no push notifications
 	logger *slog.Logger
+	breaks []func(ctx context.Context, a, b uuid.UUID)
+}
+
+func (s *service) OnBreak(fn func(ctx context.Context, a, b uuid.UUID)) {
+	s.breaks = append(s.breaks, fn)
+}
+
+func (s *service) broke(ctx context.Context, a, b uuid.UUID) {
+	for _, fn := range s.breaks {
+		fn(ctx, a, b)
+	}
 }
 
 func (s *service) SetNotifier(n push.Notifier) { s.alerts = n }
@@ -138,6 +151,7 @@ func (s *service) Unfriend(ctx context.Context, me, other uuid.UUID) error {
 		return err
 	}
 	s.invalidate(ctx, me, other)
+	s.broke(ctx, me, other)
 	if err := s.notify.WriteIntoConnection(other, ws.Event{Event: ws.EventUnfriend, Payload: ws.OutUnfriendEvent{FromID: me.String()}}); err != nil {
 		s.logger.WarnContext(ctx, "failed to push unfriend event", "error", err)
 	}
@@ -153,6 +167,7 @@ func (s *service) Block(ctx context.Context, me, other uuid.UUID) error {
 		return err
 	}
 	s.invalidate(ctx, me, other)
+	s.broke(ctx, me, other)
 	// they see the friendship end, as with an unfriend, but not the block
 	if wereFriends {
 		if err := s.notify.WriteIntoConnection(other, ws.Event{Event: ws.EventUnfriend, Payload: ws.OutUnfriendEvent{FromID: me.String()}}); err != nil {

@@ -21,6 +21,17 @@ type AdminAction struct {
 	At          pgtype.Timestamp
 }
 
+type Call struct {
+	ID         uuid.UUID
+	CallerID   pgtype.UUID
+	CalleeID   pgtype.UUID
+	State      string
+	EndReason  pgtype.Text
+	StartedAt  pgtype.Timestamp
+	AnsweredAt pgtype.Timestamp
+	EndedAt    pgtype.Timestamp
+}
+
 type ChatGroup struct {
 	ID            uuid.UUID
 	Name          string

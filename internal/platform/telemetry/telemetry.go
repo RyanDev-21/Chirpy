@@ -73,6 +73,7 @@ var (
 	mediaEvents  = counter("chirpy.media.events", "media uploads, downloads and deletions")
 	jobs         = counter("chirpy.queue.jobs", "background jobs by topic and result")
 	reportsC     = counter("chirpy.reports", "user reports by reason")
+	callsC       = counter("chirpy.calls", "voice call events: started, answered, and how calls ended")
 	neonBytes    atomic.Int64
 	r2Bytes      atomic.Int64
 	gaugesActive atomic.Bool
@@ -181,3 +182,6 @@ func ObserveGauges(ws func() int, db func() DBStats) error {
 
 // Report counts a user report by reason.
 func Report(ctx context.Context, reason string) { add(ctx, reportsC, "reason", reason) }
+
+// Call records a call event (a bounded set of names).
+func Call(ctx context.Context, event string) { add(ctx, callsC, "event", event) }

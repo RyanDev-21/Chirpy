@@ -28,6 +28,11 @@ type Message struct {
 	// replaces the older one (one notification per chat).
 	Tag  string
 	Data map[string]string
+	// DataOnly: no visible notification; the app handles it itself (an
+	// incoming call shows a full-screen ringing UI). TTL drops it if it
+	// can't be delivered in time.
+	DataOnly bool
+	TTL      time.Duration
 }
 
 // Sender delivers notifications.
@@ -102,6 +107,13 @@ func (f *FCM) post(ctx context.Context, req fcmRequest) error {
 }
 
 func (f *FCM) Send(ctx context.Context, m Message) error {
+	if m.DataOnly {
+		android := map[string]any{"priority": "high"}
+		if m.TTL > 0 {
+			android["ttl"] = fmt.Sprintf("%ds", int(m.TTL.Seconds()))
+		}
+		return f.post(ctx, fcmRequest{Message: fcmMessage{Token: m.Token, Data: m.Data, Android: android}})
+	}
 	return f.post(ctx, fcmRequest{Message: fcmMessage{
 		Token:        m.Token,
 		Notification: map[string]string{"title": m.Title, "body": m.Body},

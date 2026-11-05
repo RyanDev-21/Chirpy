@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,7 +18,8 @@ const (
 
 	pingPeriod = (pongWait * 9) / 10
 
-	maxMessageSize = 4096
+	// room for a WebRTC session description in call signalling
+	maxMessageSize = 24 << 10
 )
 
 type Client struct {
@@ -25,6 +27,8 @@ type Client struct {
 	Conn   *websocket.Conn
 	Send   chan []byte
 	UserID uuid.UUID
+	// ID tells this connection (device) apart from the user's others.
+	ID uuid.UUID
 
 	// lastTyping throttles typing events per target chat. Only ReadPump's
 	// goroutine touches it, so it needs no lock.
@@ -57,6 +61,7 @@ func NewClient(hub *Hub, conn *websocket.Conn, send chan []byte, userID uuid.UUI
 		Conn:   conn,
 		Send:   send,
 		UserID: userID,
+		ID:     uuid.New(),
 	}
 }
 
@@ -140,6 +145,12 @@ func (c *Client) WritePump() {
 func (c *Client) handleEvent(ev InCommingEvent) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	if strings.HasPrefix(ev.Event, "Call") {
+		if h := c.Hub.calls; h != nil {
+			h.HandleCall(ctx, Conn{User: c.UserID, ID: c.ID}, ev.Event, ev.Payload)
+		}
+		return
+	}
 	switch ev.Event {
 	case EventTyping:
 		var p InCommingEventForTyping
