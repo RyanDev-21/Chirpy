@@ -3,6 +3,7 @@
 "use strict";
 (async () => {
   const btn = document.getElementById("download");
+  const label = document.getElementById("download-label");
   const info = document.getElementById("version");
   try {
     const res = await fetch("https://api.ponypigeon.com/api/app/version");
@@ -13,7 +14,7 @@
     }
     btn.href = v.download_url;
     btn.removeAttribute("aria-disabled");
-    btn.textContent = "Download Chirpy " + v.latest + " for Android";
+    label.textContent = "Download Chirpy " + v.latest + " for Android";
     info.textContent = "SHA-256: " + (v.sha256 || "not published");
     if (v.notes) document.getElementById("notes").textContent = v.notes;
   } catch {
