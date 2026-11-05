@@ -920,6 +920,7 @@ If the server has no storage configured, these routes return `503`.
 | `image` | `image/jpeg`, `image/png`, `image/webp`, `image/heic` | 5 MB | |
 | `video` | `video/mp4`, `video/quicktime`, `video/webm` | 100 MB | 3 min up to 16 MB, 10 min above |
 | `file` | see below, with `file_name` | 100 MB | |
+| `voice` | `audio/ogg`, `audio/opus`, `audio/webm` (Opus), `audio/mp4`, `audio/aac`, `audio/x-m4a` (AAC), `audio/mpeg` | 10 MB | up to 15 min, `duration_ms` required |
 
 **How long the server keeps them** (phones keep their own copies):
 
@@ -948,6 +949,13 @@ When storage is nearly full, new uploads get `507` for a while.
 | epub | `application/epub+zip` |
 | zip, 7z, rar | `application/zip`, `application/x-7z-compressed`, `application/vnd.rar` |
 | mp3, m4a, ogg, opus, wav, aac | `audio/mpeg`, `audio/mp4`, `audio/ogg`, `audio/wav`, `audio/aac` |
+
+**Voice messages** (`kind: "voice"`): record Opus (OGG/WebM) at ~24–32
+kbit/s (about 200 KB a minute) or AAC. Send `duration_ms`, and optionally
+`waveform`: up to 128 bar heights from 0 to 255, computed while recording.
+Recipients get both on the attachment, so the bubble shows the length and
+the waveform before the audio downloads. The push and preview say
+`🎤 Voice message (0:12)`.
 
 Anything else is `400`, in particular **apps and programs** (APK, EXE,
 scripts): they are a common way to spread malware and nothing scans files.

@@ -631,12 +631,16 @@ func mediaPreview(text string, att []media.Attachment) string {
 	if text != "" || len(att) == 0 {
 		return text
 	}
+	if len(att) == 1 && att[0].Kind == "voice" {
+		secs := (att[0].DurationMs + 500) / 1000
+		return fmt.Sprintf("🎤 Voice message (%d:%02d)", secs/60, secs%60)
+	}
 	photos, videos, files := 0, 0, 0
 	for _, a := range att {
 		switch a.Kind {
 		case "video":
 			videos++
-		case "file":
+		case "file", "voice":
 			files++
 		default:
 			photos++

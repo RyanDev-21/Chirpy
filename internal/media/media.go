@@ -52,7 +52,7 @@ const (
 
 var (
 	ErrDisabled      = errors.New("media is not configured on this server")
-	ErrBadMedia      = errors.New("kind must be image (JPEG, PNG, WebP, HEIC; max 5 MB), video (MP4, MOV, WebM; max 100 MB; 3 min, or 10 min above 16 MB) or file (documents, archives, audio; max 100 MB; with file_name) with its size in bytes; width/height up to 8192")
+	ErrBadMedia      = errors.New("kind must be image (JPEG, PNG, WebP, HEIC; max 5 MB), video (MP4, MOV, WebM; max 100 MB; 3 min, or 10 min above 16 MB), voice (Opus/OGG, AAC/M4A, WebM, MP3; max 10 MB, 15 min, duration_ms required; waveform up to 128 values 0-255) or file (documents, archives, audio; max 100 MB; with file_name) with its size in bytes; width/height up to 8192")
 	ErrBadFile       = errors.New("this kind of file can't be sent: allowed are documents (PDF, Word, Excel, PowerPoint, OpenDocument, text, CSV), archives (ZIP, 7z, RAR), e-books and audio; apps and programs are not")
 	ErrDailyQuota    = errors.New("daily upload limit reached (300 MB per day)")
 	ErrStorageFull   = errors.New("media storage is full right now; try again later")
@@ -83,6 +83,9 @@ type Attachment struct {
 	Thumbnail bool `json:"thumbnail"`
 	// FileName: files only, as the sender named it.
 	FileName string `json:"file_name,omitempty"`
+	// Waveform: voice messages, bar heights 0-255, for drawing the bubble
+	// before the audio is downloaded.
+	Waveform Waveform `json:"waveform,omitempty"`
 }
 
 // Members lists a group's members (groups.GroupService).
@@ -137,16 +140,19 @@ func (d Dims) ok(kind string, size int64) bool {
 		return d.DurationMs <= maxSmallVideoMs
 	case "image":
 		return d.DurationMs == 0
+	case "voice":
+		return d.Width == 0 && d.Height == 0 && d.DurationMs > 0 && d.DurationMs <= maxVoiceMs
 	}
 	return d == Dims{} // files have no dimensions
 }
 
 // NewUploadRequest is POST /api/media.
 type NewUploadRequest struct {
-	Kind        string `json:"kind"`
-	ContentType string `json:"content_type"`
-	Size        int64  `json:"size"`
-	FileName    string `json:"file_name"` // files only
+	Kind        string   `json:"kind"`
+	ContentType string   `json:"content_type"`
+	Size        int64    `json:"size"`
+	FileName    string   `json:"file_name"` // files only
+	Waveform    Waveform `json:"waveform"`  // voice messages only
 	Dims
 }
 
@@ -164,6 +170,11 @@ func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, req NewUploadR
 		limit = MaxImageBytes
 	case "video":
 		limit = MaxVideoBytes
+	case "voice":
+		limit = MaxVoiceBytes
+		if !voiceTypes[contentType] || req.FileName != "" {
+			return Upload{}, ErrBadMedia
+		}
 	case "file":
 		limit = MaxFileBytes
 		name, ok := cleanFileName(req.FileName, contentType)
@@ -174,7 +185,10 @@ func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, req NewUploadR
 	default:
 		return Upload{}, ErrBadMedia
 	}
-	if kind != "file" && (!allowedTypes[kind][contentType] || req.FileName != "") {
+	if (kind == "image" || kind == "video") && (!allowedTypes[kind][contentType] || req.FileName != "") {
+		return Upload{}, ErrBadMedia
+	}
+	if kind != "voice" && len(req.Waveform) > 0 {
 		return Upload{}, ErrBadMedia
 	}
 	if size <= 0 || size > limit || !dims.ok(kind, size) {
@@ -206,7 +220,7 @@ func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, req NewUploadR
 	if err := s.q.CreateMedia(ctx, database.CreateMediaParams{
 		ID: id, OwnerID: pu(owner), Kind: kind, ContentType: contentType, Size: size,
 		Now: ts(now), ExpiresAt: ts(now.Add(lifetime)),
-		DurationMs: optInt(dims.DurationMs), Width: optInt(dims.Width), Height: optInt(dims.Height), FileName: fileName,
+		DurationMs: optInt(dims.DurationMs), Width: optInt(dims.Width), Height: optInt(dims.Height), FileName: fileName, Waveform: req.Waveform,
 	}); err != nil {
 		return Upload{}, err
 	}
@@ -255,7 +269,7 @@ func (s *Service) Attach(ctx context.Context, owner uuid.UUID, ids []uuid.UUID, 
 			return nil, err
 		}
 		out = append(out, Attachment{ID: id, Kind: m.Kind, ContentType: m.ContentType, Size: m.Size, ExpiresAt: m.ExpiresAt.Time.UTC(),
-			DurationMs: int(m.DurationMs.Int32), Width: int(m.Width.Int32), Height: int(m.Height.Int32), Thumbnail: m.HasThumbnail, FileName: m.FileName.String})
+			DurationMs: int(m.DurationMs.Int32), Width: int(m.Width.Int32), Height: int(m.Height.Int32), Thumbnail: m.HasThumbnail, FileName: m.FileName.String, Waveform: m.Waveform})
 	}
 	for _, id := range ids {
 		n, err := s.q.AttachMedia(ctx, database.AttachMediaParams{
@@ -287,7 +301,7 @@ func (s *Service) ForMessages(ctx context.Context, msgIDs []uuid.UUID) (map[uuid
 		out[mid] = append(out[mid], Attachment{ID: r.ID, Kind: r.Kind, ContentType: r.ContentType, Size: r.Size,
 			ExpiresAt: r.ExpiresAt.Time.UTC(), Expired: r.DeletedAt.Valid,
 			DurationMs: int(r.DurationMs.Int32), Width: int(r.Width.Int32), Height: int(r.Height.Int32), Thumbnail: r.HasThumbnail && !r.DeletedAt.Valid,
-			FileName: r.FileName.String})
+			FileName: r.FileName.String, Waveform: r.Waveform})
 	}
 	return out, nil
 }

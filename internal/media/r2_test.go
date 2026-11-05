@@ -1,6 +1,7 @@
 package media
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -74,5 +75,20 @@ func TestCleanFileName(t *testing.T) {
 	}
 	if _, good := cleanFileName(strings.Repeat("a", 201)+".pdf", "application/pdf"); good {
 		t.Error("over-long name accepted")
+	}
+}
+
+func TestWaveformJSON(t *testing.T) {
+	var w Waveform
+	if err := json.Unmarshal([]byte(`[0, 12, 255]`), &w); err != nil || string(w) != "\x00\x0c\xff" {
+		t.Fatalf("decode %v %v", w, err)
+	}
+	if out, _ := json.Marshal(w); string(out) != "[0,12,255]" {
+		t.Fatalf("encode %s (must be numbers, not base64)", out)
+	}
+	for _, bad := range []string{`[256]`, `[-1]`, `"AAEC"`, `[` + strings.Repeat("1,", 128) + `1]`} {
+		if err := json.Unmarshal([]byte(bad), &w); err == nil {
+			t.Errorf("%s accepted", bad)
+		}
 	}
 }

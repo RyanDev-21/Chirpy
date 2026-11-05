@@ -1,6 +1,8 @@
 package media
 
 import (
+	"encoding/json"
+	"errors"
 	"path"
 	"strings"
 	"unicode"
@@ -68,3 +70,52 @@ func cleanFileName(name, contentType string) (string, bool) {
 	}
 	return "", false
 }
+
+// voiceTypes: what phones record voice messages as.
+var voiceTypes = map[string]bool{
+	"audio/ogg": true, "audio/opus": true, "audio/webm": true, // Opus
+	"audio/mp4": true, "audio/aac": true, "audio/x-m4a": true, // AAC
+	"audio/mpeg": true,
+}
+
+const (
+	MaxVoiceBytes = 10 << 20
+	maxVoiceMs    = 15*60_000 + 5_000
+	maxWaveform   = 128
+)
+
+// Waveform is a voice message's bar heights (0-255). In JSON it is an
+// array of numbers, not base64.
+type Waveform []byte
+
+func (w Waveform) MarshalJSON() ([]byte, error) {
+	if len(w) == 0 {
+		return []byte("null"), nil
+	}
+	n := make([]int, len(w))
+	for i, b := range w {
+		n[i] = int(b)
+	}
+	return json.Marshal(n)
+}
+
+func (w *Waveform) UnmarshalJSON(raw []byte) error {
+	var n []int
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return err
+	}
+	if len(n) > maxWaveform {
+		return errBadWaveform
+	}
+	out := make(Waveform, len(n))
+	for i, v := range n {
+		if v < 0 || v > 255 {
+			return errBadWaveform
+		}
+		out[i] = byte(v)
+	}
+	*w = out
+	return nil
+}
+
+var errBadWaveform = errors.New("waveform must be at most 128 numbers from 0 to 255")
