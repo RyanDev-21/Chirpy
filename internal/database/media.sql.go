@@ -239,6 +239,24 @@ func (q *Queries) MarkMediaDelivered(ctx context.Context, arg MarkMediaDelivered
 	return err
 }
 
+const mediaCreatedSince = `-- name: MediaCreatedSince :one
+SELECT count(*)::bigint FROM media WHERE owner_id = $1 AND created_at > $2::timestamp
+`
+
+type MediaCreatedSinceParams struct {
+	OwnerID pgtype.UUID
+	Since   pgtype.Timestamp
+}
+
+// uploads and forward copies a user started since @since (count quota:
+// every one is a paid storage write, however small)
+func (q *Queries) MediaCreatedSince(ctx context.Context, arg MediaCreatedSinceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, mediaCreatedSince, arg.OwnerID, arg.Since)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const mediaForMessages = `-- name: MediaForMessages :many
 SELECT id, message_id, kind, content_type, size, expires_at, deleted_at, duration_ms, width, height, has_thumbnail, file_name, waveform FROM media
 WHERE message_id = ANY($1::uuid[]) ORDER BY created_at, id

@@ -867,6 +867,27 @@ deleted their account. If the last message was deleted for everyone,
 `last_message.deleted` is `true` and `msg` is `""`. If its sender is
 suspended, `last_message.sender_suspended` is `true` and `msg` is `""`.
 
+### Forward a message
+
+`POST /api/chats/forward` with
+`{"message_id":"…","to":[{"type":"private","id":"friend-uuid"},{"type":"public","id":"group-uuid"}]}`
+→ `200 {"results":[{"type":"private","id":"…","msg_id":"new-uuid"},{"type":"public","id":"…","error":"you can only message friends"}]}`
+(`msg_id` is left out when that target failed.)
+
+- You must be able to see the original (your chat, or a group message sent
+  since you joined; otherwise `404`). Deleted messages can't be forwarded.
+- `to`: 1–5 chats (`400` otherwise). Each target follows the normal send
+  rules (friends only, group members), so results are per target: `msg_id`
+  on success, `error` when that one failed.
+- Text and media are copied. **Media is copied on the server**: nothing is
+  uploaded again, and each copy has its own lifetime in its new chat. It
+  counts towards your daily upload quota (300 MB and 300 files). If the original media already
+  expired on the server, that target's `error` says so: send it again as a
+  normal upload from the copy on the phone.
+- New messages carry `"forwarded": true` in history and in the `msg` event.
+  Show a "Forwarded" label. The original sender is not revealed.
+- 10 forwards per minute, and each forward also counts against the 120 messages/minute send limit.
+
 ### Search messages
 
 Search the phone's own copy first. Call the server only for messages older
@@ -934,7 +955,7 @@ download them automatically on Wi-Fi so recipients don't miss them.
 
 Shrink before uploading: photos to ~1600 px, videos to 720p (a 720p minute
 is ~10–15 MB, so most videos stay small); make the video thumbnail on the
-phone. At most **300 MB per user per 24 h** (`429`), **10 per message**.
+phone. At most **300 MB and 300 files per user per 24 h** (`429`; forward copies count too), **10 per message**.
 When storage is nearly full, new uploads get `507` for a while.
 
 **Files** (`kind: "file"`) need `file_name`, and its extension must match
