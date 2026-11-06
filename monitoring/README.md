@@ -44,6 +44,14 @@ source is locked, so those don't show in the UI. Prefer the import above.)
 | ChirpyLoginAttack | > 50 failed logins in 5 minutes |
 | ChirpyPushFailing | > 20 % of pushes failing for 15 minutes |
 | ChirpyJobsFailing | > 10 failed background jobs in 15 minutes |
+| ChirpyRedisBudget | Redis on pace for > 400k commands this month (Upstash free: 500k) |
+| ChirpyCallHoursHigh | > 300 call hours in a day (TURN relay allowance) |
+
+The last two were added later. To add them to an existing setup, import
+**`alerts-budget-import.yaml`** the same way (it holds only those two, in
+their own group `chirpy-budget`, so nothing is duplicated). Don't re-import
+`alerts-import.yaml` on top of an earlier import: Grafana adds a second copy
+of every rule.
 
 Also turn on **"notify on failure"** for the keep-alive job in cron-job.org:
 it notices downtime even if Grafana can't.
