@@ -92,6 +92,7 @@ type Groupmessage struct {
 	DeletedAt  pgtype.Timestamp
 	EditedAt   pgtype.Timestamp
 	Searchable bool
+	Forwarded  bool
 }
 
 type MediaDownload struct {
@@ -139,6 +140,7 @@ type Message struct {
 	DeletedAt pgtype.Timestamp
 	CreatedAt pgtype.Timestamp
 	EditedAt  pgtype.Timestamp
+	Forwarded bool
 }
 
 type MessageReaction struct {

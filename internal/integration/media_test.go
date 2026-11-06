@@ -85,6 +85,16 @@ func (f *fakeR2) Delete(_ context.Context, key string) error {
 	delete(f.objects, key)
 	return nil
 }
+func (f *fakeR2) Copy(_ context.Context, src, dst string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.objects[src]
+	if !ok {
+		return media.ErrNoObject
+	}
+	f.objects[dst] = append([]byte(nil), b...)
+	return nil
+}
 func (f *fakeR2) Put(_ context.Context, key, _ string, data []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -1,7 +1,10 @@
 package media
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -90,5 +93,26 @@ func TestWaveformJSON(t *testing.T) {
 		if err := json.Unmarshal([]byte(bad), &w); err == nil {
 			t.Errorf("%s accepted", bad)
 		}
+	}
+}
+
+// Copy signs x-amz-copy-source (R2 refuses a copy whose source header
+// isn't signed) and sends it with an empty PUT.
+func TestCopySignsSource(t *testing.T) {
+	var got *http.Request
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r
+		_, _ = w.Write([]byte("<CopyObjectResult></CopyObjectResult>"))
+	}))
+	defer srv.Close()
+	r := NewR2("acct", "bucket", "ak", "sk")
+	r.host = strings.TrimPrefix(srv.URL, "https://")
+	r.client = srv.Client()
+	if err := r.Copy(context.Background(), "m/src", "m/dst"); err != nil {
+		t.Fatal(err)
+	}
+	if got.Method != http.MethodPut || got.URL.Path != "/bucket/m/dst" || got.Header.Get("x-amz-copy-source") != "/bucket/m/src" ||
+		!strings.Contains(got.URL.Query().Get("X-Amz-SignedHeaders"), "x-amz-copy-source") {
+		t.Fatalf("request %s %s %v", got.Method, got.URL, got.Header)
 	}
 }
