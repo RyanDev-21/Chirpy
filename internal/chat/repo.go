@@ -44,6 +44,8 @@ type ChatRepo interface {
 	RecentGroupSenders(ctx context.Context, groupID, msgID uuid.UUID) ([]uuid.UUID, error)
 	Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error)
 
+	// MessageContent is a message's text and whether it was deleted.
+	MessageContent(ctx context.Context, kind string, id uuid.UUID) (string, bool, error)
 	// LocateMessage finds which chat a message belongs to (ErrMessageNotFound).
 	LocateMessage(ctx context.Context, msgID uuid.UUID) (messageRef, error)
 	SetReaction(ctx context.Context, kind string, msgID, userID uuid.UUID, emoji string) error
@@ -106,6 +108,7 @@ func (r *chatRepo) AddPrivate(ctx context.Context, m MessageMetaDataRes) error {
 		FromID:    pgUUID(m.MsgInfo.FromID),
 		ToID:      pgOptUUID(m.MsgInfo.Msg.ToID),
 		CreatedAt: pgTime(m.CreatedAt),
+		Forwarded: m.Forwarded,
 	})
 }
 
@@ -117,6 +120,7 @@ func (r *chatRepo) AddPublic(ctx context.Context, m MessageMetaDataRes) error {
 		FromID:    pgUUID(m.MsgInfo.FromID),
 		ParentID:  pgOptUUID(m.MsgInfo.Msg.ParendID),
 		CreatedAt: pgTime(m.CreatedAt),
+		Forwarded: m.Forwarded,
 	})
 }
 
@@ -129,6 +133,7 @@ func fromPrivate(rows []database.Message) []MessageMetaDataRes {
 			CreatedAt: created,
 			EditedAt:  optTime(m.EditedAt),
 			Deleted:   m.DeletedAt.Valid,
+			Forwarded: m.Forwarded,
 			MsgInfo: MessageCache{
 				FromID:    uuid.UUID(m.FromID.Bytes),
 				CreatedAt: created,
@@ -153,6 +158,7 @@ func fromPublic(rows []database.Groupmessage) []MessageMetaDataRes {
 			CreatedAt: created,
 			EditedAt:  optTime(m.EditedAt),
 			Deleted:   m.DeletedAt.Valid,
+			Forwarded: m.Forwarded,
 			MsgInfo: MessageCache{
 				FromID:    uuid.UUID(m.FromID.Bytes),
 				CreatedAt: created,
@@ -481,4 +487,20 @@ func (r *chatRepo) ForgetBans() {
 	r.banned.mu.Lock()
 	r.banned.ids = nil
 	r.banned.mu.Unlock()
+}
+
+// MessageContent is a message's text, and whether it was deleted.
+func (r *chatRepo) MessageContent(ctx context.Context, kind string, id uuid.UUID) (string, bool, error) {
+	if kind == TypePrivate {
+		m, err := r.q.PrivateMessageContent(ctx, id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, ErrMessageNotFound
+		}
+		return m.Content.String, m.DeletedAt.Valid, err
+	}
+	m, err := r.q.GroupMessageContent(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, ErrMessageNotFound
+	}
+	return m.Content.String, m.DeletedAt.Valid, err
 }

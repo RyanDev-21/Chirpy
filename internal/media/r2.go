@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -31,6 +32,9 @@ type Storage interface {
 	Delete(ctx context.Context, key string) error
 	// Put stores a small object the server made itself (thumbnails).
 	Put(ctx context.Context, key, contentType string, data []byte) error
+	// Copy duplicates an object inside the bucket (forwarding), without
+	// downloading it; ErrNoObject if src is gone.
+	Copy(ctx context.Context, src, dst string) error
 }
 
 var ErrNoObject = errors.New("object not found")
@@ -218,4 +222,30 @@ func disposition(fileName string) string {
 		return "attachment"
 	}
 	return "attachment; filename*=UTF-8''" + url.PathEscape(fileName)
+}
+
+// Copy is S3 CopyObject: R2 copies the bytes itself (no egress).
+func (r *R2) Copy(ctx context.Context, src, dst string) error {
+	source := "/" + r.bucket + "/" + src
+	u := r.signer.presign(http.MethodPut, r.host, r.path(dst), map[string]string{
+		"x-amz-copy-source": source,
+	}, nil, time.Minute, time.Now())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("x-amz-copy-source", source)
+	res, err := r.client.Do(req)
+	if err != nil {
+		return err
+	}
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+	res.Body.Close()
+	switch {
+	case res.StatusCode == http.StatusNotFound:
+		return ErrNoObject
+	case res.StatusCode != http.StatusOK || bytes.Contains(body, []byte("<Error>")):
+		return fmt.Errorf("r2 copy: %s", res.Status)
+	}
+	return nil
 }

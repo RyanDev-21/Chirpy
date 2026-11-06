@@ -535,3 +535,72 @@ func (s *Service) Thumbnail(ctx context.Context, viewer, id uuid.UUID) (Download
 	}
 	return Download{URL: u, ContentType: "image/jpeg", ExpiresIn: int(downloadTTL.Seconds())}, nil
 }
+
+// ErrForwardExpired: the original was already removed from storage; the
+// app can upload its own copy instead.
+var ErrForwardExpired = errors.New("this media has expired on the server; send it again from your phone")
+
+// Duplicate copies media srcID for owner to attach to a forwarded message:
+// storage copies the file itself (nothing is uploaded or downloaded), and
+// the copy counts towards owner's daily quota like an upload. The copy is
+// pending until attached, like a fresh upload.
+func (s *Service) Duplicate(ctx context.Context, owner, srcID uuid.UUID) (uuid.UUID, error) {
+	if s.store == nil {
+		return uuid.Nil, ErrDisabled
+	}
+	m, err := s.q.GetMedia(ctx, srcID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if m.Status != "ready" || m.DeletedAt.Valid {
+		return uuid.Nil, ErrForwardExpired
+	}
+	now := s.now()
+	used, err := s.q.MediaUploadedSince(ctx, database.MediaUploadedSinceParams{OwnerID: pu(owner), Since: ts(now.Add(-24 * time.Hour))})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if used+m.Size > DailyUserBytes {
+		return uuid.Nil, ErrDailyQuota
+	}
+	stored, err := s.q.MediaStoredBytes(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if stored+m.Size > uploadCapBytes {
+		return uuid.Nil, ErrStorageFull
+	}
+	id, err := uuid.NewV7()
+	if err != nil {
+		return uuid.Nil, err
+	}
+	lifetime := maxLifetime
+	if m.Size > LargeBytes {
+		lifetime = largeLifetime
+	}
+	if err := s.q.CreateMedia(ctx, database.CreateMediaParams{
+		ID: id, OwnerID: pu(owner), Kind: m.Kind, ContentType: m.ContentType, Size: m.Size,
+		Now: ts(now), ExpiresAt: ts(now.Add(lifetime)),
+		DurationMs: m.DurationMs, Width: m.Width, Height: m.Height, FileName: m.FileName, Waveform: m.Waveform,
+	}); err != nil {
+		return uuid.Nil, err
+	}
+	if err := s.store.Copy(ctx, key(srcID), key(id)); err != nil {
+		if errors.Is(err, ErrNoObject) {
+			return uuid.Nil, ErrForwardExpired
+		}
+		return uuid.Nil, err
+	}
+	if m.HasThumbnail {
+		if err := s.store.Copy(ctx, thumbKey(srcID), thumbKey(id)); err == nil {
+			if _, err := s.q.SetThumbnail(ctx, database.SetThumbnailParams{ID: id, OwnerID: pu(owner)}); err != nil {
+				s.logger.WarnContext(ctx, "failed to mark forwarded thumbnail", "error", err)
+			}
+		}
+	}
+	telemetry.Media(ctx, "forward", m.Kind)
+	return id, nil
+}

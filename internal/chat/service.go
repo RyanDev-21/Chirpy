@@ -61,6 +61,8 @@ type ChatService interface {
 	// EditWindow of sending; DeleteMessage deletes it for everyone.
 	EditMessage(ctx context.Context, me, msgID uuid.UUID, content string) (EditedMessage, error)
 	DeleteMessage(ctx context.Context, me, msgID uuid.UUID) error
+	// Forward copies a message into up to 5 other chats.
+	Forward(ctx context.Context, me, msgID uuid.UUID, to []ForwardTarget) ([]ForwardResult, error)
 	// SetNotifier enables push notifications for messages and reactions.
 	SetNotifier(n push.Notifier)
 	// SetMedia enables photos and videos in messages.
@@ -147,6 +149,7 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 		ID:        msgID,
 		CreatedAt: now,
 		MsgInfo:   MessageCache{Msg: in, FromID: from, CreatedAt: now},
+		Forwarded: in.Forwarded,
 	}
 
 	if parentID != uuid.Nil {
@@ -187,6 +190,7 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 		FromID:    from.String(),
 		Type:      in.Type,
 		CreatedAt: now,
+		Forwarded: in.Forwarded,
 	}
 	if len(attached) > 0 {
 		out.Media = attached
@@ -624,6 +628,82 @@ type MediaStore interface {
 	Attach(ctx context.Context, owner uuid.UUID, ids []uuid.UUID, chatType string, chatID, msgID uuid.UUID) ([]media.Attachment, error)
 	ForMessages(ctx context.Context, msgIDs []uuid.UUID) (map[uuid.UUID][]media.Attachment, error)
 	ExpireMessage(ctx context.Context, msgID uuid.UUID) error
+	Duplicate(ctx context.Context, owner, srcID uuid.UUID) (uuid.UUID, error)
+}
+
+// MaxForwardTargets: one forward reaches at most this many chats.
+const MaxForwardTargets = 5
+
+// ForwardTarget is one chat to forward to.
+type ForwardTarget struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+}
+
+// ForwardResult is what happened for one target.
+type ForwardResult struct {
+	Type  string    `json:"type"`
+	ID    string    `json:"id"`
+	MsgID uuid.UUID `json:"msg_id,omitempty"`
+	Error string    `json:"error,omitempty"`
+}
+
+var ErrBadForward = errors.New("to must list 1-5 chats")
+
+// Forward copies a message the caller can see into other chats, labelled
+// forwarded; media is copied in storage (nothing is re-uploaded).
+func (s *chatService) Forward(ctx context.Context, me, msgID uuid.UUID, to []ForwardTarget) ([]ForwardResult, error) {
+	if len(to) == 0 || len(to) > MaxForwardTargets {
+		return nil, ErrBadForward
+	}
+	ref, _, err := s.authorizeMessage(ctx, me, msgID, false)
+	if err != nil {
+		return nil, err
+	}
+	content, deleted, err := s.repo.MessageContent(ctx, ref.Kind, msgID)
+	if err != nil {
+		return nil, err
+	}
+	if deleted {
+		return nil, ErrMessageNotFound
+	}
+	if ref.From != uuid.Nil {
+		if banned, err := s.repo.Suspended(ctx, []uuid.UUID{ref.From}); err != nil {
+			return nil, err
+		} else if banned[ref.From] {
+			return nil, ErrMessageNotFound
+		}
+	}
+	var src []media.Attachment
+	if s.media != nil {
+		all, err := s.media.ForMessages(ctx, []uuid.UUID{msgID})
+		if err != nil {
+			return nil, err
+		}
+		src = all[msgID]
+	}
+	out := make([]ForwardResult, 0, len(to))
+	for _, t := range to {
+		res := ForwardResult{Type: t.Type, ID: t.ID}
+		in := InCommingMessage{Content: content, ToID: t.ID, Type: t.Type, Forwarded: true}
+		for _, a := range src {
+			id, err := s.media.Duplicate(ctx, me, a.ID)
+			if err != nil {
+				res.Error = err.Error()
+				break
+			}
+			in.Media = append(in.Media, id)
+		}
+		if res.Error == "" {
+			if id, err := s.SendMessage(ctx, me, in); err != nil {
+				res.Error = err.Error()
+			} else {
+				res.MsgID = id
+			}
+		}
+		out = append(out, res)
+	}
+	return out, nil
 }
 
 // mediaPreview is the push text for a message: its text, or what it carries.

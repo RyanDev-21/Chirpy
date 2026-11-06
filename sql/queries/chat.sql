@@ -1,11 +1,11 @@
 -- name: AddMessagePrivate :exec
-INSERT INTO message(id, content, parentId, from_id, to_id, created_at)
-VALUES ($1, $2, $3, $4, $5, $6);
+INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded)
+VALUES ($1, $2, $3, $4, $5, $6, @forwarded);
 
 -- name: AddMessagePublic :exec
 -- searchable: groups of up to 50 members are indexed for search
-INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable)
-VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = $3), false));
+INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded)
+VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = $3), false), @forwarded);
 
 -- name: GetRecentPrivateMessages :many
 SELECT * FROM message
@@ -212,3 +212,9 @@ WHERE g.searchable AND g.deleted_at IS NULL
   AND (sqlc.narg(after_at)::timestamp IS NULL OR g.created_at >= sqlc.narg(after_at)::timestamp)
 ORDER BY g.created_at DESC, g.id DESC
 LIMIT @lim;
+
+-- name: PrivateMessageContent :one
+SELECT content, deleted_at FROM message WHERE id = $1;
+
+-- name: GroupMessageContent :one
+SELECT content, deleted_at FROM GroupMessage WHERE id = $1;

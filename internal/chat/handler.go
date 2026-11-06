@@ -118,6 +118,33 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, ResponseMessageID{MsgID: msgID})
 }
 
+// Forward handles POST /api/chats/forward {"message_id","to":[{"type","id"}]}.
+func (h *ChatHandler) Forward(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var b struct {
+		MessageID uuid.UUID       `json:"message_id"`
+		To        []ForwardTarget `json:"to"`
+	}
+	if err := httpx.Decode(w, r, &b); err != nil || b.MessageID == uuid.Nil {
+		httpx.Error(w, http.StatusBadRequest, "message_id and to are required")
+		return
+	}
+	res, err := h.svc.Forward(r.Context(), me, b.MessageID, b.To)
+	if errors.Is(err, ErrBadForward) {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string][]ForwardResult{"results": res})
+}
+
 // UpdateSeen handles POST /api/chat/{otherUser_id}/messages {"msg_id": "..."}.
 func (h *ChatHandler) UpdateSeen(w http.ResponseWriter, r *http.Request) {
 	me, err := reqctx.User(r.Context())

@@ -156,4 +156,6 @@ type OutGoingMessage struct {
 	CreatedAt time.Time `json:"created_at"`
 	// Media: the message's attachments (see chat history), if any.
 	Media any `json:"media,omitempty"`
+	// Forwarded: label it "Forwarded" (the original sender isn't shown).
+	Forwarded bool `json:"forwarded,omitempty"`
 }

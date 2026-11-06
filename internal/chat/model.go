@@ -54,6 +54,8 @@ type InCommingMessage struct {
 	// Media lists uploaded media ids (POST /api/media) to attach; a
 	// message with media may have no text.
 	Media []uuid.UUID `json:"media,omitempty"`
+	// Forwarded is set by the server when forwarding (never by clients).
+	Forwarded bool `json:"-"`
 }
 
 type PayloadForSeen struct {
@@ -74,6 +76,8 @@ type MessageMetaDataRes struct {
 	CreatedAt time.Time    `json:"created_at"`
 	// EditedAt is set once the sender edits the message.
 	EditedAt *time.Time `json:"edited_at"`
+	// Forwarded: shown as "Forwarded"; who wrote it first isn't revealed.
+	Forwarded bool `json:"forwarded"`
 	// Deleted messages stay in history as placeholders (content "", no
 	// reactions) so replies to them still make sense.
 	Deleted bool `json:"deleted"`

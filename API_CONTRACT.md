@@ -867,6 +867,26 @@ deleted their account. If the last message was deleted for everyone,
 `last_message.deleted` is `true` and `msg` is `""`. If its sender is
 suspended, `last_message.sender_suspended` is `true` and `msg` is `""`.
 
+### Forward a message
+
+`POST /api/chats/forward` with
+`{"message_id":"…","to":[{"type":"private","id":"friend-uuid"},{"type":"public","id":"group-uuid"}]}`
+→ `200 {"results":[{"type":"private","id":"…","msg_id":"new-uuid"},{"type":"public","id":"…","error":"you can only message friends"}]}`
+
+- You must be able to see the original (your chat, or a group message sent
+  since you joined; otherwise `404`). Deleted messages can't be forwarded.
+- `to`: 1–5 chats (`400` otherwise). Each target follows the normal send
+  rules (friends only, group members), so results are per target: `msg_id`
+  on success, `error` when that one failed.
+- Text and media are copied. **Media is copied on the server**: nothing is
+  uploaded again, and each copy has its own lifetime in its new chat. It
+  counts towards your daily upload quota. If the original media already
+  expired on the server, that target's `error` says so: send it again as a
+  normal upload from the copy on the phone.
+- New messages carry `"forwarded": true` in history and in the `msg` event.
+  Show a "Forwarded" label. The original sender is not revealed.
+- 10 forwards per minute.
+
 ### Search messages
 
 Search the phone's own copy first. Call the server only for messages older
