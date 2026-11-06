@@ -74,6 +74,8 @@ var (
 	jobs         = counter("chirpy.queue.jobs", "background jobs by topic and result")
 	reportsC     = counter("chirpy.reports", "user reports by reason")
 	callsC       = counter("chirpy.calls", "voice call events: started, answered, and how calls ended")
+	callSecondsC = counter("chirpy.calls.seconds", "answered call time, in seconds")
+	redisCmds    = counter("chirpy.redis.commands", "commands sent to Redis (Upstash bills per command)")
 	neonBytes    atomic.Int64
 	r2Bytes      atomic.Int64
 	gaugesActive atomic.Bool
@@ -185,3 +187,13 @@ func Report(ctx context.Context, reason string) { add(ctx, reportsC, "reason", r
 
 // Call records a call event (a bounded set of names).
 func Call(ctx context.Context, event string) { add(ctx, callsC, "event", event) }
+
+// CallSeconds adds answered call time.
+func CallSeconds(ctx context.Context, s int64) {
+	if s > 0 {
+		callSecondsC.Add(ctx, s)
+	}
+}
+
+// RedisCommands counts commands sent to Redis.
+func RedisCommands(ctx context.Context, n int64) { redisCmds.Add(ctx, n) }

@@ -40,6 +40,13 @@ type Config struct {
 	// (in-process; jobs are lost on restart). Use memory on Redis plans
 	// billed per command: the stream readers poll even when idle.
 	QueueBackend string
+	// RateLimitBackend is "redis" (limits shared by every server) or
+	// "memory" (per process: no Redis commands at all, right for a single
+	// server; limits restart with it). Upstash bills every command.
+	RateLimitBackend string
+	// CallMinutesPerDay caps each user's answered call time in 24 h, so
+	// the free TURN relay allowance can't be used up (0 = no cap).
+	CallMinutesPerDay int
 
 	JWTSecret string
 	// Token lifetimes; zero means the defaults (15 minutes, 30 days).
@@ -116,6 +123,7 @@ func Load() (Config, error) {
 		RedisURL:               os.Getenv("REDIS_URL"),
 		RedisAddr:              getenv("REDIS_ADDR", "localhost:6379"),
 		QueueBackend:           getenv("QUEUE_BACKEND", "redis"),
+		RateLimitBackend:       getenv("RATE_LIMIT_BACKEND", "redis"),
 		RedisUser:              os.Getenv("REDIS_USR"),
 		RedisPass:              os.Getenv("REDIS_PASS"),
 		JWTSecret:              os.Getenv("SECRET"),
@@ -162,6 +170,9 @@ func Load() (Config, error) {
 	if c.TrustedProxies, err = atoi("TRUSTED_PROXIES", 0); err != nil {
 		return c, err
 	}
+	if c.CallMinutesPerDay, err = atoi("CALL_MINUTES_PER_DAY", 180); err != nil {
+		return c, err
+	}
 	if c.RedisDB, err = strconv.Atoi(getenv("REDIS_DB", "0")); err != nil {
 		return c, fmt.Errorf("REDIS_DB: %w", err)
 	}
@@ -178,6 +189,12 @@ func (c Config) validate() error {
 	}
 	if c.QueueBackend != "redis" && c.QueueBackend != "memory" {
 		errs = append(errs, errors.New(`QUEUE_BACKEND must be "redis" or "memory"`))
+	}
+	if c.RateLimitBackend != "redis" && c.RateLimitBackend != "memory" {
+		errs = append(errs, errors.New(`RATE_LIMIT_BACKEND must be "redis" or "memory"`))
+	}
+	if c.CallMinutesPerDay < 0 {
+		errs = append(errs, errors.New("CALL_MINUTES_PER_DAY must be 0 (no cap) or more"))
 	}
 	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
 		errs = append(errs, errors.New("TLS_CERT_FILE and TLS_KEY_FILE must be set together"))

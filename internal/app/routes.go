@@ -235,8 +235,23 @@ func (a *App) Router() http.Handler {
 	return r
 }
 
+// limiter is one per policy: a policy used on several routes shares one
+// budget, as the Redis keys (named after the policy) do.
 func (a *App) limiter(p limitPolicy) ratelimit.Limiter {
-	return ratelimit.NewRedis(a.redis, p.limit, p.period)
+	if a.cfg.RateLimitBackend != "memory" {
+		return ratelimit.NewRedis(a.redis, p.limit, p.period)
+	}
+	a.limMu.Lock()
+	defer a.limMu.Unlock()
+	if a.memLimits == nil {
+		a.memLimits = map[string]ratelimit.Limiter{}
+	}
+	l, ok := a.memLimits[p.name]
+	if !ok {
+		l = ratelimit.NewMemory(p.limit, p.period)
+		a.memLimits[p.name] = l
+	}
+	return l
 }
 
 func (a *App) health(w http.ResponseWriter, r *http.Request) {

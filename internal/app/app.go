@@ -3,7 +3,10 @@
 package app
 
 import (
+	"sync"
+
 	"RyanDev-21.com/Chirpy/internal/admin"
+	"RyanDev-21.com/Chirpy/internal/platform/ratelimit"
 	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"RyanDev-21.com/Chirpy/internal/reports"
 	"context"
@@ -51,11 +54,14 @@ type App struct {
 	// revoked ends access tokens early (password change, account deletion)
 	revoked *revoke.Store
 	tickets *ws.Tickets
-	pushSvc *push.Service
-	admin   *admin.Service
-	media   *media.Service
-	hub     *ws.Hub
-	calls   *calls.Manager
+	// memLimits: in-process rate limiters by policy (RATE_LIMIT_BACKEND=memory)
+	limMu     sync.Mutex
+	memLimits map[string]ratelimit.Limiter
+	pushSvc   *push.Service
+	admin     *admin.Service
+	media     *media.Service
+	hub       *ws.Hub
+	calls     *calls.Manager
 
 	users   users.UserService
 	friends friends.Service
@@ -193,6 +199,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	presenceSvc := presence.NewService(queries, a.friends, a.hub, logger)
 	a.hub.OnPresence(presenceSvc.Changed)
 	a.calls = calls.NewManager(a.hub, a.friends, queries, logger)
+	a.calls.SetDailyLimit(time.Duration(cfg.CallMinutesPerDay) * time.Minute)
 	a.hub.SetCalls(a.calls)
 	a.friends.OnBreak(a.calls.EndBetween)
 	a.groups.OnDelete(a.chat.ForgetGroup)
