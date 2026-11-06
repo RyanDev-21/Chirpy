@@ -1,0 +1,23 @@
+# Only the two budget alerts (added 2026-11-05), in their own group so they
+# can be imported next to the existing "chirpy" group without duplicating it:
+# Alerts & IRM -> Alert rules -> More -> Import alert rules -> Prometheus YAML
+# file, target folder Chirpy, "Pause imported alerting rules" off.
+groups:
+  - name: chirpy-budget
+    rules:
+      - alert: ChirpyRedisBudget
+        # Upstash free plan: 500k commands a month; warn when the last day's
+        # pace would pass 400k in 30 days
+        expr: (sum(increase(chirpy_redis_commands_total{job="chirpy-api"}[24h])) or vector(0)) * 30 > 400000
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Redis on course for over 400k commands this month (Upstash free: 500k)"
+      - alert: ChirpyCallHoursHigh
+        # Cloudflare TURN free: 1,000 GB a month, about 28,000 relayed call
+        # hours; 300 call hours a day is an early warning even if all relay
+        expr: (sum(increase(chirpy_calls_seconds_total{job="chirpy-api"}[24h])) or vector(0)) / 3600 > 300
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Over 300 hours of calls in the last day (watch the TURN relay allowance)"
