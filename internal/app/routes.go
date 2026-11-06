@@ -187,7 +187,7 @@ func (a *App) Router() http.Handler {
 				r.With(limit(limitInviteReset)).Post("/{group_id}/invite", a.handlers.groups.RegenerateInvite)
 			})
 			r.With(limit(limitSend)).Post("/chats/message", a.handlers.chat.SendMessage)
-			r.With(limit(limitForward)).Post("/chats/forward", a.handlers.chat.Forward)
+			r.With(limit(limitForward), limit(limitSend)).Post("/chats/forward", a.handlers.chat.Forward)
 			r.Get("/chats", a.handlers.chat.Conversations)
 			r.With(limit(limitMsgSearch)).Get("/chats/search", a.handlers.search.Search)
 			r.Get("/calls", a.handlers.calls.List)

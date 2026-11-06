@@ -76,3 +76,8 @@ SELECT EXISTS (
   WHERE mt.group_id = @group_id AND mt.member_id = @viewer
     AND COALESCE(gm.created_at, @uploaded_at::timestamp) >= mt.joined_at
 )::bool;
+
+-- name: MediaCreatedSince :one
+-- uploads and forward copies a user started since @since (count quota:
+-- every one is a paid storage write, however small)
+SELECT count(*)::bigint FROM media WHERE owner_id = @owner_id AND created_at > @since::timestamp;

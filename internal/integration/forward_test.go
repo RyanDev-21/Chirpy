@@ -114,3 +114,27 @@ func TestForward(t *testing.T) {
 		t.Fatal("a client set forwarded itself")
 	}
 }
+
+func TestForwardCountsAgainstTheFileQuota(t *testing.T) {
+	e := newEnv(t)
+	alice, bob, carol := e.signup("alice"), e.signup("bobby"), e.signup("carol")
+	e.befriend(alice, bob)
+	e.befriend(alice, carol)
+	photo := e.uploadFile(bob, "image", "image/jpeg", []byte{0xFF, 0xD8, 0xFF, 1})
+	var sent struct {
+		MsgID string `json:"msg_id"`
+	}
+	e.expect(e.do("POST", "/api/chats/message", bob.Token, map[string]any{"msg": "", "to_id": alice.ID, "type": "private", "media": []string{photo}}), 200).json(t, &sent)
+
+	// alice already made 300 tiny files today: no more copies, no more uploads
+	if _, err := e.db.Exec(`INSERT INTO media (id, owner_id, kind, content_type, size, created_at, expires_at, last_access_at)
+		SELECT gen_random_uuid(), $1, 'image', 'image/jpeg', 10, NOW(), NOW() + interval '1 day', NOW() FROM generate_series(1, 300)`, alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	var r forwardResults
+	e.expect(e.do("POST", "/api/chats/forward", alice.Token, map[string]any{"message_id": sent.MsgID, "to": []map[string]string{{"type": "private", "id": carol.ID}}}), 200).json(t, &r)
+	if r.Results[0].MsgID != "" || !strings.Contains(r.Results[0].Error, "300 files") {
+		t.Fatalf("forward over the file quota: %+v", r)
+	}
+	e.expect(e.do("POST", "/api/media", alice.Token, map[string]any{"kind": "image", "content_type": "image/png", "size": 10}), 429)
+}

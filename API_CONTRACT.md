@@ -881,12 +881,12 @@ suspended, `last_message.sender_suspended` is `true` and `msg` is `""`.
   on success, `error` when that one failed.
 - Text and media are copied. **Media is copied on the server**: nothing is
   uploaded again, and each copy has its own lifetime in its new chat. It
-  counts towards your daily upload quota. If the original media already
+  counts towards your daily upload quota (300 MB and 300 files). If the original media already
   expired on the server, that target's `error` says so: send it again as a
   normal upload from the copy on the phone.
 - New messages carry `"forwarded": true` in history and in the `msg` event.
   Show a "Forwarded" label. The original sender is not revealed.
-- 10 forwards per minute.
+- 10 forwards per minute, and each forward also counts against the 120 messages/minute send limit.
 
 ### Search messages
 
@@ -955,7 +955,7 @@ download them automatically on Wi-Fi so recipients don't miss them.
 
 Shrink before uploading: photos to ~1600 px, videos to 720p (a 720p minute
 is ~10–15 MB, so most videos stay small); make the video thumbnail on the
-phone. At most **300 MB per user per 24 h** (`429`), **10 per message**.
+phone. At most **300 MB and 300 files per user per 24 h** (`429`; forward copies count too), **10 per message**.
 When storage is nearly full, new uploads get `507` for a while.
 
 **Files** (`kind: "file"`) need `file_name`, and its extension must match

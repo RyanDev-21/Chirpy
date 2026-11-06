@@ -26,6 +26,9 @@ const (
 	MaxVideoBytes  = 100 << 20
 	MaxFileBytes   = 100 << 20
 	DailyUserBytes = 300 << 20
+	// DailyUserFiles caps uploads plus forward copies per user per 24 h:
+	// each is a storage write (R2's free tier counts writes, not bytes)
+	DailyUserFiles = 300
 	MaxPerMessage  = 10
 	// LargeBytes: bigger uploads only stay largeLifetime.
 	LargeBytes = 16 << 20
@@ -54,7 +57,7 @@ var (
 	ErrDisabled      = errors.New("media is not configured on this server")
 	ErrBadMedia      = errors.New("kind must be image (JPEG, PNG, WebP, HEIC; max 5 MB), video (MP4, MOV, WebM; max 100 MB; 3 min, or 10 min above 16 MB), voice (Opus/OGG, AAC/M4A, WebM, MP3; max 10 MB, 15 min, duration_ms required; waveform up to 128 values 0-255) or file (documents, archives, audio; max 100 MB; with file_name) with its size in bytes; width/height up to 8192")
 	ErrBadFile       = errors.New("this kind of file can't be sent: allowed are documents (PDF, Word, Excel, PowerPoint, OpenDocument, text, CSV), archives (ZIP, 7z, RAR), e-books and audio; apps and programs are not")
-	ErrDailyQuota    = errors.New("daily upload limit reached (300 MB per day)")
+	ErrDailyQuota    = errors.New("daily upload limit reached (300 MB or 300 files per day)")
 	ErrStorageFull   = errors.New("media storage is full right now; try again later")
 	ErrNotFound      = errors.New("media not found")
 	ErrExpired       = errors.New("this media has expired")
@@ -199,11 +202,9 @@ func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, req NewUploadR
 	if size > LargeBytes {
 		lifetime = largeLifetime
 	}
-	used, err := s.q.MediaUploadedSince(ctx, database.MediaUploadedSinceParams{OwnerID: pu(owner), Since: ts(now.Add(-24 * time.Hour))})
-	if err != nil {
+	if over, err := s.overQuota(ctx, owner, size, now); err != nil {
 		return Upload{}, err
-	}
-	if used+size > DailyUserBytes {
+	} else if over {
 		return Upload{}, ErrDailyQuota
 	}
 	stored, err := s.q.MediaStoredBytes(ctx)
@@ -559,11 +560,9 @@ func (s *Service) Duplicate(ctx context.Context, owner, srcID uuid.UUID) (uuid.U
 		return uuid.Nil, ErrForwardExpired
 	}
 	now := s.now()
-	used, err := s.q.MediaUploadedSince(ctx, database.MediaUploadedSinceParams{OwnerID: pu(owner), Since: ts(now.Add(-24 * time.Hour))})
-	if err != nil {
+	if over, err := s.overQuota(ctx, owner, m.Size, now); err != nil {
 		return uuid.Nil, err
-	}
-	if used+m.Size > DailyUserBytes {
+	} else if over {
 		return uuid.Nil, ErrDailyQuota
 	}
 	stored, err := s.q.MediaStoredBytes(ctx)
@@ -603,4 +602,19 @@ func (s *Service) Duplicate(ctx context.Context, owner, srcID uuid.UUID) (uuid.U
 	}
 	telemetry.Media(ctx, "forward", m.Kind)
 	return id, nil
+}
+
+// overQuota reports whether owner may not create another media file of
+// size bytes today (bytes and file count).
+func (s *Service) overQuota(ctx context.Context, owner uuid.UUID, size int64, now time.Time) (bool, error) {
+	since := ts(now.Add(-24 * time.Hour))
+	used, err := s.q.MediaUploadedSince(ctx, database.MediaUploadedSinceParams{OwnerID: pu(owner), Since: since})
+	if err != nil {
+		return false, err
+	}
+	files, err := s.q.MediaCreatedSince(ctx, database.MediaCreatedSinceParams{OwnerID: pu(owner), Since: since})
+	if err != nil {
+		return false, err
+	}
+	return used+size > DailyUserBytes || files >= DailyUserFiles, nil
 }

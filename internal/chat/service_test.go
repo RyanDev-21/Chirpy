@@ -1,6 +1,10 @@
 package chat
 
 import (
+	"fmt"
+	"log/slog"
+
+	"RyanDev-21.com/Chirpy/internal/media"
 	"context"
 	"errors"
 	"slices"
@@ -538,5 +542,19 @@ func TestEditAndDelete(t *testing.T) {
 	}
 	if err := f.svc.React(ctx, f.bob, dm, "👍"); !errors.Is(err, ErrMessageNotFound) {
 		t.Fatalf("react to deleted: %v", err)
+	}
+}
+
+func TestForwardErrorsDontLeakInternals(t *testing.T) {
+	s := &chatService{logger: slog.New(slog.DiscardHandler)}
+	if got := s.forwardError(context.Background(), ErrNotFriends); got != ErrNotFriends.Error() {
+		t.Fatalf("known error became %q", got)
+	}
+	if got := s.forwardError(context.Background(), fmt.Errorf("wrapped: %w", media.ErrForwardExpired)); got != media.ErrForwardExpired.Error() {
+		t.Fatalf("wrapped known error became %q", got)
+	}
+	internal := errors.New(`ERROR: relation "message" does not exist (SQLSTATE 42P01) host=10.0.0.3`)
+	if got := s.forwardError(context.Background(), internal); strings.Contains(got, "SQLSTATE") || strings.Contains(got, "10.0.0.3") {
+		t.Fatalf("internal error leaked: %q", got)
 	}
 }

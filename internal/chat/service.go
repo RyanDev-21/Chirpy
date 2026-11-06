@@ -650,6 +650,19 @@ type ForwardResult struct {
 
 var ErrBadForward = errors.New("to must list 1-5 chats")
 
+// forwardError is what a client may see about one failed target: our own
+// error messages, never internal ones (those are logged instead).
+func (s *chatService) forwardError(ctx context.Context, err error) string {
+	for _, known := range []error{ErrNotFriends, ErrNotAuthorized, ErrNotValidToID, ErrNotSupportedTypeMsg, ErrEmptyMessage,
+		media.ErrForwardExpired, media.ErrDailyQuota, media.ErrStorageFull, media.ErrDisabled} {
+		if errors.Is(err, known) {
+			return known.Error()
+		}
+	}
+	s.logger.ErrorContext(ctx, "forward to one chat failed", "error", err)
+	return "couldn't forward to this chat right now"
+}
+
 // Forward copies a message the caller can see into other chats, labelled
 // forwarded; media is copied in storage (nothing is re-uploaded).
 func (s *chatService) Forward(ctx context.Context, me, msgID uuid.UUID, to []ForwardTarget) ([]ForwardResult, error) {
@@ -689,14 +702,14 @@ func (s *chatService) Forward(ctx context.Context, me, msgID uuid.UUID, to []For
 		for _, a := range src {
 			id, err := s.media.Duplicate(ctx, me, a.ID)
 			if err != nil {
-				res.Error = err.Error()
+				res.Error = s.forwardError(ctx, err)
 				break
 			}
 			in.Media = append(in.Media, id)
 		}
 		if res.Error == "" {
 			if id, err := s.SendMessage(ctx, me, in); err != nil {
-				res.Error = err.Error()
+				res.Error = s.forwardError(ctx, err)
 			} else {
 				res.MsgID = &id
 			}
