@@ -1,0 +1,83 @@
+# Daily database backup: pg_dump of Neon, encrypted with a passphrase,
+# uploaded to a private R2 bucket; the last 7 days are kept.
+# Setup and restore: DEPLOY.md, "Database backups".
+name: Database backup
+
+on:
+  schedule:
+    - cron: "30 19 * * *" # 02:30 in Bangkok / Yangon-ish, when chat is quiet
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BUCKET: ${{ vars.BACKUP_BUCKET || 'chirpy-backups' }}
+      KEEP_DAYS: "7"
+      AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      # R2 doesn't accept the newer default checksum headers of the AWS CLI
+      AWS_REQUEST_CHECKSUM_CALCULATION: WHEN_REQUIRED
+      AWS_RESPONSE_CHECKSUM_VALIDATION: WHEN_REQUIRED
+      R2_ACCOUNT_ID: ${{ secrets.BACKUP_R2_ACCOUNT_ID }}
+    steps:
+      - name: Check the secrets are set
+        env:
+          DB_URL: ${{ secrets.BACKUP_DB_URL }}
+          PASS: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          missing=""
+          for v in DB_URL PASS AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY R2_ACCOUNT_ID; do
+            [ -n "${!v}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then echo "::error::missing secrets:$missing (see DEPLOY.md)"; exit 1; fi
+
+      - name: Dump the database
+        env:
+          DB_URL: ${{ secrets.BACKUP_DB_URL }}
+        run: |
+          set -euo pipefail
+          # postgres:18's pg_dump can dump any older server version
+          docker run --rm -e DB_URL postgres:18 \
+            sh -c 'pg_dump --format=custom --compress=9 --no-owner --no-privileges "$DB_URL"' > db.dump
+          test -s db.dump
+          echo "dump size: $(stat -c %s db.dump) bytes"
+
+      - name: Encrypt
+        env:
+          PASS: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$PASS" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
+            --symmetric --cipher-algo AES256 --output db.dump.gpg db.dump
+          shred -u db.dump
+
+      - name: Upload
+        run: |
+          set -euo pipefail
+          key="daily/chirpy-$(date -u +%F).dump.gpg"
+          aws s3 cp db.dump.gpg "s3://$BUCKET/$key" \
+            --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com" --only-show-errors
+          echo "uploaded $key"
+
+      - name: Keep the last ${{ env.KEEP_DAYS }} days
+        run: |
+          set -euo pipefail
+          cutoff=$(date -u -d "$KEEP_DAYS days ago" +%F)
+          aws s3 ls "s3://$BUCKET/daily/" --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com" \
+            | awk '{print $4}' | while read -r name; do
+              day=${name#chirpy-}; day=${day%.dump.gpg}
+              if [[ "$day" < "$cutoff" ]]; then
+                aws s3 rm "s3://$BUCKET/daily/$name" --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com" --only-show-errors
+                echo "deleted $name"
+              fi
+            done

@@ -526,6 +526,68 @@
           "legendFormat": "__auto"
         }
       ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Redis commands, projected per month (free: 500k)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 60,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "refId": "A",
+          "expr": "(sum(increase(chirpy_redis_commands_total{job=\"chirpy-api\"}[24h])) * 30) or vector(0)",
+          "legendFormat": "projected / month"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Call hours in the last 24 h",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 60,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "refId": "A",
+          "expr": "(sum(increase(chirpy_calls_seconds_total{job=\"chirpy-api\"}[24h])) / 3600) or vector(0)",
+          "legendFormat": "call hours"
+        }
+      ]
     }
   ]
 }

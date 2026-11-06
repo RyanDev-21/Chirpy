@@ -67,6 +67,11 @@ services:
           # use the monthly allowance while idle
           - key: QUEUE_BACKEND
             value: memory
+          # one server: rate limits in memory cost no Redis (Upstash) commands
+          - key: RATE_LIMIT_BACKEND
+            value: memory
+          - key: CALL_MINUTES_PER_DAY
+            value: "180"
           - key: DB_MAX_CONNS
             value: "5"
           - key: DB_MAX_IDLE_TIME

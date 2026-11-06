@@ -91,6 +91,7 @@ func (f fakeFriends) AreFriends(_ context.Context, a, b uuid.UUID) (bool, error)
 type fakeDB struct {
 	mu     sync.Mutex
 	states map[uuid.UUID]string
+	used   map[uuid.UUID]int64 // call seconds today
 }
 
 func (d *fakeDB) InsertCall(_ context.Context, p database.InsertCallParams) error {
@@ -112,6 +113,11 @@ func (d *fakeDB) FinishCall(_ context.Context, p database.FinishCallParams) erro
 	return nil
 }
 func (d *fakeDB) InterruptOpenCalls(context.Context, pgtype.Timestamp) (int64, error) { return 0, nil }
+func (d *fakeDB) CallSecondsSince(_ context.Context, p database.CallSecondsSinceParams) (int64, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.used[p.UserID], nil
+}
 func (d *fakeDB) state(id uuid.UUID) string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -149,7 +155,7 @@ type fixture struct {
 func newFixture() *fixture {
 	f := &fixture{alice: uuid.New(), bob: uuid.New(), carol: uuid.New(), x: uuid.New()}
 	f.hub = &fakeHub{devices: map[uuid.UUID][]uuid.UUID{}, out: make(chan got, 100)}
-	f.db = &fakeDB{states: map[uuid.UUID]string{}}
+	f.db = &fakeDB{states: map[uuid.UUID]string{}, used: map[uuid.UUID]int64{}}
 	f.push = &fakePush{}
 	fr := fakeFriends{{f.alice, f.bob}: true, {f.alice, f.carol}: true, {f.bob, f.carol}: true}
 	f.m = NewManager(f.hub, fr, f.db, slog.New(slog.DiscardHandler))
@@ -390,5 +396,48 @@ func TestUnfriendEndsCallAndLimits(t *testing.T) {
 	}
 	if !limited {
 		t.Fatal("no limit on starting calls")
+	}
+}
+
+func TestDailyCallLimit(t *testing.T) {
+	f := newFixture()
+	f.m.SetDailyLimit(time.Hour)
+	a, b := f.hub.connect(f.alice), f.hub.connect(f.bob)
+
+	// alice talked for an hour today: she can't start another call
+	f.db.used[f.alice] = 3600
+	f.send(t, a, EvStart, map[string]string{"to_id": f.bob.String()})
+	if ev := f.next(t, a); field(ev, "error") != ErrDailyLimit {
+		t.Fatalf("over the limit: %s %v", ev.Event, ev.Payload)
+	}
+
+	// bob calls her: the call can't be answered either, it ends at once
+	f.db.used[f.alice] = 3600
+	id := f.ring(t, b, a)
+	f.send(t, a, EvAccept, map[string]any{"call_id": id})
+	if ev := f.next(t, b); ev.Event != EvEnded || field(ev, "reason") != ReasonLimit {
+		t.Fatalf("answering over the limit: %s %v", ev.Event, ev.Payload)
+	}
+
+	// with a little time left, the call ends when it runs out
+	f.db.used[f.alice] = 3600 - 1 // 1 s left (the fixture runs on real time)
+	id = f.ring(t, b, a)
+	f.send(t, a, EvAccept, map[string]any{"call_id": id})
+	if ev := f.next(t, b); ev.Event != EvAccepted {
+		t.Fatalf("got %s", ev.Event)
+	}
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case g := <-f.hub.out:
+			if g.to == b && g.ev.Event == EvEnded {
+				if field(g.ev, "reason") != ReasonLimit {
+					t.Fatalf("ended with %v", g.ev.Payload)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("the call outlived the daily limit")
+		}
 	}
 }

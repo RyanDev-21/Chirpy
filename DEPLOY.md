@@ -172,3 +172,60 @@ Without them calls still work where STUN suffices (`"relay":false`).
 4. Web push: Firebase → Project settings → Cloud Messaging → **Web Push
    certificates** → generate a key pair; the web app registers its FCM token
    with `POST /api/devices` and `"platform":"web"`.
+
+## Database backups
+
+`.github/workflows/backup.yml` dumps the Neon database every night
+(02:30 Bangkok time), encrypts it with a passphrase and uploads it to a
+private R2 bucket, keeping 7 days. Neon's own restore window on the free
+plan is short; this survives mistakes, a lost account or a bad migration.
+GitHub emails you if a run fails.
+
+**Setup (once)**
+1. Cloudflare → R2 → **Create bucket** `chirpy-backups` (location APAC).
+   Backups live apart from media, so media cleanup never touches them.
+2. R2 → **Manage API tokens** → **Create API token**: permission **Object
+   Read & Write**, applied to **`chirpy-backups` only**. Note the Access
+   Key ID and Secret Access Key (shown once).
+3. Neon → your project → **Connect**: copy the connection string with
+   **Connection pooling off** (pg_dump needs a direct connection).
+4. Make a long random passphrase and save it in your password manager.
+   **Without it the backups can't be opened.**
+5. GitHub → repo → **Settings → Secrets and variables → Actions → New
+   repository secret**:
+
+   | Name | Value |
+   |---|---|
+   | `BACKUP_DB_URL` | the direct Neon connection string |
+   | `BACKUP_PASSPHRASE` | the passphrase |
+   | `BACKUP_R2_ACCOUNT_ID` | your Cloudflare account ID |
+   | `BACKUP_R2_ACCESS_KEY_ID` | from step 2 |
+   | `BACKUP_R2_SECRET_ACCESS_KEY` | from step 2 |
+
+6. **Actions → Database backup → Run workflow** once, and check that a file
+   appears in the bucket under `daily/`.
+
+**Restore** (into an empty database, e.g. a new Neon branch):
+```sh
+# download daily/chirpy-YYYY-MM-DD.dump.gpg from the bucket, then
+gpg --decrypt chirpy-YYYY-MM-DD.dump.gpg > chirpy.dump   # asks for the passphrase
+pg_restore --no-owner --no-privileges --dbname "$TARGET_DB_URL" chirpy.dump
+```
+Point `DB_URL` on Render at the restored database. Photos and videos are not
+in the backup (they expire within days anyway).
+
+## Keeping Redis inside the free plan
+
+Upstash's free plan allows 500,000 commands a month, and every command
+counts. On a single server, set `RATE_LIMIT_BACKEND=memory` (with
+`QUEUE_BACKEND=memory`): rate limits then cost no Redis commands. Switch
+both back to `redis` before running more than one server. The dashboard
+panel "Redis commands, projected per month" and the `ChirpyRedisBudget`
+alert show the pace.
+
+## Call limits
+
+`CALL_MINUTES_PER_DAY` (default 180) caps each user's answered call time
+per 24 hours, so the free TURN allowance (1,000 GB a month) can't be used
+up; 0 turns the cap off. The `ChirpyCallHoursHigh` alert fires above 300
+call hours a day.
