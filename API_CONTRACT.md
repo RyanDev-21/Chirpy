@@ -872,6 +872,7 @@ suspended, `last_message.sender_suspended` is `true` and `msg` is `""`.
 `POST /api/chats/forward` with
 `{"message_id":"…","to":[{"type":"private","id":"friend-uuid"},{"type":"public","id":"group-uuid"}]}`
 → `200 {"results":[{"type":"private","id":"…","msg_id":"new-uuid"},{"type":"public","id":"…","error":"you can only message friends"}]}`
+(`msg_id` is left out when that target failed.)
 
 - You must be able to see the original (your chat, or a group message sent
   since you joined; otherwise `404`). Deleted messages can't be forwarded.

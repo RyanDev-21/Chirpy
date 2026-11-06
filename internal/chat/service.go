@@ -642,10 +642,10 @@ type ForwardTarget struct {
 
 // ForwardResult is what happened for one target.
 type ForwardResult struct {
-	Type  string    `json:"type"`
-	ID    string    `json:"id"`
-	MsgID uuid.UUID `json:"msg_id,omitempty"`
-	Error string    `json:"error,omitempty"`
+	Type  string     `json:"type"`
+	ID    string     `json:"id"`
+	MsgID *uuid.UUID `json:"msg_id,omitempty"`
+	Error string     `json:"error,omitempty"`
 }
 
 var ErrBadForward = errors.New("to must list 1-5 chats")
@@ -698,7 +698,7 @@ func (s *chatService) Forward(ctx context.Context, me, msgID uuid.UUID, to []For
 			if id, err := s.SendMessage(ctx, me, in); err != nil {
 				res.Error = err.Error()
 			} else {
-				res.MsgID = id
+				res.MsgID = &id
 			}
 		}
 		out = append(out, res)

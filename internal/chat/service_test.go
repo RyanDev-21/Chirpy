@@ -53,6 +53,9 @@ func (f *fakeRepo) GroupReadBy(context.Context, messageRef, uuid.UUID) ([]Reader
 	return []Reader{}, nil
 }
 func (f *fakeRepo) Conversations(context.Context, uuid.UUID) ([]Conversation, error) { return nil, nil }
+func (f *fakeRepo) MessageContent(context.Context, string, uuid.UUID) (string, bool, error) {
+	return "", false, nil
+}
 func (f *fakeRepo) LocateMessage(_ context.Context, id uuid.UUID) (messageRef, error) {
 	for _, m := range f.saved {
 		if m.ID != id {
