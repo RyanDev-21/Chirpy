@@ -145,8 +145,14 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 	redisOpts := redisx.Options{URL: cfg.RedisURL, Addr: cfg.RedisAddr, Username: cfg.RedisUser, Password: cfg.RedisPass, DB: cfg.RedisDB, PoolSize: cfg.RedisPoolSize}
+	// Redis only holds caches and short-lived records here, so it being down
+	// at boot (e.g. during a deploy) mustn't keep Chirpy down. The durable
+	// Redis queue does need it, so that backend still requires Redis.
+	redisOpts.AllowDown = cfg.QueueBackend != "redis"
 	rdb, err := redisx.NewClient(ctx, redisOpts)
-	if err != nil {
+	if errors.Is(err, redisx.ErrUnreachable) {
+		logger.Warn("starting without Redis: caches fall back to the database until it's back", "error", err)
+	} else if err != nil {
 		db.Close()
 		return nil, err
 	}

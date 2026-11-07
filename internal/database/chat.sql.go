@@ -17,6 +17,8 @@ INSERT INTO seen_messages(chat_id, message_id, seen_id)
 VALUES ($1, $2, $3)
 ON CONFLICT (chat_id, seen_id)
 DO UPDATE SET message_id = EXCLUDED.message_id
+WHERE (SELECT created_at FROM message WHERE id = EXCLUDED.message_id)
+   >= (SELECT created_at FROM message WHERE id = seen_messages.message_id)
 `
 
 type AddLastSeenMessageParams struct {
@@ -25,6 +27,7 @@ type AddLastSeenMessageParams struct {
 	SeenID    uuid.UUID
 }
 
+// only moves forward: a late or repeated receipt never moves it back
 func (q *Queries) AddLastSeenMessage(ctx context.Context, arg AddLastSeenMessageParams) error {
 	_, err := q.db.Exec(ctx, addLastSeenMessage, arg.ChatID, arg.MessageID, arg.SeenID)
 	return err

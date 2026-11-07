@@ -91,13 +91,26 @@ type chatService struct {
 	notify  push.Notifier // nil: no push notifications
 	media   MediaStore    // nil: no photos/videos
 	logger  *slog.Logger
+	dedupe  *dedupe
 }
 
 func NewChatService(repo ChatRepo, cache Cache, groups GroupMembership, friends FriendChecker, push Pusher, q queue.Publisher, logger *slog.Logger) ChatService {
-	return &chatService{repo: repo, cache: cache, groups: groups, friends: friends, push: push, queue: q, logger: logger}
+	return &chatService{repo: repo, cache: cache, groups: groups, friends: friends, push: push, queue: q, logger: logger, dedupe: newDedupe()}
 }
 
 func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InCommingMessage) (uuid.UUID, error) {
+	if in.ClientMsgID == "" {
+		return s.send(ctx, from, in)
+	}
+	cid, err := uuid.Parse(in.ClientMsgID)
+	if err != nil {
+		return uuid.Nil, ErrBadClientID
+	}
+	id, _, err := s.dedupe.do(ctx, dedupeKey{from: from, client: cid}, func() (uuid.UUID, error) { return s.send(ctx, from, in) })
+	return id, err
+}
+
+func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMessage) (uuid.UUID, error) {
 	in.Content = strings.TrimSpace(in.Content)
 	if n := utf8.RuneCountInString(in.Content); (n == 0 && len(in.Media) == 0) || n > maxMessageLen {
 		return uuid.Nil, ErrEmptyMessage

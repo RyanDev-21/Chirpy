@@ -29,10 +29,13 @@ ORDER BY g.created_at DESC
 LIMIT @lim;
 
 -- name: AddLastSeenMessage :exec
+-- only moves forward: a late or repeated receipt never moves it back
 INSERT INTO seen_messages(chat_id, message_id, seen_id)
 VALUES ($1, $2, $3)
 ON CONFLICT (chat_id, seen_id)
-DO UPDATE SET message_id = EXCLUDED.message_id;
+DO UPDATE SET message_id = EXCLUDED.message_id
+WHERE (SELECT created_at FROM message WHERE id = EXCLUDED.message_id)
+   >= (SELECT created_at FROM message WHERE id = seen_messages.message_id);
 
 -- name: PrivateMessageInChat :one
 SELECT EXISTS (

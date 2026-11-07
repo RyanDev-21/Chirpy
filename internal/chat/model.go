@@ -33,6 +33,7 @@ var (
 	ErrSinceAndBefore      = errors.New("use either since or before, not both")
 	ErrSinceNotSupported   = errors.New("since is not supported for group history")
 	ErrMessageNotFound     = errors.New("message not found")
+	ErrBadClientID         = errors.New("client_msg_id must be a UUID")
 	ErrNotYourMessage      = errors.New("you can only change your own messages")
 	ErrEditWindowClosed    = errors.New("messages can only be edited within 15 minutes of sending")
 	ErrNotGroupMessage     = errors.New("read-by is only for group messages")
@@ -54,6 +55,10 @@ type InCommingMessage struct {
 	// Media lists uploaded media ids (POST /api/media) to attach; a
 	// message with media may have no text.
 	Media []uuid.UUID `json:"media,omitempty"`
+	// ClientMsgID (optional, a UUID the app makes per message) makes
+	// retries safe: the same id within DedupeWindow returns the first
+	// message instead of sending it twice.
+	ClientMsgID string `json:"client_msg_id,omitempty"`
 	// Forwarded is set by the server when forwarding (never by clients).
 	Forwarded bool `json:"-"`
 }

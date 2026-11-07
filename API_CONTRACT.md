@@ -698,7 +698,8 @@ Request:
   "msg":"Hello",
   "to_id":"user-or-group-uuid",
   "type":"private",
-  "parent_id":"optional-message-uuid"
+  "parent_id":"optional-message-uuid",
+  "client_msg_id":"uuid-the-app-generates"
 }
 ```
 
@@ -710,6 +711,15 @@ before this response is returned.
 
 `403` means the caller is not allowed to message that chat; validation errors
 are `400`.
+
+**Retries: always send `client_msg_id`.** Make a new UUID when the user
+taps Send, store it with the pending message, and send **the same one** on
+every retry (timeouts, lost connection, app restart). If the server already
+saved that message, the retry answers `200` with the **same** `msg_id`
+instead of sending it twice. Retries in flight at the same time also get
+the same answer. The server remembers ids for **10 minutes**; after that a
+retry would be a new message. A non-UUID is `400`. On a `5xx`, retry with
+backoff (1 s, 2 s, 4 s, …), using the same `client_msg_id`.
 
 ### Private history
 
@@ -922,6 +932,11 @@ message in that scope.
 - `400` for a bad `q` or parameters. 20 searches/minute.
 
 ### Mark a private message seen
+
+Read markers only move forward: a late or repeated receipt for an older
+message changes nothing, so retrying is always safe.
+
+
 
 `POST /api/chat/{otherUser_id}/messages` with `{"msg_id":"message-uuid"}`.
 Success is `201` with an empty body. The message must belong to this private

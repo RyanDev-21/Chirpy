@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ type fakePush struct {
 	mu   sync.Mutex
 	sent []push.Message
 	dead map[string]bool
+	down bool // Firebase unreachable: every send fails
 }
 
 func (f *fakePush) Send(_ context.Context, m push.Message) error {
@@ -23,6 +25,9 @@ func (f *fakePush) Send(_ context.Context, m push.Message) error {
 	defer f.mu.Unlock()
 	if f.dead[m.Token] {
 		return push.ErrDeadToken
+	}
+	if f.down {
+		return errors.New("fcm: 503 Service Unavailable")
 	}
 	f.sent = append(f.sent, m)
 	return nil
