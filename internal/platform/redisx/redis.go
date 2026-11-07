@@ -20,7 +20,14 @@ type Options struct {
 	Password string
 	DB       int
 	PoolSize int // 0: go-redis default (10 per CPU)
+	// AllowDown returns the client even if Redis can't be reached yet
+	// (with ErrUnreachable): it reconnects by itself, and everything that
+	// uses Redis is a cache or falls back, so the server can start anyway.
+	AllowDown bool
 }
+
+// ErrUnreachable: the client was created but Redis didn't answer (yet).
+var ErrUnreachable = errors.New("redis unreachable")
 
 // NewClient connects and pings Redis.
 func NewClient(ctx context.Context, o Options) (*redis.Client, error) {
@@ -39,6 +46,9 @@ func NewClient(ctx context.Context, o Options) (*redis.Client, error) {
 	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := rdb.Ping(pingCtx).Err(); err != nil {
+		if o.AllowDown {
+			return rdb, fmt.Errorf("%w: %s: %v", ErrUnreachable, opts.Addr, err)
+		}
 		_ = rdb.Close()
 		return nil, fmt.Errorf("redis ping %s: %w", opts.Addr, err)
 	}

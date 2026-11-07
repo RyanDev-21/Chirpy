@@ -40,7 +40,7 @@ func (h *ChatHandler) writeErr(w http.ResponseWriter, r *http.Request, err error
 		errors.Is(err, ErrEmptyMessage), errors.Is(err, ErrNotValidTimeFmt), errors.Is(err, ErrNotValidUUID),
 		errors.Is(err, ErrMessageNotInChat), errors.Is(err, ErrBadCursor), errors.Is(err, ErrSinceAndBefore),
 		errors.Is(err, ErrSinceNotSupported), errors.Is(err, ErrNotAnEmoji), errors.Is(err, ErrNotGroupMessage),
-		errors.Is(err, ErrGroupTooBig):
+		errors.Is(err, ErrGroupTooBig), errors.Is(err, ErrBadClientID):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	default:
 		httpx.ServerError(w, r, err)

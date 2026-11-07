@@ -229,3 +229,19 @@ alert show the pace.
 per 24 hours, so the free TURN allowance (1,000 GB a month) can't be used
 up; 0 turns the cap off. The `ChirpyCallHoursHigh` alert fires above 300
 call hours a day.
+
+## When a service is down
+
+| Down | What happens |
+|---|---|
+| Redis | Chirpy keeps running and **starts** without it: caches read Postgres, rate limits are in memory (or fail open on the Redis backend), and access tokens aren't checked against "sign out everywhere" until it's back (admin requests are refused). "Sign out everywhere" answers 500 until Redis returns. `/readyz` says `redis: down`. |
+| Postgres (Neon) | Requests needing it fail with a clean 500 (nothing half-saved); the process stays up (`/livez`) and reconnects by itself. The server won't start without it. `ChirpyHighErrorRate` emails you. |
+| Firebase (push) | Messages are saved and delivered as usual; only those notifications are skipped. `ChirpyPushFailing` emails you. |
+| Resend (email) | Sign-up and reset answer 503 "try again shortly". |
+| Cloudflare TURN | Calls use direct connections only (`relay:false`). |
+| R2 | Messages with media fail; text works. |
+
+Not durable: push notifications and read receipts go through an in-memory
+queue, so a crash can lose a notification (never a message). An outbox
+table would make pushes survive restarts; worth it when moving off the free
+tier.
