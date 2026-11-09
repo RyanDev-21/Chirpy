@@ -12,9 +12,64 @@ unique, so profiles should show `@name` too. Every object describing a person
 (friends, requests, search, group members, conversation list, reactions,
 discovery, profiles, `/users/me`) has both. Search matches either one.
 
-- Production base URL: `https://api.ponypigeon.com`.
-- Render fallback host: `https://chirpy-api.onrender.com`.
-- Local default: `http://localhost:8080`.
+### Which server to use
+
+| Build | Base URL | WebSocket |
+|---|---|---|
+| **Release** (APK for users, web app) | `https://api.ponypigeon.com` | `wss://api.ponypigeon.com/api/chats/ws` |
+| **Development** | a local backend: `http://<host>:8080` | `ws://<host>:8080/api/chats/ws` |
+| Staging | *not set up yet*. Don't use production for testing instead (see below) | |
+
+- **Never hard-code the URL.** Read it from build config, e.g.
+  `EXPO_PUBLIC_API_URL` (and derive the WebSocket URL from it: `https` →
+  `wss`, `http` → `ws`). Release builds must point at production; check a
+  release build never ships with a development URL.
+- **Don't develop or test against production.** Real users' data lives
+  there, test accounts and messages would mix in, and rate limits and free
+  quotas (emails, storage) are shared with them. Use production only for
+  the final check of a release build.
+- `https://chirpy-api.onrender.com` is the same production server under
+  Render's own name; apps should use `api.ponypigeon.com`.
+
+**`<host>` for a development build:**
+
+| Running the app on | `<host>` |
+|---|---|
+| iOS simulator, or Expo web in a browser on the same computer | `localhost` |
+| Android emulator | `10.0.2.2` (the emulator's name for the computer) |
+| A real phone (Expo Go or a dev build) | the computer's **Wi-Fi IP**, e.g. `192.168.1.20`. Phone and computer on the same Wi-Fi. Find it with `ipconfig getifaddr en0` (Mac). |
+
+Android blocks plain `http://` and `ws://` by default: allow cleartext
+traffic **in development builds only** (Expo: `android.usesCleartextTraffic`
+in the dev app config). Release builds use HTTPS/WSS and must not allow it.
+
+**Running the local backend** (from the backend repo; needs Docker and Go):
+
+```sh
+cp .env.example .env    # then in .env: PLATFORM=dev, SECRET=<32+ random chars>,
+                        # CORS_ALLOWED_ORIGINS=http://localhost:8081  (Expo web; add others comma-separated)
+make deps               # starts Postgres + Redis in Docker
+make run                # API on :8080 (listens on all interfaces, so phones on the Wi-Fi can reach it)
+curl http://localhost:8080/livez   # 204 = running
+```
+
+What's different on a local backend:
+
+| Feature | Local behaviour |
+|---|---|
+| Email codes (sign-up, reset, change email) | **Not sent.** With `PLATFORM=dev` the server prints each email, code included, to its log (`email (not sent, PLATFORM=dev)`). Copy the code from there. |
+| Google sign-in | Works if `.env` has `GOOGLE_CLIENT_IDS` (the same Web client id) and the Google account is a **test user** in Google Auth Platform |
+| Photos, videos, files, voice | `503 media is not configured` unless `.env` has the `R2_*` settings (use a separate test bucket, never `chirpy-media`) |
+| Push notifications | Off unless `.env` has `FIREBASE_SERVICE_ACCOUNT` |
+| Calls | Signalling works; `GET /api/calls/ice` returns STUN only (`"relay":false`) unless the `CF_TURN_*` keys are set. Fine on one Wi-Fi |
+| Rate limits, rules, responses | Exactly as in production |
+
+The database starts empty: create test accounts with sign-up (codes from the
+log). `make deps` keeps the data between runs; `docker compose down -v`
+wipes it.
+
+### Conventions
+
 - REST paths below are relative to the base URL and already include `/api`
   where applicable.
 - JSON requests must send `Content-Type: application/json`.
