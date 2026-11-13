@@ -68,8 +68,8 @@ WITH s AS (
     ON CONFLICT DO NOTHING
     RETURNING msg_id
 )
-INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded)
-SELECT $1, $2, $3, $4, $5, $6, $7 FROM s
+INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, client_msg_id)
+SELECT $1, $2, $3, $4, $5, $6, $7, $8 FROM s
 `
 
 type AddMessagePrivateOnceParams struct {
@@ -80,7 +80,7 @@ type AddMessagePrivateOnceParams struct {
 	ToID      pgtype.UUID
 	CreatedAt pgtype.Timestamp
 	Forwarded bool
-	ClientID  uuid.UUID
+	ClientID  pgtype.UUID
 }
 
 // saves the message unless @from_id already used @client_id (0 rows then)
@@ -137,9 +137,9 @@ WITH s AS (
     ON CONFLICT DO NOTHING
     RETURNING msg_id
 )
-INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded)
+INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded, client_msg_id)
 SELECT $1, $2, $3, $4, $5, $6,
-       COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = $3), false), $7 FROM s
+       COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = $3), false), $7, $8 FROM s
 `
 
 type AddMessagePublicOnceParams struct {
@@ -150,7 +150,7 @@ type AddMessagePublicOnceParams struct {
 	ParentID  pgtype.UUID
 	CreatedAt pgtype.Timestamp
 	Forwarded bool
-	ClientID  uuid.UUID
+	ClientID  pgtype.UUID
 }
 
 func (q *Queries) AddMessagePublicOnce(ctx context.Context, arg AddMessagePublicOnceParams) (int64, error) {
@@ -268,7 +268,7 @@ func (q *Queries) EditPrivateMessage(ctx context.Context, arg EditPrivateMessage
 }
 
 const getGroupMessagesBefore = `-- name: GetGroupMessagesBefore :many
-SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.deleted_at, g.edited_at, g.searchable, g.forwarded, g.changed_at FROM GroupMessage g
+SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.deleted_at, g.edited_at, g.searchable, g.forwarded, g.changed_at, g.client_msg_id FROM GroupMessage g
 WHERE g.group_id = $1
   AND (g.created_at, g.id) < ($2::timestamp, $3::uuid)
   AND g.created_at >= (SELECT mt.joined_at FROM member_table mt WHERE mt.group_id = $1 AND mt.member_id = $4::uuid)
@@ -311,6 +311,7 @@ func (q *Queries) GetGroupMessagesBefore(ctx context.Context, arg GetGroupMessag
 			&i.Searchable,
 			&i.Forwarded,
 			&i.ChangedAt,
+			&i.ClientMsgID,
 		); err != nil {
 			return nil, err
 		}
@@ -323,7 +324,7 @@ func (q *Queries) GetGroupMessagesBefore(ctx context.Context, arg GetGroupMessag
 }
 
 const getGroupMessagesSince = `-- name: GetGroupMessagesSince :many
-SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.deleted_at, g.edited_at, g.searchable, g.forwarded, g.changed_at FROM GroupMessage g
+SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.deleted_at, g.edited_at, g.searchable, g.forwarded, g.changed_at, g.client_msg_id FROM GroupMessage g
 WHERE g.group_id = $1
   AND g.created_at > $2::timestamp
   AND g.created_at >= (SELECT mt.joined_at FROM member_table mt WHERE mt.group_id = $1 AND mt.member_id = $3::uuid)
@@ -366,6 +367,7 @@ func (q *Queries) GetGroupMessagesSince(ctx context.Context, arg GetGroupMessage
 			&i.Searchable,
 			&i.Forwarded,
 			&i.ChangedAt,
+			&i.ClientMsgID,
 		); err != nil {
 			return nil, err
 		}
@@ -378,7 +380,7 @@ func (q *Queries) GetGroupMessagesSince(ctx context.Context, arg GetGroupMessage
 }
 
 const getPrivateMessagesBefore = `-- name: GetPrivateMessagesBefore :many
-SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at FROM message
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at, client_msg_id FROM message
 WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
   AND (created_at, id) < ($3::timestamp, $4::uuid)
 ORDER BY created_at DESC, id DESC
@@ -420,6 +422,7 @@ func (q *Queries) GetPrivateMessagesBefore(ctx context.Context, arg GetPrivateMe
 			&i.EditedAt,
 			&i.Forwarded,
 			&i.ChangedAt,
+			&i.ClientMsgID,
 		); err != nil {
 			return nil, err
 		}
@@ -432,7 +435,7 @@ func (q *Queries) GetPrivateMessagesBefore(ctx context.Context, arg GetPrivateMe
 }
 
 const getPrivateMessagesSince = `-- name: GetPrivateMessagesSince :many
-SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at FROM message
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at, client_msg_id FROM message
 WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
   AND created_at > $3
 ORDER BY created_at ASC
@@ -471,6 +474,7 @@ func (q *Queries) GetPrivateMessagesSince(ctx context.Context, arg GetPrivateMes
 			&i.EditedAt,
 			&i.Forwarded,
 			&i.ChangedAt,
+			&i.ClientMsgID,
 		); err != nil {
 			return nil, err
 		}
@@ -483,7 +487,7 @@ func (q *Queries) GetPrivateMessagesSince(ctx context.Context, arg GetPrivateMes
 }
 
 const getRecentGroupMessages = `-- name: GetRecentGroupMessages :many
-SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.deleted_at, g.edited_at, g.searchable, g.forwarded, g.changed_at FROM GroupMessage g
+SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.deleted_at, g.edited_at, g.searchable, g.forwarded, g.changed_at, g.client_msg_id FROM GroupMessage g
 WHERE g.group_id = $1
   AND g.created_at >= (SELECT mt.joined_at FROM member_table mt WHERE mt.group_id = $1 AND mt.member_id = $2::uuid)
 ORDER BY g.created_at DESC
@@ -518,6 +522,7 @@ func (q *Queries) GetRecentGroupMessages(ctx context.Context, arg GetRecentGroup
 			&i.Searchable,
 			&i.Forwarded,
 			&i.ChangedAt,
+			&i.ClientMsgID,
 		); err != nil {
 			return nil, err
 		}
@@ -530,7 +535,7 @@ func (q *Queries) GetRecentGroupMessages(ctx context.Context, arg GetRecentGroup
 }
 
 const getRecentPrivateMessages = `-- name: GetRecentPrivateMessages :many
-SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at FROM message
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at, client_msg_id FROM message
 WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
 ORDER BY created_at DESC
 LIMIT $3
@@ -562,6 +567,7 @@ func (q *Queries) GetRecentPrivateMessages(ctx context.Context, arg GetRecentPri
 			&i.EditedAt,
 			&i.Forwarded,
 			&i.ChangedAt,
+			&i.ClientMsgID,
 		); err != nil {
 			return nil, err
 		}
@@ -574,7 +580,7 @@ func (q *Queries) GetRecentPrivateMessages(ctx context.Context, arg GetRecentPri
 }
 
 const groupChangesSince = `-- name: GroupChangesSince :many
-SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.deleted_at, g.edited_at, g.searchable, g.forwarded, g.changed_at FROM GroupMessage g
+SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.deleted_at, g.edited_at, g.searchable, g.forwarded, g.changed_at, g.client_msg_id FROM GroupMessage g
 JOIN member_table mt ON mt.group_id = g.group_id AND mt.member_id = $1::uuid
 WHERE g.changed_at > $2::timestamp AND g.created_at >= mt.joined_at
 ORDER BY g.changed_at ASC, g.id ASC
@@ -609,6 +615,7 @@ func (q *Queries) GroupChangesSince(ctx context.Context, arg GroupChangesSincePa
 			&i.Searchable,
 			&i.Forwarded,
 			&i.ChangedAt,
+			&i.ClientMsgID,
 		); err != nil {
 			return nil, err
 		}
@@ -932,7 +939,7 @@ func (q *Queries) PeerSeenMessage(ctx context.Context, arg PeerSeenMessageParams
 }
 
 const privateChangesSince = `-- name: PrivateChangesSince :many
-SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at FROM message
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at, client_msg_id FROM message
 WHERE changed_at > $1::timestamp AND (from_id = $2::uuid OR to_id = $2::uuid)
 ORDER BY changed_at ASC, id ASC
 LIMIT $3
@@ -965,6 +972,7 @@ func (q *Queries) PrivateChangesSince(ctx context.Context, arg PrivateChangesSin
 			&i.EditedAt,
 			&i.Forwarded,
 			&i.ChangedAt,
+			&i.ClientMsgID,
 		); err != nil {
 			return nil, err
 		}

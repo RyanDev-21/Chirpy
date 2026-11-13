@@ -98,6 +98,14 @@ func pgOptUUID(s string) pgtype.UUID {
 func pgText(s string) pgtype.Text         { return pgtype.Text{String: s, Valid: true} }
 func pgTime(t time.Time) pgtype.Timestamp { return pgtype.Timestamp{Time: t, Valid: true} }
 
+func optUUID(u pgtype.UUID) *uuid.UUID {
+	if !u.Valid {
+		return nil
+	}
+	id := uuid.UUID(u.Bytes)
+	return &id
+}
+
 func optTime(t pgtype.Timestamp) *time.Time {
 	if !t.Valid {
 		return nil
@@ -142,13 +150,13 @@ func (r *chatRepo) AddOnce(ctx context.Context, kind string, m MessageMetaDataRe
 	var err error
 	if kind == TypePrivate {
 		n, err = r.q.AddMessagePrivateOnce(ctx, database.AddMessagePrivateOnceParams{
-			FromID: pgUUID(m.MsgInfo.FromID), ClientID: client, ID: m.ID, CreatedAt: pgTime(m.CreatedAt),
+			FromID: pgUUID(m.MsgInfo.FromID), ClientID: pgUUID(client), ID: m.ID, CreatedAt: pgTime(m.CreatedAt),
 			Content: pgText(m.MsgInfo.Msg.Content), Parentid: pgOptUUID(m.MsgInfo.Msg.ParendID),
 			ToID: pgOptUUID(m.MsgInfo.Msg.ToID), Forwarded: m.Forwarded,
 		})
 	} else {
 		n, err = r.q.AddMessagePublicOnce(ctx, database.AddMessagePublicOnceParams{
-			FromID: pgUUID(m.MsgInfo.FromID), ClientID: client, ID: m.ID, CreatedAt: pgTime(m.CreatedAt),
+			FromID: pgUUID(m.MsgInfo.FromID), ClientID: pgUUID(client), ID: m.ID, CreatedAt: pgTime(m.CreatedAt),
 			Content: pgText(m.MsgInfo.Msg.Content), GroupID: pgOptUUID(m.MsgInfo.Msg.ToID),
 			ParentID: pgOptUUID(m.MsgInfo.Msg.ParendID), Forwarded: m.Forwarded,
 		})
@@ -185,12 +193,13 @@ func fromPrivate(rows []database.Message) []MessageMetaDataRes {
 	for _, m := range rows {
 		created := m.CreatedAt.Time.UTC()
 		out = append(out, MessageMetaDataRes{
-			ID:        m.ID,
-			CreatedAt: created,
-			EditedAt:  optTime(m.EditedAt),
-			ChangedAt: optTime(m.ChangedAt),
-			Deleted:   m.DeletedAt.Valid,
-			Forwarded: m.Forwarded,
+			ID:          m.ID,
+			CreatedAt:   created,
+			EditedAt:    optTime(m.EditedAt),
+			ChangedAt:   optTime(m.ChangedAt),
+			ClientMsgID: optUUID(m.ClientMsgID),
+			Deleted:     m.DeletedAt.Valid,
+			Forwarded:   m.Forwarded,
 			MsgInfo: MessageCache{
 				FromID:    uuid.UUID(m.FromID.Bytes),
 				CreatedAt: created,
@@ -211,12 +220,13 @@ func fromPublic(rows []database.Groupmessage) []MessageMetaDataRes {
 	for _, m := range rows {
 		created := m.CreatedAt.Time.UTC()
 		out = append(out, MessageMetaDataRes{
-			ID:        m.ID,
-			CreatedAt: created,
-			EditedAt:  optTime(m.EditedAt),
-			ChangedAt: optTime(m.ChangedAt),
-			Deleted:   m.DeletedAt.Valid,
-			Forwarded: m.Forwarded,
+			ID:          m.ID,
+			CreatedAt:   created,
+			EditedAt:    optTime(m.EditedAt),
+			ChangedAt:   optTime(m.ChangedAt),
+			ClientMsgID: optUUID(m.ClientMsgID),
+			Deleted:     m.DeletedAt.Valid,
+			Forwarded:   m.Forwarded,
 			MsgInfo: MessageCache{
 				FromID:    uuid.UUID(m.FromID.Bytes),
 				CreatedAt: created,

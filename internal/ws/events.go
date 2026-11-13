@@ -158,4 +158,6 @@ type OutGoingMessage struct {
 	Media any `json:"media,omitempty"`
 	// Forwarded: label it "Forwarded" (the original sender isn't shown).
 	Forwarded bool `json:"forwarded,omitempty"`
+	// ClientMsgID: only in the copy sent to the sender's own devices.
+	ClientMsgID string `json:"client_msg_id,omitempty"`
 }

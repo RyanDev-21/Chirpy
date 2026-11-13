@@ -15,8 +15,8 @@ WITH s AS (
     ON CONFLICT DO NOTHING
     RETURNING msg_id
 )
-INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded)
-SELECT @id, @content, @parentid, @from_id, @to_id, @created_at, @forwarded FROM s;
+INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, client_msg_id)
+SELECT @id, @content, @parentid, @from_id, @to_id, @created_at, @forwarded, @client_id FROM s;
 
 -- name: AddMessagePublicOnce :execrows
 WITH s AS (
@@ -25,9 +25,9 @@ WITH s AS (
     ON CONFLICT DO NOTHING
     RETURNING msg_id
 )
-INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded)
+INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded, client_msg_id)
 SELECT @id, @content, @group_id, @from_id, @parent_id, @created_at,
-       COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = @group_id), false), @forwarded FROM s;
+       COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = @group_id), false), @forwarded, @client_id FROM s;
 
 -- name: SentMessageID :one
 SELECT msg_id FROM sent_ids WHERE from_id = @from_id AND client_id = @client_id;

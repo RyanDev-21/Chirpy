@@ -219,12 +219,14 @@ func (f fakeFriends) AreFriends(_ context.Context, a, b uuid.UUID) (bool, error)
 type fakePush struct {
 	mu      sync.Mutex
 	targets [][]uuid.UUID
+	events  []ws.Event
 }
 
-func (p *fakePush) WriteToUsers(t []uuid.UUID, _ ws.Event) error {
+func (p *fakePush) WriteToUsers(t []uuid.UUID, ev ws.Event) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.targets = append(p.targets, t)
+	p.events = append(p.events, ev)
 	return nil
 }
 
@@ -306,7 +308,8 @@ func TestPrivateMessagesKeepHistoryOrder(t *testing.T) {
 	if want := []string{"from postgres", "one", "two"}; !slices.Equal(texts, want) {
 		t.Fatalf("messages = %v, want %v", texts, want)
 	}
-	if len(f.push.targets) != 2 || f.push.targets[0][0] != f.bob {
+	// per message: the recipient, then the sender's own devices
+	if len(f.push.targets) != 4 || f.push.targets[0][0] != f.bob || f.push.targets[1][0] != f.alice {
 		t.Fatalf("push targets = %v", f.push.targets)
 	}
 	if len(f.repo.saved) != 2 || len(f.queue.topics) != 0 {
@@ -344,7 +347,7 @@ func TestGroupMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 	// members, then the sender's own devices
-	if got := f.push.targets[0]; len(got) != 2 || got[0] != f.bob || got[1] != f.alice {
+	if got := f.push.targets; len(got) != 2 || len(got[0]) != 1 || got[0][0] != f.bob || got[1][0] != f.alice {
 		t.Fatalf("fan-out: %v", got)
 	}
 	got, err := f.svc.GroupMessages(ctx, f.bob, f.group, HistoryQuery{})
@@ -598,5 +601,43 @@ func TestForwardErrorsDontLeakInternals(t *testing.T) {
 	internal := errors.New(`ERROR: relation "message" does not exist (SQLSTATE 42P01) host=10.0.0.3`)
 	if got := s.forwardError(context.Background(), internal); strings.Contains(got, "SQLSTATE") || strings.Contains(got, "10.0.0.3") {
 		t.Fatalf("internal error leaked: %q", got)
+	}
+}
+
+// The client id goes back only to the sender: in their msg event and in
+// history; the recipient sees neither.
+func TestClientMsgIDOnlyForSender(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	in := msg(f.bob, TypePrivate, "hi")
+	in.ClientMsgID = uuid.NewString()
+	id, err := f.svc.SendMessage(ctx, f.alice, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := func(i int) string { return f.push.events[i].Payload.(ws.OutGoingMessage).ClientMsgID }
+	if f.push.targets[0][0] != f.bob || ev(0) != "" || f.push.targets[1][0] != f.alice || ev(1) != in.ClientMsgID {
+		t.Fatalf("events: to %v, ids %q %q", f.push.targets, ev(0), ev(1))
+	}
+	cid := uuid.MustParse(in.ClientMsgID)
+	for i := range f.repo.history { // as the database returns it
+		if f.repo.history[i].ID == id {
+			f.repo.history[i].ClientMsgID = &cid
+		}
+	}
+	last := func(m []MessageMetaDataRes) MessageMetaDataRes { return m[len(m)-1] }
+	mine, err := f.svc.PrivateMessages(ctx, f.alice, f.bob, HistoryQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := last(mine).ClientMsgID; c == nil || *c != cid {
+		t.Fatalf("sender's history id %v", c)
+	}
+	theirs, err := f.svc.PrivateMessages(ctx, f.bob, f.alice, HistoryQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := last(theirs).ClientMsgID; c != nil || last(theirs).MsgInfo.Msg.ClientMsgID != "" {
+		t.Fatalf("recipient sees %v", c)
 	}
 }

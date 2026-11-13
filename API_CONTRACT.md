@@ -782,7 +782,17 @@ the same answer. The server stores ids in its database for **7 days**, so
 this also works after the phone was offline for hours or the server
 restarted. Keep the pending message and retry whenever you're back online.
 After 7 days a retry would be a new message: stop retrying on your own and
-ask the user ("Couldn't send. Retry?"). The same `client_msg_id` from a
+ask the user ("Couldn't send. Retry?").
+
+**Matching your own messages.** Wherever you get **your own** message back,
+it carries the `client_msg_id` it was sent with: the `msg` event to your
+devices, history (every page type) and `/api/chats/changes`. It's kept as
+long as the message exists, so after any time offline: if a message of
+yours in history has the `client_msg_id` of one still waiting on the phone,
+that one was sent; mark it sent and drop the waiting copy (don't retry it).
+Also use it to pair the live `msg` echo with its waiting bubble instead of
+comparing text. Others never see it; it's left out for forwards and for
+messages sent without one. The same `client_msg_id` from a
 different user is their own message. A non-UUID is `400`. On a `5xx`, retry
 with backoff (1 s, 2 s, 4 s, …), using the same `client_msg_id`.
 
@@ -931,7 +941,8 @@ you last caught up (save the server's times, not the phone's clock):
 - Set `last_sync` to the newest `changed_at` (or `created_at`) you received,
   not the phone's clock.
 
-Every history message also has `changed_at` (left out if it never changed).
+Every history message also has `changed_at` (left out if it never changed),
+and your own messages their `client_msg_id`.
 
 ### Mark group messages read
 
@@ -1344,7 +1355,7 @@ upgrade (no or bad token) returns `401` JSON instead of switching protocols.
 
 | Event | Payload |
 |---|---|
-| `msg` | `{"id":"message-uuid","msg":"Hello","parent_id":"...","from_id":"uuid","type":"private|public","group_id":"...","created_at":"..."}` — `group_id` is present only for `public` (group) messages; for private messages the chat is identified by `from_id`. `parent_id` is omitted when empty |
+| `msg` | `{"id":"message-uuid","msg":"Hello","parent_id":"...","from_id":"uuid","type":"private|public","group_id":"...","created_at":"..."}` — `group_id` is present only for `public` (group) messages; for private messages the chat is identified by `from_id`. `parent_id` is omitted when empty. The copy sent to the sender's own devices also has `client_msg_id` (when it was sent with one) |
 | `Typing` | Private: `{"from_id":"uuid"}`; group: `{"from_id":"uuid","group_id":"uuid"}` |
 | `Seen` | `{"msg_id":"message-uuid","from_id":"uuid"}` |
 | `AddFri` | `{"req_id":"request-uuid","from_id":"uuid"}` |
