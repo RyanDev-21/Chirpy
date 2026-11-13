@@ -83,17 +83,18 @@ type GroupRead struct {
 }
 
 type Groupmessage struct {
-	ID         uuid.UUID
-	Content    pgtype.Text
-	GroupID    pgtype.UUID
-	FromID     pgtype.UUID
-	ParentID   pgtype.UUID
-	CreatedAt  pgtype.Timestamp
-	DeletedAt  pgtype.Timestamp
-	EditedAt   pgtype.Timestamp
-	Searchable bool
-	Forwarded  bool
-	ChangedAt  pgtype.Timestamp
+	ID          uuid.UUID
+	Content     pgtype.Text
+	GroupID     pgtype.UUID
+	FromID      pgtype.UUID
+	ParentID    pgtype.UUID
+	CreatedAt   pgtype.Timestamp
+	DeletedAt   pgtype.Timestamp
+	EditedAt    pgtype.Timestamp
+	Searchable  bool
+	Forwarded   bool
+	ChangedAt   pgtype.Timestamp
+	ClientMsgID pgtype.UUID
 }
 
 type MediaDownload struct {
@@ -133,16 +134,17 @@ type MemberTable struct {
 }
 
 type Message struct {
-	ID        uuid.UUID
-	Content   pgtype.Text
-	Parentid  pgtype.UUID
-	FromID    pgtype.UUID
-	ToID      pgtype.UUID
-	DeletedAt pgtype.Timestamp
-	CreatedAt pgtype.Timestamp
-	EditedAt  pgtype.Timestamp
-	Forwarded bool
-	ChangedAt pgtype.Timestamp
+	ID          uuid.UUID
+	Content     pgtype.Text
+	Parentid    pgtype.UUID
+	FromID      pgtype.UUID
+	ToID        pgtype.UUID
+	DeletedAt   pgtype.Timestamp
+	CreatedAt   pgtype.Timestamp
+	EditedAt    pgtype.Timestamp
+	Forwarded   bool
+	ChangedAt   pgtype.Timestamp
+	ClientMsgID pgtype.UUID
 }
 
 type MessageReaction struct {

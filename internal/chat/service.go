@@ -236,8 +236,15 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 	} else {
 		out.ToID = to.String()
 	}
-	// the sender's other devices (tablet, second phone) get it too
-	if err := s.push.WriteToUsers(withMe(targets, from), ws.Event{Event: ws.EventMessage, Payload: out}); err != nil {
+	if err := s.push.WriteToUsers(targets, ws.Event{Event: ws.EventMessage, Payload: out}); err != nil {
+		s.logger.WarnContext(ctx, "failed to push message", "error", err)
+	}
+	// the sender's devices (this one, a tablet, a second phone) get it too,
+	// with the client id so the app can match it to the waiting bubble
+	if client != uuid.Nil {
+		out.ClientMsgID = client.String()
+	}
+	if err := s.push.WriteToUsers([]uuid.UUID{from}, ws.Event{Event: ws.EventMessage, Payload: out}); err != nil {
 		s.logger.WarnContext(ctx, "failed to push message", "error", err)
 	}
 	telemetry.Message(ctx, in.Type, len(attached) > 0)
@@ -525,6 +532,10 @@ func (s *chatService) withState(ctx context.Context, kind string, me uuid.UUID, 
 	}
 	for i := range msgs {
 		m := &msgs[i]
+		if m.MsgInfo.FromID != me {
+			m.ClientMsgID = nil // only the sender sees it
+		}
+		m.MsgInfo.Msg.ClientMsgID = ""
 		if m.Deleted {
 			m.MsgInfo.Msg.Content = ""
 		}

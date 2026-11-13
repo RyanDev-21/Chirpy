@@ -82,6 +82,9 @@ type MessageMetaDataRes struct {
 	EditedAt *time.Time `json:"edited_at"`
 	// ChangedAt is the last edit, delete or reaction change (omitted if none).
 	ChangedAt *time.Time `json:"changed_at,omitempty"`
+	// ClientMsgID is the id the app sent the message with: only shown to
+	// its sender, so the app can match it to a message still waiting.
+	ClientMsgID *uuid.UUID `json:"client_msg_id,omitempty"`
 	// Forwarded: shown as "Forwarded"; who wrote it first isn't revealed.
 	Forwarded bool `json:"forwarded"`
 	// Deleted messages stay in history as placeholders (content "", no

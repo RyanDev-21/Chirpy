@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"testing"
 	"time"
@@ -176,5 +177,109 @@ func TestChangesPaging(t *testing.T) {
 	c2 := e.changes(alice, c.Changes[199].Message.ChangedAt, 200)
 	if len(c2.Changes) != 50 || c2.More || c2.Changes[0].Message.Info.Msg.Content != "m201" {
 		t.Fatalf("page 2: %d changes, more %v", len(c2.Changes), c2.More)
+	}
+}
+
+// The sender gets back the client_msg_id a message was sent with (event,
+// history, changes), also after the 7-day dedupe window; nobody else does.
+func TestClientMsgIDEcho(t *testing.T) {
+	e := newEnv(t)
+	alice, bob := e.signup("alice"), e.signup("bobby")
+	e.befriend(alice, bob)
+	g := e.adminGroup("crew", alice, bob)
+	aliceWS, bobWS := e.dial(alice.Token), e.dial(bob.Token)
+
+	const pc, gc = "8c3f2e71-8a2b-4c3d-9e4f-0a1b2c3d4e5f", "9d4f3f82-8a2b-4c3d-9e4f-0a1b2c3d4e5f"
+	var sent struct {
+		MsgID string `json:"msg_id"`
+	}
+	e.expect(e.do("POST", "/api/chats/message", alice.Token, map[string]string{"msg": "hi", "to_id": bob.ID, "type": "private", "client_msg_id": pc}), 200).json(t, &sent)
+	priv := sent.MsgID
+	e.expect(e.do("POST", "/api/chats/message", alice.Token, map[string]string{"msg": "hey all", "to_id": g, "type": "public", "client_msg_id": gc}), 200)
+	plain := e.send(alice, bob.ID, "private", "no id")
+
+	type ev struct {
+		ID       string `json:"id"`
+		ClientID string `json:"client_msg_id"`
+	}
+	for i, want := range []string{pc, gc, ""} {
+		var a, b ev
+		if x := readEvent(t, aliceWS); x.Event != "msg" || json.Unmarshal(x.Payload, &a) != nil {
+			t.Fatalf("alice event %d: %s %s", i, x.Event, x.Payload)
+		}
+		if x := readEvent(t, bobWS); x.Event != "msg" || json.Unmarshal(x.Payload, &b) != nil {
+			t.Fatalf("bob event %d: %s %s", i, x.Event, x.Payload)
+		}
+		if a.ClientID != want || b.ClientID != "" {
+			t.Fatalf("event %d: alice got %q (want %q), bob got %q", i, a.ClientID, want, b.ClientID)
+		}
+	}
+
+	// as if the phone came back after more than 7 days
+	if _, err := e.db.Exec(`DELETE FROM sent_ids`); err != nil {
+		t.Fatal(err)
+	}
+	type hist struct {
+		MsgList []struct {
+			ID       string `json:"message_id"`
+			ClientID string `json:"client_msg_id"`
+		} `json:"msgList"`
+	}
+	ids := func(u user, path string) map[string]string {
+		t.Helper()
+		var h hist
+		e.expect(e.do("GET", path, u.Token, nil), 200).json(t, &h)
+		out := map[string]string{}
+		for _, m := range h.MsgList {
+			out[m.ID] = m.ClientID
+		}
+		return out
+	}
+	if got := ids(alice, "/api/chat/"+bob.ID+"/messages"); got[priv] != pc || got[plain] != "" {
+		t.Fatalf("alice's private history %v", got)
+	}
+	for id, c := range ids(bob, "/api/chat/"+alice.ID+"/messages") {
+		if c != "" {
+			t.Fatalf("bob sees %s on %s", c, id)
+		}
+	}
+	for _, c := range ids(alice, "/api/chat/groups/"+g+"/messages") {
+		if c != gc {
+			t.Fatalf("alice's group history %q", c)
+		}
+	}
+	for _, c := range ids(bob, "/api/chat/groups/"+g+"/messages") {
+		if c != "" {
+			t.Fatalf("bob sees group id %q", c)
+		}
+	}
+
+	// changes: the same rule
+	since := time.Now().UTC().Format(time.RFC3339Nano)
+	time.Sleep(5 * time.Millisecond)
+	e.expect(e.do("PUT", "/api/chat/messages/"+priv+"/reaction", bob.Token, map[string]string{"emoji": "👍"}), 204)
+	for _, c := range []struct {
+		u    user
+		want string
+	}{{alice, pc}, {bob, ""}} {
+		var raw struct {
+			Changes []struct {
+				Message struct {
+					ClientID string `json:"client_msg_id"`
+				} `json:"message"`
+			} `json:"changes"`
+		}
+		e.expect(e.do("GET", "/api/chats/changes?since="+url.QueryEscape(since), c.u.Token, nil), 200).json(t, &raw)
+		if len(raw.Changes) != 1 || raw.Changes[0].Message.ClientID != c.want {
+			t.Fatalf("changes for %s: %+v", c.u.ID, raw)
+		}
+	}
+
+	// a retry now (the id forgotten, the server restarted since) is a new
+	// message, as documented: the app matches by client_msg_id instead
+	e.restart()
+	e.expect(e.do("POST", "/api/chats/message", alice.Token, map[string]string{"msg": "hi", "to_id": bob.ID, "type": "private", "client_msg_id": pc}), 200).json(t, &sent)
+	if sent.MsgID == priv {
+		t.Fatal("expected a new message after the window")
 	}
 }
