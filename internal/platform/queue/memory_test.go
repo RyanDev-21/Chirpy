@@ -89,3 +89,33 @@ func TestBackoffIsCapped(t *testing.T) {
 		t.Fatalf("Backoff(100) = %v", Backoff(100))
 	}
 }
+
+// Jobs still queued when the workers stop are run by Drain, not dropped.
+func TestMemoryDrainRunsWaitingJobs(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	q := NewMemory(3, testutil.Logger())
+	var done atomic.Int64
+	_ = q.Subscribe(ctx, "t", 1, Typed(func(_ context.Context, j job) error {
+		done.Add(1)
+		return nil
+	}))
+	cancel() // workers stop: nothing below is picked up by them
+	q.Wait()
+	for i := range 50 {
+		if err := q.Publish(context.Background(), "t", job{N: i}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if left := q.Drain(context.Background()); left != 0 || done.Load() != 50 {
+		t.Fatalf("left %d, done %d", left, done.Load())
+	}
+	// out of time: what's left is reported
+	for i := range 5 {
+		_ = q.Publish(context.Background(), "t", job{N: i})
+	}
+	over, stop := context.WithCancel(context.Background())
+	stop()
+	if left := q.Drain(over); left != 5 {
+		t.Fatalf("expired drain left %d, want 5", left)
+	}
+}

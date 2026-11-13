@@ -80,6 +80,8 @@ type MessageMetaDataRes struct {
 	CreatedAt time.Time    `json:"created_at"`
 	// EditedAt is set once the sender edits the message.
 	EditedAt *time.Time `json:"edited_at"`
+	// ChangedAt is the last edit, delete or reaction change (omitted if none).
+	ChangedAt *time.Time `json:"changed_at,omitempty"`
 	// Forwarded: shown as "Forwarded"; who wrote it first isn't revealed.
 	Forwarded bool `json:"forwarded"`
 	// Deleted messages stay in history as placeholders (content "", no
@@ -93,6 +95,21 @@ type MessageMetaDataRes struct {
 	// SenderSuspended: the sender is banned; text and media are hidden
 	// (kept on the server, shown again if the ban is lifted).
 	SenderSuspended bool `json:"sender_suspended"`
+}
+
+// Change is a message in one of my chats that was edited, deleted or
+// reacted to: chat_id is the other person (private) or the group.
+type Change struct {
+	Type    string             `json:"type"`
+	ChatID  string             `json:"chat_id"`
+	Message MessageMetaDataRes `json:"message"`
+}
+
+// ChangesRes is GET /api/chats/changes. With more, ask again with since =
+// the last change's message.changed_at.
+type ChangesRes struct {
+	Changes []Change `json:"changes"`
+	More    bool     `json:"more"`
 }
 
 // ReactionCount is one emoji on a message: how many people used it and

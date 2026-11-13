@@ -5,18 +5,31 @@ SELECT from_id, to_id, created_at FROM message WHERE id = $1 AND deleted_at IS N
 SELECT group_id, from_id, created_at FROM GroupMessage WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: SetPrivateReaction :exec
-INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)
+-- also marks the message changed (see changed_at)
+WITH t AS (UPDATE message SET changed_at = @at::timestamp WHERE id = @message_id)
+INSERT INTO message_reactions (message_id, user_id, emoji) VALUES (@message_id, @user_id, @emoji)
 ON CONFLICT (message_id, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, created_at = NOW();
 
 -- name: SetGroupReaction :exec
-INSERT INTO group_message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)
+WITH t AS (UPDATE GroupMessage SET changed_at = @at::timestamp WHERE id = @message_id)
+INSERT INTO group_message_reactions (message_id, user_id, emoji) VALUES (@message_id, @user_id, @emoji)
 ON CONFLICT (message_id, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, created_at = NOW();
 
--- name: DeletePrivateReaction :execrows
-DELETE FROM message_reactions WHERE message_id = $1 AND user_id = $2;
+-- name: DeletePrivateReaction :one
+WITH d AS (
+    DELETE FROM message_reactions WHERE message_id = @message_id AND user_id = @user_id RETURNING 1
+), t AS (
+    UPDATE message SET changed_at = @at::timestamp WHERE id = @message_id AND EXISTS (SELECT 1 FROM d)
+)
+SELECT count(*)::int FROM d;
 
--- name: DeleteGroupReaction :execrows
-DELETE FROM group_message_reactions WHERE message_id = $1 AND user_id = $2;
+-- name: DeleteGroupReaction :one
+WITH d AS (
+    DELETE FROM group_message_reactions WHERE message_id = @message_id AND user_id = @user_id RETURNING 1
+), t AS (
+    UPDATE GroupMessage SET changed_at = @at::timestamp WHERE id = @message_id AND EXISTS (SELECT 1 FROM d)
+)
+SELECT count(*)::int FROM d;
 
 -- name: PrivateReactionSummary :many
 -- per message and emoji: count, and whether @me is among them

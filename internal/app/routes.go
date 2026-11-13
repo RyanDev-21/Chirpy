@@ -189,6 +189,7 @@ func (a *App) Router() http.Handler {
 			r.With(limit(limitSend)).Post("/chats/message", a.handlers.chat.SendMessage)
 			r.With(limit(limitForward), limit(limitSend)).Post("/chats/forward", a.handlers.chat.Forward)
 			r.Get("/chats", a.handlers.chat.Conversations)
+			r.Get("/chats/changes", a.handlers.chat.Changes)
 			r.With(limit(limitMsgSearch)).Get("/chats/search", a.handlers.search.Search)
 			r.Get("/calls", a.handlers.calls.List)
 			r.With(limit(limitICE)).Get("/calls/ice", a.handlers.calls.ICE)

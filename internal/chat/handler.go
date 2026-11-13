@@ -85,6 +85,21 @@ func (h *ChatHandler) GetMesagesForPrivateID(w http.ResponseWriter, r *http.Requ
 	httpx.JSON(w, http.StatusOK, res)
 }
 
+// Changes handles GET /api/chats/changes?since=<RFC3339>.
+func (h *ChatHandler) Changes(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	changes, more, err := h.svc.Changes(r.Context(), me, r.URL.Query().Get("since"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, ChangesRes{Changes: changes, More: more})
+}
+
 // GetMessagesForPublicID handles GET /api/chat/groups/{group_id}/messages.
 func (h *ChatHandler) GetMessagesForPublicID(w http.ResponseWriter, r *http.Request) {
 	me, err := reqctx.User(r.Context())

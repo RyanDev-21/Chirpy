@@ -361,6 +361,12 @@ func (a *App) Run(ctx context.Context) error {
 	defer cancel()
 	err := srv.Shutdown(shutdownCtx)
 	a.queue.Wait() // let in-flight jobs finish and ack
+	// the memory queue: run what's still waiting (pushes, read markers)
+	if d, ok := a.queue.(interface{ Drain(context.Context) int }); ok {
+		if left := d.Drain(shutdownCtx); left > 0 {
+			a.logger.Warn("jobs dropped at shutdown", "jobs", left)
+		}
+	}
 	return err
 }
 

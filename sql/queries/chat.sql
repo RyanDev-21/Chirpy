@@ -7,6 +7,49 @@ VALUES ($1, $2, $3, $4, $5, $6, @forwarded);
 INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded)
 VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = $3), false), @forwarded);
 
+-- name: AddMessagePrivateOnce :execrows
+-- saves the message unless @from_id already used @client_id (0 rows then)
+WITH s AS (
+    INSERT INTO sent_ids (from_id, client_id, msg_id, created_at)
+    VALUES (@from_id, @client_id, @id, @created_at)
+    ON CONFLICT DO NOTHING
+    RETURNING msg_id
+)
+INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded)
+SELECT @id, @content, @parentid, @from_id, @to_id, @created_at, @forwarded FROM s;
+
+-- name: AddMessagePublicOnce :execrows
+WITH s AS (
+    INSERT INTO sent_ids (from_id, client_id, msg_id, created_at)
+    VALUES (@from_id, @client_id, @id, @created_at)
+    ON CONFLICT DO NOTHING
+    RETURNING msg_id
+)
+INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded)
+SELECT @id, @content, @group_id, @from_id, @parent_id, @created_at,
+       COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = @group_id), false), @forwarded FROM s;
+
+-- name: SentMessageID :one
+SELECT msg_id FROM sent_ids WHERE from_id = @from_id AND client_id = @client_id;
+
+-- name: DeleteOldSentIDs :execrows
+DELETE FROM sent_ids WHERE created_at < @before::timestamp;
+
+-- name: PrivateChangesSince :many
+-- messages in @me's private chats edited, deleted or reacted to after @since
+SELECT * FROM message
+WHERE changed_at > @since::timestamp AND (from_id = @me::uuid OR to_id = @me::uuid)
+ORDER BY changed_at ASC, id ASC
+LIMIT @lim;
+
+-- name: GroupChangesSince :many
+-- the same for @me's groups, only messages sent since they joined
+SELECT g.* FROM GroupMessage g
+JOIN member_table mt ON mt.group_id = g.group_id AND mt.member_id = @me::uuid
+WHERE g.changed_at > @since::timestamp AND g.created_at >= mt.joined_at
+ORDER BY g.changed_at ASC, g.id ASC
+LIMIT @lim;
+
 -- name: GetRecentPrivateMessages :many
 SELECT * FROM message
 WHERE ((from_id = @user_a AND to_id = @user_b) OR (from_id = @user_b AND to_id = @user_a))
@@ -137,17 +180,17 @@ WHERE m.member_id = @me::uuid
 ORDER BY lm.created_at DESC NULLS LAST, lower(g.name);
 
 -- name: EditPrivateMessage :execrows
-UPDATE message SET content = @content, edited_at = @at::timestamp
+UPDATE message SET content = @content, edited_at = @at::timestamp, changed_at = @at::timestamp
 WHERE id = @id AND deleted_at IS NULL;
 
 -- name: EditGroupMessage :execrows
-UPDATE GroupMessage SET content = @content, edited_at = @at::timestamp
+UPDATE GroupMessage SET content = @content, edited_at = @at::timestamp, changed_at = @at::timestamp
 WHERE id = @id AND deleted_at IS NULL;
 
 -- name: DeletePrivateMessage :one
 -- wipes the content, keeps the row as a placeholder, drops its reactions
 WITH d AS (
-    UPDATE message SET content = NULL, deleted_at = @at::timestamp
+    UPDATE message SET content = NULL, deleted_at = @at::timestamp, changed_at = @at::timestamp
     WHERE id = @id AND deleted_at IS NULL
     RETURNING id
 ), r AS (
@@ -157,7 +200,7 @@ SELECT count(*)::int FROM d;
 
 -- name: DeleteGroupMessage :one
 WITH d AS (
-    UPDATE GroupMessage SET content = NULL, deleted_at = @at::timestamp
+    UPDATE GroupMessage SET content = NULL, deleted_at = @at::timestamp, changed_at = @at::timestamp
     WHERE id = @id AND deleted_at IS NULL
     RETURNING id
 ), r AS (

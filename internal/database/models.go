@@ -93,6 +93,7 @@ type Groupmessage struct {
 	EditedAt   pgtype.Timestamp
 	Searchable bool
 	Forwarded  bool
+	ChangedAt  pgtype.Timestamp
 }
 
 type MediaDownload struct {
@@ -141,6 +142,7 @@ type Message struct {
 	CreatedAt pgtype.Timestamp
 	EditedAt  pgtype.Timestamp
 	Forwarded bool
+	ChangedAt pgtype.Timestamp
 }
 
 type MessageReaction struct {
@@ -195,6 +197,13 @@ type SeenMessage struct {
 	ChatID    string
 	MessageID uuid.UUID
 	SeenID    uuid.UUID
+}
+
+type SentID struct {
+	FromID    uuid.UUID
+	ClientID  uuid.UUID
+	MsgID     uuid.UUID
+	CreatedAt pgtype.Timestamp
 }
 
 type User struct {

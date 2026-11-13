@@ -12,38 +12,48 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const deleteGroupReaction = `-- name: DeleteGroupReaction :execrows
-DELETE FROM group_message_reactions WHERE message_id = $1 AND user_id = $2
+const deleteGroupReaction = `-- name: DeleteGroupReaction :one
+WITH d AS (
+    DELETE FROM group_message_reactions WHERE message_id = $1 AND user_id = $2 RETURNING 1
+), t AS (
+    UPDATE GroupMessage SET changed_at = $3::timestamp WHERE id = $1 AND EXISTS (SELECT 1 FROM d)
+)
+SELECT count(*)::int FROM d
 `
 
 type DeleteGroupReactionParams struct {
 	MessageID uuid.UUID
 	UserID    uuid.UUID
+	At        pgtype.Timestamp
 }
 
-func (q *Queries) DeleteGroupReaction(ctx context.Context, arg DeleteGroupReactionParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteGroupReaction, arg.MessageID, arg.UserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+func (q *Queries) DeleteGroupReaction(ctx context.Context, arg DeleteGroupReactionParams) (int32, error) {
+	row := q.db.QueryRow(ctx, deleteGroupReaction, arg.MessageID, arg.UserID, arg.At)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
-const deletePrivateReaction = `-- name: DeletePrivateReaction :execrows
-DELETE FROM message_reactions WHERE message_id = $1 AND user_id = $2
+const deletePrivateReaction = `-- name: DeletePrivateReaction :one
+WITH d AS (
+    DELETE FROM message_reactions WHERE message_id = $1 AND user_id = $2 RETURNING 1
+), t AS (
+    UPDATE message SET changed_at = $3::timestamp WHERE id = $1 AND EXISTS (SELECT 1 FROM d)
+)
+SELECT count(*)::int FROM d
 `
 
 type DeletePrivateReactionParams struct {
 	MessageID uuid.UUID
 	UserID    uuid.UUID
+	At        pgtype.Timestamp
 }
 
-func (q *Queries) DeletePrivateReaction(ctx context.Context, arg DeletePrivateReactionParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deletePrivateReaction, arg.MessageID, arg.UserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+func (q *Queries) DeletePrivateReaction(ctx context.Context, arg DeletePrivateReactionParams) (int32, error) {
+	row := q.db.QueryRow(ctx, deletePrivateReaction, arg.MessageID, arg.UserID, arg.At)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const groupMessageGroup = `-- name: GroupMessageGroup :one
@@ -254,6 +264,7 @@ func (q *Queries) PrivateReactors(ctx context.Context, messageID uuid.UUID) ([]P
 }
 
 const setGroupReaction = `-- name: SetGroupReaction :exec
+WITH t AS (UPDATE GroupMessage SET changed_at = $4::timestamp WHERE id = $1)
 INSERT INTO group_message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)
 ON CONFLICT (message_id, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, created_at = NOW()
 `
@@ -262,14 +273,21 @@ type SetGroupReactionParams struct {
 	MessageID uuid.UUID
 	UserID    uuid.UUID
 	Emoji     string
+	At        pgtype.Timestamp
 }
 
 func (q *Queries) SetGroupReaction(ctx context.Context, arg SetGroupReactionParams) error {
-	_, err := q.db.Exec(ctx, setGroupReaction, arg.MessageID, arg.UserID, arg.Emoji)
+	_, err := q.db.Exec(ctx, setGroupReaction,
+		arg.MessageID,
+		arg.UserID,
+		arg.Emoji,
+		arg.At,
+	)
 	return err
 }
 
 const setPrivateReaction = `-- name: SetPrivateReaction :exec
+WITH t AS (UPDATE message SET changed_at = $4::timestamp WHERE id = $1)
 INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)
 ON CONFLICT (message_id, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, created_at = NOW()
 `
@@ -278,9 +296,16 @@ type SetPrivateReactionParams struct {
 	MessageID uuid.UUID
 	UserID    uuid.UUID
 	Emoji     string
+	At        pgtype.Timestamp
 }
 
+// also marks the message changed (see changed_at)
 func (q *Queries) SetPrivateReaction(ctx context.Context, arg SetPrivateReactionParams) error {
-	_, err := q.db.Exec(ctx, setPrivateReaction, arg.MessageID, arg.UserID, arg.Emoji)
+	_, err := q.db.Exec(ctx, setPrivateReaction,
+		arg.MessageID,
+		arg.UserID,
+		arg.Emoji,
+		arg.At,
+	)
 	return err
 }

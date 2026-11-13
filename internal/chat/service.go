@@ -47,6 +47,10 @@ type ChatService interface {
 	SendMessage(ctx context.Context, from uuid.UUID, in InCommingMessage) (uuid.UUID, error)
 	PrivateMessages(ctx context.Context, me, other uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error)
 	GroupMessages(ctx context.Context, me, groupID uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error)
+	// Changes lists messages in my chats edited, deleted or reacted to
+	// after since (an RFC 3339 time), oldest change first; more is true
+	// when there may be further changes after the last one.
+	Changes(ctx context.Context, me uuid.UUID, since string) (out []Change, more bool, err error)
 	MarkGroupRead(ctx context.Context, me, groupID uuid.UUID, msgID string) error
 	Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error)
 	// React sets the caller's single reaction on a message (replacing any
@@ -103,17 +107,23 @@ func NewChatService(repo ChatRepo, cache Cache, groups GroupMembership, friends 
 
 func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InCommingMessage) (uuid.UUID, error) {
 	if in.ClientMsgID == "" {
-		return s.send(ctx, from, in)
+		return s.send(ctx, from, in, uuid.Nil)
 	}
 	cid, err := uuid.Parse(in.ClientMsgID)
 	if err != nil {
 		return uuid.Nil, ErrBadClientID
 	}
-	id, _, err := s.dedupe.do(ctx, dedupeKey{from: from, client: cid}, func() (uuid.UUID, error) { return s.send(ctx, from, in) })
+	// already saved (the first answer may have been lost): same message.
+	// The database remembers client ids for 7 days, across restarts.
+	if id, ok, err := s.repo.SentID(ctx, from, cid); err != nil || ok {
+		return id, err
+	}
+	// retries arriving at the same moment share one send
+	id, _, err := s.dedupe.do(ctx, dedupeKey{from: from, client: cid}, func() (uuid.UUID, error) { return s.send(ctx, from, in, cid) })
 	return id, err
 }
 
-func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMessage) (uuid.UUID, error) {
+func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMessage, client uuid.UUID) (uuid.UUID, error) {
 	in.Content = strings.TrimSpace(in.Content)
 	if n := utf8.RuneCountInString(in.Content); (n == 0 && len(in.Media) == 0) || n > maxMessageLen {
 		return uuid.Nil, ErrEmptyMessage
@@ -191,9 +201,19 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 		}
 	}
 	msg.MsgInfo.Msg.Media = nil
-	if in.Type == TypePrivate {
+	switch {
+	case client != uuid.Nil:
+		saved, err := s.repo.AddOnce(ctx, in.Type, msg, client)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		if !saved { // a retry on another server (or before a restart) won
+			id, _, err := s.repo.SentID(ctx, from, client)
+			return id, err
+		}
+	case in.Type == TypePrivate:
 		err = s.repo.AddPrivate(ctx, msg)
-	} else {
+	default:
 		err = s.repo.AddPublic(ctx, msg)
 	}
 	if err != nil {
@@ -306,6 +326,52 @@ func (s *chatService) GroupMessages(ctx context.Context, me, groupID uuid.UUID, 
 		return nil, err
 	}
 	return s.withState(ctx, TypePublic, me, msgs)
+}
+
+// changesCap is the most changes one call returns.
+const changesCap = 200
+
+func (s *chatService) Changes(ctx context.Context, me uuid.UUID, sinceStr string) ([]Change, bool, error) {
+	since, err := parseSince(sinceStr)
+	if err != nil {
+		return nil, false, err
+	}
+	if since.IsZero() {
+		return nil, false, ErrNotValidTimeFmt
+	}
+	priv, err := s.repo.PrivateChanges(ctx, me, since, changesCap)
+	if err != nil {
+		return nil, false, err
+	}
+	if priv, err = s.withState(ctx, TypePrivate, me, priv); err != nil {
+		return nil, false, err
+	}
+	grp, err := s.repo.GroupChanges(ctx, me, since, changesCap)
+	if err != nil {
+		return nil, false, err
+	}
+	if grp, err = s.withState(ctx, TypePublic, me, grp); err != nil {
+		return nil, false, err
+	}
+	// both lists are oldest change first: merge, keep the first changesCap
+	out := make([]Change, 0, min(len(priv)+len(grp), changesCap))
+	i, j := 0, 0
+	for len(out) < changesCap && (i < len(priv) || j < len(grp)) {
+		if j >= len(grp) || (i < len(priv) && !priv[i].ChangedAt.After(*grp[j].ChangedAt)) {
+			m := priv[i]
+			other := m.MsgInfo.FromID
+			if other == me {
+				other, _ = uuid.Parse(m.MsgInfo.Msg.ToID)
+			}
+			out = append(out, Change{Type: TypePrivate, ChatID: other.String(), Message: m})
+			i++
+		} else {
+			out = append(out, Change{Type: TypePublic, ChatID: grp[j].MsgInfo.Msg.ToID, Message: grp[j]})
+			j++
+		}
+	}
+	more := len(priv) == changesCap || len(grp) == changesCap || i < len(priv) || j < len(grp)
+	return out, more, nil
 }
 
 func (s *chatService) groupHistory(ctx context.Context, me, groupID uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error) {
