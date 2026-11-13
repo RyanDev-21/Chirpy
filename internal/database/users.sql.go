@@ -283,6 +283,66 @@ func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, erro
 	return i, err
 }
 
+const mutualFriends = `-- name: MutualFriends :many
+WITH fa AS (
+    SELECT CASE WHEN user_id = $2::uuid THEN otherUser_id ELSE user_id END AS fid
+    FROM user_relationships
+    WHERE status = 'confirm' AND (user_id = $2::uuid OR otherUser_id = $2::uuid)
+), fb AS (
+    SELECT CASE WHEN user_id = $3::uuid THEN otherUser_id ELSE user_id END AS fid
+    FROM user_relationships
+    WHERE status = 'confirm' AND (user_id = $3::uuid OR otherUser_id = $3::uuid)
+)
+SELECT u.id, u.name, u.display_name, u.avatar_at, (count(*) OVER ())::int AS total
+FROM fa JOIN fb ON fb.fid = fa.fid
+JOIN users u ON u.id = fa.fid
+WHERE u.banned_at IS NULL
+ORDER BY u.name
+LIMIT $1
+`
+
+type MutualFriendsParams struct {
+	Lim int32
+	A   uuid.UUID
+	B   uuid.UUID
+}
+
+type MutualFriendsRow struct {
+	ID          uuid.UUID
+	Name        string
+	DisplayName string
+	AvatarAt    pgtype.Timestamp
+	Total       int32
+}
+
+// Friends @a and @b have in common: the first @lim by name, each row
+// carrying the total.
+func (q *Queries) MutualFriends(ctx context.Context, arg MutualFriendsParams) ([]MutualFriendsRow, error) {
+	rows, err := q.db.Query(ctx, mutualFriends, arg.Lim, arg.A, arg.B)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MutualFriendsRow
+	for rows.Next() {
+		var i MutualFriendsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.DisplayName,
+			&i.AvatarAt,
+			&i.Total,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const presenceOf = `-- name: PresenceOf :many
 SELECT id, last_seen_at, hide_last_seen FROM users WHERE id = ANY($1::uuid[])
 `

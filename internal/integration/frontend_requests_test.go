@@ -162,3 +162,51 @@ func TestWSSameHostOrigin(t *testing.T) {
 		t.Fatalf("foreign origin got %d", got)
 	}
 }
+
+// Profiles show how many friends you share, and the first three by name.
+func TestMutualFriends(t *testing.T) {
+	e := newEnv(t)
+	alice, bob := e.signup("alice"), e.signup("bobby")
+	carol, dave, erin, fred := e.seedUser("carol"), e.seedUser("david"), e.seedUser("erina"), e.seedUser("fredo")
+	for _, f := range []user{carol, dave, erin, fred} {
+		e.befriend(alice, f)
+		e.befriend(f, bob)
+	}
+	e.befriend(alice, e.seedUser("alices")) // alice's only, not shared
+
+	type prof struct {
+		Mutual *struct {
+			Count  int `json:"count"`
+			People []struct {
+				UserID string `json:"user_id"`
+				Name   string `json:"name"`
+			} `json:"people"`
+		} `json:"mutual_friends"`
+	}
+	get := func(viewer user, id string) prof {
+		t.Helper()
+		var p prof
+		e.expect(e.do("GET", "/api/users/"+id, viewer.Token, nil), 200).json(t, &p)
+		return p
+	}
+	p := get(alice, bob.ID)
+	if p.Mutual == nil || p.Mutual.Count != 4 || len(p.Mutual.People) != 3 ||
+		p.Mutual.People[0].Name != "carol" || p.Mutual.People[2].Name != "erina" {
+		t.Fatalf("alice sees bob's mutuals %+v", p.Mutual)
+	}
+	// a friend who's suspended isn't listed
+	if _, err := e.db.Exec(`UPDATE users SET banned_at = now() WHERE id = $1`, carol.ID); err != nil {
+		t.Fatal(err)
+	}
+	if p = get(bob, alice.ID); p.Mutual.Count != 3 || p.Mutual.People[0].Name != "david" {
+		t.Fatalf("after carol's ban %+v", p.Mutual)
+	}
+	// nothing in common: zero and an empty list; your own profile: no field
+	stranger := e.seedUser("stranger")
+	if p = get(stranger, alice.ID); p.Mutual == nil || p.Mutual.Count != 0 || p.Mutual.People == nil {
+		t.Fatalf("stranger %+v", p.Mutual)
+	}
+	if p = get(alice, alice.ID); p.Mutual != nil {
+		t.Fatalf("own profile %+v", p.Mutual)
+	}
+}
