@@ -44,6 +44,11 @@ type ChatRepo interface {
 	RecentGroupSenders(ctx context.Context, groupID, msgID uuid.UUID) ([]uuid.UUID, error)
 	Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error)
 
+	// PeerSeen is how far `seer` has read their private chat (chatID).
+	PeerSeen(ctx context.Context, chatID string, seer uuid.UUID) (uuid.UUID, bool, error)
+	// GroupSince returns up to n group messages newer than since, oldest
+	// first, that viewer can see.
+	GroupSince(ctx context.Context, groupID, viewer uuid.UUID, since time.Time, n int) ([]MessageMetaDataRes, error)
 	// MessageContent is a message's text and whether it was deleted.
 	MessageContent(ctx context.Context, kind string, id uuid.UUID) (string, bool, error)
 	// LocateMessage finds which chat a message belongs to (ErrMessageNotFound).
@@ -288,6 +293,14 @@ func (r *chatRepo) GroupReadBy(ctx context.Context, ref messageRef, msgID uuid.U
 	return out, nil
 }
 
+// groupLast adds the sender's display name to a group's last message.
+func groupLast(m *LastMessage, name, display string) *LastMessage {
+	if m != nil && name != "" {
+		m.FromName = users.ShownName(name, display)
+	}
+	return m
+}
+
 func lastMessage(id uuid.UUID, content pgtype.Text, from pgtype.UUID, at pgtype.Timestamp, deleted bool) *LastMessage {
 	if !at.Valid {
 		return nil
@@ -313,7 +326,7 @@ func (r *chatRepo) Conversations(ctx context.Context, me uuid.UUID) ([]Conversat
 	}
 	for _, g := range grp {
 		out = append(out, Conversation{Type: TypePublic, ID: g.GroupID, Name: g.GroupName, DisplayName: g.GroupName, AvatarURL: groups.AvatarURL(g.GroupID, g.GroupAvatarAt),
-			LastMessage: lastMessage(g.LastID, g.LastContent, g.LastFrom, g.LastAt, g.LastDeleted), Unread: int(g.Unread)})
+			LastMessage: groupLast(lastMessage(g.LastID, g.LastContent, g.LastFrom, g.LastAt, g.LastDeleted), g.LastFromName, g.LastFromDisplay), Unread: int(g.Unread)})
 	}
 	slices.SortStableFunc(out, func(a, b Conversation) int {
 		switch {
@@ -503,4 +516,22 @@ func (r *chatRepo) MessageContent(ctx context.Context, kind string, id uuid.UUID
 		return "", false, ErrMessageNotFound
 	}
 	return m.Content.String, m.DeletedAt.Valid, err
+}
+
+// PeerSeen is the newest message `seer` has read in their private chat with
+// the other person (ok false if none yet).
+func (r *chatRepo) PeerSeen(ctx context.Context, chatID string, seer uuid.UUID) (uuid.UUID, bool, error) {
+	id, err := r.q.PeerSeenMessage(ctx, database.PeerSeenMessageParams{ChatID: chatID, SeenID: seer})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, false, nil
+	}
+	return id, err == nil, err
+}
+
+func (r *chatRepo) GroupSince(ctx context.Context, groupID, viewer uuid.UUID, since time.Time, n int) ([]MessageMetaDataRes, error) {
+	rows, err := r.q.GetGroupMessagesSince(ctx, database.GetGroupMessagesSinceParams{GroupID: pgUUID(groupID), Viewer: viewer, Since: pgTime(since.UTC()), Lim: int32(n)})
+	if err != nil {
+		return nil, err
+	}
+	return fromPublic(rows), nil
 }

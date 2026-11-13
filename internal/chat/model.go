@@ -31,7 +31,6 @@ var (
 	ErrMessageNotInChat    = errors.New("msg_id is not a message in this chat")
 	ErrBadCursor           = errors.New("before must be the id of a message in this chat")
 	ErrSinceAndBefore      = errors.New("use either since or before, not both")
-	ErrSinceNotSupported   = errors.New("since is not supported for group history")
 	ErrMessageNotFound     = errors.New("message not found")
 	ErrBadClientID         = errors.New("client_msg_id must be a UUID")
 	ErrNotYourMessage      = errors.New("you can only change your own messages")
@@ -145,6 +144,9 @@ type EditedMessage struct {
 type MessageListRes struct {
 	ChatID  string               `json:"chat_id"`
 	MsgList []MessageMetaDataRes `json:"msgList"`
+	// PeerSeenID (private chats, friends only): the newest message the other
+	// person has read, so ticks survive reopening the chat. Omitted if none.
+	PeerSeenID *uuid.UUID `json:"peer_seen_id,omitempty"`
 }
 
 type ResponseMessageID struct {
@@ -163,9 +165,11 @@ type Conversation struct {
 }
 
 type LastMessage struct {
-	ID        uuid.UUID `json:"id"`
-	Msg       string    `json:"msg"`
-	FromID    uuid.UUID `json:"from_id"` // zero uuid if the sender deleted their account
+	ID     uuid.UUID `json:"id"`
+	Msg    string    `json:"msg"`
+	FromID uuid.UUID `json:"from_id"` // zero uuid if the sender deleted their account
+	// FromName (groups only): the sender's display name, for "Jon: hi".
+	FromName  string    `json:"from_name,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	Deleted   bool      `json:"deleted"` // msg is "" then
 	// SenderSuspended: the sender is banned, msg is "" then.

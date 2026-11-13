@@ -57,6 +57,12 @@ func (f *fakeRepo) GroupReadBy(context.Context, messageRef, uuid.UUID) ([]Reader
 	return []Reader{}, nil
 }
 func (f *fakeRepo) Conversations(context.Context, uuid.UUID) ([]Conversation, error) { return nil, nil }
+func (f *fakeRepo) GroupSince(context.Context, uuid.UUID, uuid.UUID, time.Time, int) ([]MessageMetaDataRes, error) {
+	return nil, nil
+}
+func (f *fakeRepo) PeerSeen(context.Context, string, uuid.UUID) (uuid.UUID, bool, error) {
+	return uuid.Nil, false, nil
+}
 func (f *fakeRepo) MessageContent(context.Context, string, uuid.UUID) (string, bool, error) {
 	return "", false, nil
 }
@@ -412,8 +418,11 @@ func TestHistoryQueryRules(t *testing.T) {
 	if _, err := f.svc.PrivateMessages(ctx, f.alice, f.bob, HistoryQuery{Before: "nope"}); !errors.Is(err, ErrBadCursor) {
 		t.Fatalf("bad cursor: %v", err)
 	}
-	if _, err := f.svc.GroupMessages(ctx, f.alice, f.group, HistoryQuery{Since: "2026-01-01T00:00:00Z"}); !errors.Is(err, ErrSinceNotSupported) {
+	if _, err := f.svc.GroupMessages(ctx, f.alice, f.group, HistoryQuery{Since: "2026-01-01T00:00:00Z"}); err != nil {
 		t.Fatalf("group since: %v", err)
+	}
+	if _, err := f.svc.GroupMessages(ctx, f.alice, f.group, HistoryQuery{Since: "yesterday"}); !errors.Is(err, ErrNotValidTimeFmt) {
+		t.Fatalf("group since, bad time: %v", err)
 	}
 	if _, err := f.svc.GroupMessages(ctx, f.carol, f.group, HistoryQuery{Before: uuid.NewString()}); !errors.Is(err, ErrNotAuthorized) {
 		t.Fatalf("non-member paging: %v", err)

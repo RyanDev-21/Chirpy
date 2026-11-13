@@ -116,6 +116,7 @@ SELECT g.id AS group_id, g.name AS group_name, g.avatar_at AS group_avatar_at,
        -- zero uuid when the group has no messages yet (last_at is then NULL)
        COALESCE(lm.id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS last_id, lm.content AS last_content, lm.from_id AS last_from, lm.created_at AS last_at,
        COALESCE(lm.deleted_at IS NOT NULL, false)::bool AS last_deleted,
+       COALESCE(su.name, '')::text AS last_from_name, COALESCE(su.display_name, '')::text AS last_from_display,
        (SELECT count(*) FROM GroupMessage x
         WHERE x.group_id = g.id AND x.deleted_at IS NULL
           AND (x.from_id IS NULL OR x.from_id <> @me::uuid)
@@ -131,6 +132,7 @@ LEFT JOIN LATERAL (
     WHERE gm.group_id = g.id AND gm.created_at >= m.joined_at
     ORDER BY gm.created_at DESC, gm.id DESC LIMIT 1
 ) lm ON true
+LEFT JOIN users su ON su.id = lm.from_id
 WHERE m.member_id = @me::uuid
 ORDER BY lm.created_at DESC NULLS LAST, lower(g.name);
 
@@ -221,3 +223,17 @@ SELECT content, deleted_at FROM message WHERE id = $1;
 
 -- name: GroupMessageContent :one
 SELECT content, deleted_at FROM GroupMessage WHERE id = $1;
+
+-- name: PeerSeenMessage :one
+-- how far the other person has read a private chat (their read marker)
+SELECT message_id FROM seen_messages WHERE chat_id = @chat_id AND seen_id = @seen_id;
+
+-- name: GetGroupMessagesSince :many
+-- catch-up after a reconnect: newer than @since, oldest first, only what
+-- the viewer can see (sent since they joined)
+SELECT g.* FROM GroupMessage g
+WHERE g.group_id = @group_id
+  AND g.created_at > @since::timestamp
+  AND g.created_at >= (SELECT mt.joined_at FROM member_table mt WHERE mt.group_id = @group_id AND mt.member_id = @viewer::uuid)
+ORDER BY g.created_at ASC, g.id ASC
+LIMIT @lim;

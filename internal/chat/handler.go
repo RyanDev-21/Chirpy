@@ -39,7 +39,7 @@ func (h *ChatHandler) writeErr(w http.ResponseWriter, r *http.Request, err error
 	case errors.Is(err, ErrNotValidToID), errors.Is(err, ErrNotValidParentID), errors.Is(err, ErrNotSupportedTypeMsg),
 		errors.Is(err, ErrEmptyMessage), errors.Is(err, ErrNotValidTimeFmt), errors.Is(err, ErrNotValidUUID),
 		errors.Is(err, ErrMessageNotInChat), errors.Is(err, ErrBadCursor), errors.Is(err, ErrSinceAndBefore),
-		errors.Is(err, ErrSinceNotSupported), errors.Is(err, ErrNotAnEmoji), errors.Is(err, ErrNotGroupMessage),
+		errors.Is(err, ErrNotAnEmoji), errors.Is(err, ErrNotGroupMessage),
 		errors.Is(err, ErrGroupTooBig), errors.Is(err, ErrBadClientID):
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 	default:
@@ -75,7 +75,14 @@ func (h *ChatHandler) GetMesagesForPrivateID(w http.ResponseWriter, r *http.Requ
 		h.writeErr(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, MessageListRes{ChatID: PrivateChatID(me, other), MsgList: msgs})
+	res := MessageListRes{ChatID: PrivateChatID(me, other), MsgList: msgs}
+	if seen, ok, err := h.svc.PeerSeen(r.Context(), me, other); err != nil {
+		h.writeErr(w, r, err)
+		return
+	} else if ok {
+		res.PeerSeenID = &seen
+	}
+	httpx.JSON(w, http.StatusOK, res)
 }
 
 // GetMessagesForPublicID handles GET /api/chat/groups/{group_id}/messages.

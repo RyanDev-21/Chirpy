@@ -412,8 +412,9 @@ fail as if your account didn't exist (`404`).
 - `DELETE /api/users/blocks/{user_id}` → `204` (also if not blocked).
   Unblocking doesn't restore the friendship; send a new request.
 - `GET /api/users/blocks` →
-  `200 {"blocked":[{"user_id":"uuid","name":"bob","created_at":"…"}]}`,
-  newest first.
+  `200 {"blocked":[{"user_id":"uuid","name":"bob","display_name":"Bob","avatar_url":"/api/users/uuid/avatar?v=…","created_at":"…"}]}`,
+  newest first. `display_name` falls back to `name`; `avatar_url` is `null`
+  without a picture.
 
 ## Reporting a user
 
@@ -785,6 +786,7 @@ Returns `200`:
 ```json
 {
   "chat_id":"stable-user-uuid_user-uuid",
+  "peer_seen_id":"message-uuid",
   "msgList":[
     {
       "message_id":"message-uuid",
@@ -817,6 +819,12 @@ the last edit (`null` if never edited; show
 with `"deleted":true`, an empty `msg` and no reactions: show "message
 deleted", and keep replies pointing at it working.
 
+`peer_seen_id` (private history only) is the newest message the other
+person has marked **seen**, so the app can show "seen" after reopening a
+chat (live changes still arrive as `Seen` events). It is left out when they
+haven't seen anything yet, or when you aren't friends (the same rule as the
+`Seen` event). It doesn't depend on which page you asked for.
+
 Query parameters (use `since` or `before`, not both):
 
 - none: the most recent page.
@@ -831,8 +839,9 @@ Query parameters (use `since` or `before`, not both):
 ### Group history
 
 `GET /api/chat/groups/{group_id}/messages` → the same response shape; `chat_id`
-is the group UUID. Supports `limit` and `before` like private history;
-`since` is not supported here (`400`). Only members may read (`403`).
+is the group UUID. Supports `limit`, `before` and `since` (up to 200,
+oldest first) like private history; there is no `peer_seen_id` (use
+`read-by`). Only members may read (`403`).
 Members only see messages sent **since they joined** (also in the
 conversation list); older ones answer `404` everywhere, as if they didn't
 exist.
@@ -913,7 +922,7 @@ the endpoint above, so mark the newest visible message as the chat scrolls.
 ```json
 {"conversations":[
   {"type":"public","id":"group-uuid","name":"devs",
-   "last_message":{"id":"msg-uuid","msg":"standup?","from_id":"uuid","created_at":"…"},
+   "last_message":{"id":"msg-uuid","msg":"standup?","from_id":"uuid","from_name":"Jon","created_at":"…"},
    "unread":2},
   {"type":"private","id":"other-user-uuid","name":"alice","avatar_url":"/api/users/uuid/avatar?v=…",
    "last_message":{"id":"…","msg":"hi","from_id":"…","created_at":"…","deleted":false},
@@ -927,7 +936,10 @@ every group you belong to, most recent activity first; groups with no
 messages come last, by name. `unread` counts messages from others newer than
 your read marker: for private chats that's the last message you marked
 **seen**, for groups the last one you marked **read**. Group messages from
-before you joined don't count. `from_id` is the zero UUID when the sender
+before you joined don't count. For groups, `last_message.from_name` is the
+sender's display name (or username), for previews like "Jon: standup?"; it
+is left out for private chats and when the sender deleted their account.
+`from_id` is the zero UUID when the sender
 deleted their account. If the last message was deleted for everyone,
 `last_message.deleted` is `true` and `msg` is `""`. If its sender is
 suspended, `last_message.sender_suspended` is `true` and `msg` is `""`.
@@ -1193,12 +1205,16 @@ accepted after `CallAccepted`.
 `reason` is one of: `ended` (hung up after talking), `missed` (no answer in
 45 seconds), `declined`, `cancelled` (the caller gave up while ringing),
 `busy` (the callee is in another call), `disconnected` (a device was gone
-for more than 30 seconds), `unfriended`, `answered_elsewhere`.
+for more than 30 seconds), `unfriended`, `answered_elsewhere`, `daily_limit`
+(one of you used up today's call minutes, during the call or when
+answering: show "Call ended: daily call limit reached").
 
 Refused actions answer `CallError {"error","call_id"?}` to that device only:
 `not_friends`, `already_in_a_call`, `rate_limited` (10 calls/minute, 500
 signals per side per call), `unknown_call` (not your call, or it ended),
-`bad_request`, `unavailable`.
+`bad_request`, `unavailable`, `daily_limit` (you used up today's call
+minutes, 180 by default; they come back over the next 24 hours: show "You've
+reached today's call limit").
 
 **Connection drops.** If a device in an active call loses its WebSocket, it
 has 30 seconds to reconnect. The call moves to the reconnected device, and
@@ -1248,6 +1264,10 @@ local URL). Maximum 20 connection attempts per minute.
   Signing out everywhere makes earlier tickets useless.
 - Tokens in `?token=` are always rejected (a reusable token must never sit
   in a URL).
+- **Origin header:** the upgrade is accepted with no `Origin`, an `Origin`
+  equal to the API's own address (what React Native on Android sends, so no
+  workaround is needed), or a web origin listed in `CORS_ALLOWED_ORIGINS`.
+  Anything else gets `403`.
 
 The web app's origin (for example `https://chirpy.ponypigeon.com`) must be
 in the server's `CORS_ALLOWED_ORIGINS`, for both REST and the WebSocket. Browsers

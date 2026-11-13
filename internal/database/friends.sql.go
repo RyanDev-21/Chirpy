@@ -136,16 +136,18 @@ func (q *Queries) DenyFriendRequest(ctx context.Context, arg DenyFriendRequestPa
 }
 
 const listBlocked = `-- name: ListBlocked :many
-SELECT b.blocked_id, u.name, b.created_at FROM user_blocks b
+SELECT b.blocked_id, u.name, u.display_name, u.avatar_at, b.created_at FROM user_blocks b
 JOIN users u ON u.id = b.blocked_id
 WHERE b.blocker_id = $1
 ORDER BY b.created_at DESC
 `
 
 type ListBlockedRow struct {
-	BlockedID uuid.UUID
-	Name      string
-	CreatedAt pgtype.Timestamp
+	BlockedID   uuid.UUID
+	Name        string
+	DisplayName string
+	AvatarAt    pgtype.Timestamp
+	CreatedAt   pgtype.Timestamp
 }
 
 func (q *Queries) ListBlocked(ctx context.Context, blockerID uuid.UUID) ([]ListBlockedRow, error) {
@@ -157,7 +159,13 @@ func (q *Queries) ListBlocked(ctx context.Context, blockerID uuid.UUID) ([]ListB
 	var items []ListBlockedRow
 	for rows.Next() {
 		var i ListBlockedRow
-		if err := rows.Scan(&i.BlockedID, &i.Name, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.BlockedID,
+			&i.Name,
+			&i.DisplayName,
+			&i.AvatarAt,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
