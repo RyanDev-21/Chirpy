@@ -19,6 +19,14 @@ import (
 type ChatRepo interface {
 	AddPrivate(ctx context.Context, m MessageMetaDataRes) error
 	AddPublic(ctx context.Context, m MessageMetaDataRes) error
+	// AddOnce saves m unless its sender already used client (false then).
+	AddOnce(ctx context.Context, kind string, m MessageMetaDataRes, client uuid.UUID) (bool, error)
+	// SentID is the message a sender's client id was used for (7 days).
+	SentID(ctx context.Context, from, client uuid.UUID) (uuid.UUID, bool, error)
+	// Changes* are messages in me's chats edited, deleted or reacted to
+	// after since, oldest change first.
+	PrivateChanges(ctx context.Context, me uuid.UUID, since time.Time, n int) ([]MessageMetaDataRes, error)
+	GroupChanges(ctx context.Context, me uuid.UUID, since time.Time, n int) ([]MessageMetaDataRes, error)
 	// Recent* return the newest n messages in chronological order.
 	RecentPrivate(ctx context.Context, a, b uuid.UUID, n int) ([]MessageMetaDataRes, error)
 	PrivateSince(ctx context.Context, a, b uuid.UUID, since time.Time, n int) ([]MessageMetaDataRes, error)
@@ -129,6 +137,49 @@ func (r *chatRepo) AddPublic(ctx context.Context, m MessageMetaDataRes) error {
 	})
 }
 
+func (r *chatRepo) AddOnce(ctx context.Context, kind string, m MessageMetaDataRes, client uuid.UUID) (bool, error) {
+	var n int64
+	var err error
+	if kind == TypePrivate {
+		n, err = r.q.AddMessagePrivateOnce(ctx, database.AddMessagePrivateOnceParams{
+			FromID: pgUUID(m.MsgInfo.FromID), ClientID: client, ID: m.ID, CreatedAt: pgTime(m.CreatedAt),
+			Content: pgText(m.MsgInfo.Msg.Content), Parentid: pgOptUUID(m.MsgInfo.Msg.ParendID),
+			ToID: pgOptUUID(m.MsgInfo.Msg.ToID), Forwarded: m.Forwarded,
+		})
+	} else {
+		n, err = r.q.AddMessagePublicOnce(ctx, database.AddMessagePublicOnceParams{
+			FromID: pgUUID(m.MsgInfo.FromID), ClientID: client, ID: m.ID, CreatedAt: pgTime(m.CreatedAt),
+			Content: pgText(m.MsgInfo.Msg.Content), GroupID: pgOptUUID(m.MsgInfo.Msg.ToID),
+			ParentID: pgOptUUID(m.MsgInfo.Msg.ParendID), Forwarded: m.Forwarded,
+		})
+	}
+	return n > 0, err
+}
+
+func (r *chatRepo) SentID(ctx context.Context, from, client uuid.UUID) (uuid.UUID, bool, error) {
+	id, err := r.q.SentMessageID(ctx, database.SentMessageIDParams{FromID: from, ClientID: client})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, false, nil
+	}
+	return id, err == nil, err
+}
+
+func (r *chatRepo) PrivateChanges(ctx context.Context, me uuid.UUID, since time.Time, n int) ([]MessageMetaDataRes, error) {
+	rows, err := r.q.PrivateChangesSince(ctx, database.PrivateChangesSinceParams{Me: me, Since: pgTime(since.UTC()), Lim: int32(n)})
+	if err != nil {
+		return nil, err
+	}
+	return fromPrivate(rows), nil
+}
+
+func (r *chatRepo) GroupChanges(ctx context.Context, me uuid.UUID, since time.Time, n int) ([]MessageMetaDataRes, error) {
+	rows, err := r.q.GroupChangesSince(ctx, database.GroupChangesSinceParams{Me: me, Since: pgTime(since.UTC()), Lim: int32(n)})
+	if err != nil {
+		return nil, err
+	}
+	return fromPublic(rows), nil
+}
+
 func fromPrivate(rows []database.Message) []MessageMetaDataRes {
 	out := make([]MessageMetaDataRes, 0, len(rows))
 	for _, m := range rows {
@@ -137,6 +188,7 @@ func fromPrivate(rows []database.Message) []MessageMetaDataRes {
 			ID:        m.ID,
 			CreatedAt: created,
 			EditedAt:  optTime(m.EditedAt),
+			ChangedAt: optTime(m.ChangedAt),
 			Deleted:   m.DeletedAt.Valid,
 			Forwarded: m.Forwarded,
 			MsgInfo: MessageCache{
@@ -162,6 +214,7 @@ func fromPublic(rows []database.Groupmessage) []MessageMetaDataRes {
 			ID:        m.ID,
 			CreatedAt: created,
 			EditedAt:  optTime(m.EditedAt),
+			ChangedAt: optTime(m.ChangedAt),
 			Deleted:   m.DeletedAt.Valid,
 			Forwarded: m.Forwarded,
 			MsgInfo: MessageCache{
@@ -362,18 +415,18 @@ func (r *chatRepo) LocateMessage(ctx context.Context, msgID uuid.UUID) (messageR
 
 func (r *chatRepo) SetReaction(ctx context.Context, kind string, msgID, userID uuid.UUID, emoji string) error {
 	if kind == TypePrivate {
-		return r.q.SetPrivateReaction(ctx, database.SetPrivateReactionParams{MessageID: msgID, UserID: userID, Emoji: emoji})
+		return r.q.SetPrivateReaction(ctx, database.SetPrivateReactionParams{MessageID: msgID, UserID: userID, Emoji: emoji, At: pgTime(time.Now().UTC())})
 	}
-	return r.q.SetGroupReaction(ctx, database.SetGroupReactionParams{MessageID: msgID, UserID: userID, Emoji: emoji})
+	return r.q.SetGroupReaction(ctx, database.SetGroupReactionParams{MessageID: msgID, UserID: userID, Emoji: emoji, At: pgTime(time.Now().UTC())})
 }
 
 func (r *chatRepo) DeleteReaction(ctx context.Context, kind string, msgID, userID uuid.UUID) (bool, error) {
-	var n int64
+	var n int32
 	var err error
 	if kind == TypePrivate {
-		n, err = r.q.DeletePrivateReaction(ctx, database.DeletePrivateReactionParams{MessageID: msgID, UserID: userID})
+		n, err = r.q.DeletePrivateReaction(ctx, database.DeletePrivateReactionParams{MessageID: msgID, UserID: userID, At: pgTime(time.Now().UTC())})
 	} else {
-		n, err = r.q.DeleteGroupReaction(ctx, database.DeleteGroupReactionParams{MessageID: msgID, UserID: userID})
+		n, err = r.q.DeleteGroupReaction(ctx, database.DeleteGroupReactionParams{MessageID: msgID, UserID: userID, At: pgTime(time.Now().UTC())})
 	}
 	return n > 0, err
 }

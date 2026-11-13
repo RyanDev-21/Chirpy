@@ -16,6 +16,8 @@ const (
 	revokedKeep = 24 * time.Hour
 	// the call log (who, when, how long) is kept 180 days
 	callLogKeep = 180 * 24 * time.Hour
+	// a retried send with the same client_msg_id is recognised this long
+	sentIDKeep = 7 * 24 * time.Hour
 )
 
 // runJanitor deletes rows nothing will read again: expired or revoked
@@ -51,6 +53,9 @@ func (a *App) Cleanup(ctx context.Context) error {
 	codes, err := q.DeleteExpiredEmailCodes(ctx, ts(now))
 	if err != nil {
 		return err
+	}
+	if _, err := q.DeleteOldSentIDs(ctx, ts(now.Add(-sentIDKeep))); err != nil {
+		a.logger.WarnContext(ctx, "failed to delete old sent ids", "error", err)
 	}
 	if n, err := q.PurgeOldCalls(ctx, ts(now.Add(-callLogKeep))); err != nil {
 		a.logger.WarnContext(ctx, "failed to purge old calls", "error", err)

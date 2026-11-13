@@ -8,11 +8,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// DedupeWindow: a retried send (same sender and client_msg_id) within this
-// time returns the first message instead of creating a second one. Mobile
-// apps retry after a timeout even when the server already saved the
-// message. Kept in memory: retries come within seconds or minutes, and a
-// unique column on every message would cost ~15% of message storage.
+// DedupeWindow: retries of one send (same sender and client_msg_id) that
+// arrive at the same time share one attempt here, in memory. The lasting
+// record is the sent_ids table (7 days, survives restarts), checked first;
+// a small table pruned by the janitor instead of a unique column on every
+// message (~15% of message storage).
 const DedupeWindow = 10 * time.Minute
 
 type dedupeKey struct{ from, client uuid.UUID }

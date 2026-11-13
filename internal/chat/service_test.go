@@ -26,6 +26,39 @@ type fakeRepo struct {
 	beforeCalls int
 	reactions   map[uuid.UUID]map[uuid.UUID]string // msg -> user -> emoji
 	failAdd     error
+	mu          sync.Mutex
+	sent        map[[2]uuid.UUID]uuid.UUID // (from, client id) -> msg
+}
+
+func (f *fakeRepo) AddOnce(ctx context.Context, _ string, m MessageMetaDataRes, client uuid.UUID) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failAdd != nil {
+		return false, f.failAdd
+	}
+	k := [2]uuid.UUID{m.MsgInfo.FromID, client}
+	if _, ok := f.sent[k]; ok {
+		return false, nil
+	}
+	if f.sent == nil {
+		f.sent = map[[2]uuid.UUID]uuid.UUID{}
+	}
+	f.sent[k] = m.ID
+	f.saved = append(f.saved, m)
+	f.history = append(f.history, m)
+	return true, nil
+}
+func (f *fakeRepo) SentID(_ context.Context, from, client uuid.UUID) (uuid.UUID, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id, ok := f.sent[[2]uuid.UUID{from, client}]
+	return id, ok, nil
+}
+func (f *fakeRepo) PrivateChanges(context.Context, uuid.UUID, time.Time, int) ([]MessageMetaDataRes, error) {
+	return nil, nil
+}
+func (f *fakeRepo) GroupChanges(context.Context, uuid.UUID, time.Time, int) ([]MessageMetaDataRes, error) {
+	return nil, nil
 }
 
 func (f *fakeRepo) AddPrivate(_ context.Context, m MessageMetaDataRes) error {

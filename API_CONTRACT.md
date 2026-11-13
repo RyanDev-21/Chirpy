@@ -778,9 +778,13 @@ taps Send, store it with the pending message, and send **the same one** on
 every retry (timeouts, lost connection, app restart). If the server already
 saved that message, the retry answers `200` with the **same** `msg_id`
 instead of sending it twice. Retries in flight at the same time also get
-the same answer. The server remembers ids for **10 minutes**; after that a
-retry would be a new message. A non-UUID is `400`. On a `5xx`, retry with
-backoff (1 s, 2 s, 4 s, …), using the same `client_msg_id`.
+the same answer. The server stores ids in its database for **7 days**, so
+this also works after the phone was offline for hours or the server
+restarted. Keep the pending message and retry whenever you're back online.
+After 7 days a retry would be a new message: stop retrying on your own and
+ask the user ("Couldn't send. Retry?"). The same `client_msg_id` from a
+different user is their own message. A non-UUID is `400`. On a `5xx`, retry
+with backoff (1 s, 2 s, 4 s, …), using the same `client_msg_id`.
 
 ### Private history
 
@@ -890,8 +894,44 @@ groups. Maximum 60 edits and deletes per minute.
 
 Deleted or unknown messages, and messages in chats you can't read, are `404`.
 The rest of the chat receives a `MsgEdited` or `MsgDeleted` WebSocket event.
-After a reconnect, reload the visible page of history: edits and deletes made
-while you were offline are only in REST responses.
+Edits, deletes and reactions made while you were offline aren't replayed
+as events: fetch them with `GET /api/chats/changes` (see **Catching up after
+being offline**).
+
+### Catching up after being offline
+
+When the app starts or the WebSocket reconnects, with `last_sync` the time
+you last caught up (save the server's times, not the phone's clock):
+
+1. `GET /api/chats`: for each chat whose `last_message` is newer than what
+   you have, `GET …/messages?since=<newest created_at you have>` (up to 200,
+   oldest first; repeat with the last `created_at` while you get 200).
+2. `GET /api/chats/changes?since=<last_sync>`: messages you **already have**
+   that were edited, deleted or reacted to since, across all your chats at
+   once. Replace your copy of each.
+
+```json
+{"changes":[
+  {"type":"private","chat_id":"other-user-uuid","message":{ …same shape as history…, "changed_at":"2026-11-13T09:00:00.123456Z"}},
+  {"type":"public","chat_id":"group-uuid","message":{ … }}
+ ],
+ "more":false}
+```
+
+- Oldest change first, at most 200. With `"more":true`, ask again with
+  `since` = the last change's `message.changed_at`.
+- A deleted message comes back with `"deleted":true` and an empty `msg`:
+  **remove its text and media from the phone**. The sender deleted it for
+  everyone.
+- `reactions` are the current ones (an empty list when the last one was
+  removed); `edited_at` is set for edits.
+- Only your chats: private chats with anyone (also after unfriending) and
+  groups you're in, from when you joined. `since` is required (`400` if
+  missing or not RFC 3339).
+- Set `last_sync` to the newest `changed_at` (or `created_at`) you received,
+  not the phone's clock.
+
+Every history message also has `changed_at` (left out if it never changed).
 
 ### Mark group messages read
 
@@ -1291,8 +1331,8 @@ including your own actions from another device: `msg`, `MsgEdited`,
 `MsgDeleted` and `Reaction` come back to the sender's devices too (the device
 that acted can ignore events it already has, by id). Private `msg` events
 carry `to_id`, so your other devices know which chat a message you sent
-belongs to. Clients should handle reconnects and reload missed history using the
-REST endpoints. The server sends WebSocket text messages and periodic ping
+belongs to. Events missed while disconnected aren't replayed: after a
+reconnect, catch up as in **Catching up after being offline**. The server sends WebSocket text messages and periodic ping
 frames, and closes connections that stop answering pings for 60 seconds.
 A client message larger than 24 KB **closes the connection**. **One
 WebSocket frame can carry several events**, separated by newlines (`\n`),

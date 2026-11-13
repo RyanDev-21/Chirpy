@@ -75,6 +75,8 @@ type env struct {
 	app    *app.App
 	push   *fakePush
 	r2     *fakeR2
+	cfg    config.Config
+	logger *slog.Logger
 }
 
 // fakeGoogle accepts ID tokens registered in tokens (token -> claims).
@@ -151,29 +153,45 @@ func newEnv(t *testing.T, opts ...func(*config.Config)) *env {
 	if os.Getenv("CHIRPY_TEST_LOG") != "" {
 		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
-	ctx, cancel := context.WithCancel(context.Background())
 	mem, gg := &mail.Memory{}, &fakeGoogle{tokens: map[string]authsvc.GoogleClaims{}}
 	fp := &fakePush{dead: map[string]bool{}}
-	r2 := newFakeR2(t)
-	a, err := app.New(ctx, cfg, logger, app.WithMailer(mem), app.WithGoogleVerifier(gg), app.WithPushSender(fp), app.WithMediaStorage(r2))
-	if err != nil {
-		cancel()
-		t.Fatal(err)
-	}
-	if err := a.Start(ctx); err != nil {
-		cancel()
-		t.Fatal(err)
-	}
-	srv := httptest.NewServer(a.Router())
-	e := &env{t: t, srv: srv, db: db, redis: rdb, cancel: cancel, mail: mem, google: gg, app: a, push: fp, r2: r2}
+	e := &env{t: t, db: db, redis: rdb, mail: mem, google: gg, push: fp, r2: newFakeR2(t), cfg: cfg, logger: logger}
+	e.startApp()
 	t.Cleanup(func() {
-		srv.Close()
-		cancel()
-		a.Close()
+		e.stopApp()
 		_ = rdb.Close()
 		_ = db.Close()
 	})
 	return e
+}
+
+func (e *env) startApp() {
+	e.t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	a, err := app.New(ctx, e.cfg, e.logger, app.WithMailer(e.mail), app.WithGoogleVerifier(e.google), app.WithPushSender(e.push), app.WithMediaStorage(e.r2))
+	if err != nil {
+		cancel()
+		e.t.Fatal(err)
+	}
+	if err := a.Start(ctx); err != nil {
+		cancel()
+		e.t.Fatal(err)
+	}
+	e.app, e.cancel, e.srv = a, cancel, httptest.NewServer(a.Router())
+}
+
+func (e *env) stopApp() {
+	e.srv.Close()
+	e.cancel()
+	e.app.Close()
+}
+
+// restart replaces the server with a fresh one on the same database, as a
+// deploy does: everything kept in memory is gone. The URL changes.
+func (e *env) restart() {
+	e.t.Helper()
+	e.stopApp()
+	e.startApp()
 }
 
 type resp struct {
