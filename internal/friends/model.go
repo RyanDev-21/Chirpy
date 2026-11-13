@@ -21,9 +21,11 @@ var (
 
 // BlockedUser is one entry of the caller's block list.
 type BlockedUser struct {
-	UserID    uuid.UUID `json:"user_id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	UserID      uuid.UUID `json:"user_id"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"display_name"`
+	AvatarURL   *string   `json:"avatar_url"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type FriendMetaData struct {

@@ -2,7 +2,9 @@ package ws
 
 import (
 	"net/http"
+	"net/url"
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -17,7 +19,7 @@ func Upgrader(allowedOrigins []string) *websocket.Upgrader {
 		WriteBufferSize: 1024,
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
-			return origin == "" || anyOrigin || slices.Contains(allowedOrigins, origin)
+			return origin == "" || anyOrigin || slices.Contains(allowedOrigins, origin) || sameHost(origin, r.Host)
 		},
 	}
 }
@@ -33,4 +35,12 @@ func (h *Hub) Serve(up *websocket.Upgrader, w http.ResponseWriter, r *http.Reque
 	go client.WritePump()
 	go client.ReadPump()
 	return nil
+}
+
+// sameHost reports whether origin names the server itself. React Native on
+// Android sends the API's own address as Origin. A page on another site
+// sends its own host, so it's still refused (that's what the check stops).
+func sameHost(origin, host string) bool {
+	u, err := url.Parse(origin)
+	return err == nil && u.Host != "" && strings.EqualFold(u.Host, host)
 }

@@ -72,7 +72,7 @@ SELECT COALESCE(bool_or(status = 'confirm'), false)::bool AS were_friends FROM d
 DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2;
 
 -- name: ListBlocked :many
-SELECT b.blocked_id, u.name, b.created_at FROM user_blocks b
+SELECT b.blocked_id, u.name, u.display_name, u.avatar_at, b.created_at FROM user_blocks b
 JOIN users u ON u.id = b.blocked_id
 WHERE b.blocker_id = $1
 ORDER BY b.created_at DESC;

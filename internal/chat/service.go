@@ -54,6 +54,9 @@ type ChatService interface {
 	React(ctx context.Context, me, msgID uuid.UUID, emoji string) error
 	Unreact(ctx context.Context, me, msgID uuid.UUID) error
 	Reactors(ctx context.Context, me, msgID uuid.UUID) ([]Reactor, error)
+	// PeerSeen is how far the other person has read the private chat, if
+	// they're friends (the same rule as live Seen events).
+	PeerSeen(ctx context.Context, me, other uuid.UUID) (uuid.UUID, bool, error)
 	// ReadBy lists who has read the caller's own group message (groups of
 	// up to ReadByMaxMembers).
 	ReadBy(ctx context.Context, me, msgID uuid.UUID) ([]Reader, error)
@@ -306,9 +309,6 @@ func (s *chatService) GroupMessages(ctx context.Context, me, groupID uuid.UUID, 
 }
 
 func (s *chatService) groupHistory(ctx context.Context, me, groupID uuid.UUID, q HistoryQuery) ([]MessageMetaDataRes, error) {
-	if q.Since != "" {
-		return nil, ErrSinceNotSupported
-	}
 	before, limit, err := q.parse()
 	if err != nil {
 		return nil, err
@@ -322,6 +322,13 @@ func (s *chatService) groupHistory(ctx context.Context, me, groupID uuid.UUID, q
 	}
 	if before != uuid.Nil {
 		return s.repo.GroupBefore(ctx, groupID, me, before, limit)
+	}
+	sinceT, err := parseSince(q.Since)
+	if err != nil {
+		return nil, err
+	}
+	if !sinceT.IsZero() {
+		return s.repo.GroupSince(ctx, groupID, me, sinceT, streamCap)
 	}
 	return s.repo.RecentPublic(ctx, groupID, me, limit)
 }
@@ -877,3 +884,10 @@ func withMe(targets []uuid.UUID, me uuid.UUID) []uuid.UUID {
 }
 
 func (s *chatService) BansChanged(context.Context, uuid.UUID) { s.repo.ForgetBans() }
+
+func (s *chatService) PeerSeen(ctx context.Context, me, other uuid.UUID) (uuid.UUID, bool, error) {
+	if ok, err := s.SeenAllowed(ctx, other, me); err != nil || !ok {
+		return uuid.Nil, false, err
+	}
+	return s.repo.PeerSeen(ctx, PrivateChatID(me, other), other)
+}

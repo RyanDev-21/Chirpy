@@ -229,6 +229,60 @@ func (q *Queries) GetGroupMessagesBefore(ctx context.Context, arg GetGroupMessag
 	return items, nil
 }
 
+const getGroupMessagesSince = `-- name: GetGroupMessagesSince :many
+SELECT g.id, g.content, g.group_id, g.from_id, g.parent_id, g.created_at, g.deleted_at, g.edited_at, g.searchable, g.forwarded FROM GroupMessage g
+WHERE g.group_id = $1
+  AND g.created_at > $2::timestamp
+  AND g.created_at >= (SELECT mt.joined_at FROM member_table mt WHERE mt.group_id = $1 AND mt.member_id = $3::uuid)
+ORDER BY g.created_at ASC, g.id ASC
+LIMIT $4
+`
+
+type GetGroupMessagesSinceParams struct {
+	GroupID pgtype.UUID
+	Since   pgtype.Timestamp
+	Viewer  uuid.UUID
+	Lim     int32
+}
+
+// catch-up after a reconnect: newer than @since, oldest first, only what
+// the viewer can see (sent since they joined)
+func (q *Queries) GetGroupMessagesSince(ctx context.Context, arg GetGroupMessagesSinceParams) ([]Groupmessage, error) {
+	rows, err := q.db.Query(ctx, getGroupMessagesSince,
+		arg.GroupID,
+		arg.Since,
+		arg.Viewer,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Groupmessage
+	for rows.Next() {
+		var i Groupmessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.GroupID,
+			&i.FromID,
+			&i.ParentID,
+			&i.CreatedAt,
+			&i.DeletedAt,
+			&i.EditedAt,
+			&i.Searchable,
+			&i.Forwarded,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getPrivateMessagesBefore = `-- name: GetPrivateMessagesBefore :many
 SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded FROM message
 WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
@@ -548,6 +602,7 @@ SELECT g.id AS group_id, g.name AS group_name, g.avatar_at AS group_avatar_at,
        -- zero uuid when the group has no messages yet (last_at is then NULL)
        COALESCE(lm.id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS last_id, lm.content AS last_content, lm.from_id AS last_from, lm.created_at AS last_at,
        COALESCE(lm.deleted_at IS NOT NULL, false)::bool AS last_deleted,
+       COALESCE(su.name, '')::text AS last_from_name, COALESCE(su.display_name, '')::text AS last_from_display,
        (SELECT count(*) FROM GroupMessage x
         WHERE x.group_id = g.id AND x.deleted_at IS NULL
           AND (x.from_id IS NULL OR x.from_id <> $1::uuid)
@@ -563,20 +618,23 @@ LEFT JOIN LATERAL (
     WHERE gm.group_id = g.id AND gm.created_at >= m.joined_at
     ORDER BY gm.created_at DESC, gm.id DESC LIMIT 1
 ) lm ON true
+LEFT JOIN users su ON su.id = lm.from_id
 WHERE m.member_id = $1::uuid
 ORDER BY lm.created_at DESC NULLS LAST, lower(g.name)
 `
 
 type ListGroupConversationsRow struct {
-	GroupID       uuid.UUID
-	GroupName     string
-	GroupAvatarAt pgtype.Timestamp
-	LastID        uuid.UUID
-	LastContent   pgtype.Text
-	LastFrom      pgtype.UUID
-	LastAt        pgtype.Timestamp
-	LastDeleted   bool
-	Unread        int32
+	GroupID         uuid.UUID
+	GroupName       string
+	GroupAvatarAt   pgtype.Timestamp
+	LastID          uuid.UUID
+	LastContent     pgtype.Text
+	LastFrom        pgtype.UUID
+	LastAt          pgtype.Timestamp
+	LastDeleted     bool
+	LastFromName    string
+	LastFromDisplay string
+	Unread          int32
 }
 
 // every group the caller is in, with its latest message (if any) and how
@@ -599,6 +657,8 @@ func (q *Queries) ListGroupConversations(ctx context.Context, me uuid.UUID) ([]L
 			&i.LastFrom,
 			&i.LastAt,
 			&i.LastDeleted,
+			&i.LastFromName,
+			&i.LastFromDisplay,
 			&i.Unread,
 		); err != nil {
 			return nil, err
@@ -707,6 +767,23 @@ func (q *Queries) MarkGroupRead(ctx context.Context, arg MarkGroupReadParams) (i
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const peerSeenMessage = `-- name: PeerSeenMessage :one
+SELECT message_id FROM seen_messages WHERE chat_id = $1 AND seen_id = $2
+`
+
+type PeerSeenMessageParams struct {
+	ChatID string
+	SeenID uuid.UUID
+}
+
+// how far the other person has read a private chat (their read marker)
+func (q *Queries) PeerSeenMessage(ctx context.Context, arg PeerSeenMessageParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, peerSeenMessage, arg.ChatID, arg.SeenID)
+	var message_id uuid.UUID
+	err := row.Scan(&message_id)
+	return message_id, err
 }
 
 const privateMessageContent = `-- name: PrivateMessageContent :one

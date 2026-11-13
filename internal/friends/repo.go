@@ -141,7 +141,8 @@ func (r *repo) Blocked(ctx context.Context, blocker uuid.UUID) ([]BlockedUser, e
 	}
 	out := make([]BlockedUser, 0, len(rows))
 	for _, x := range rows {
-		out = append(out, BlockedUser{UserID: x.BlockedID, Name: x.Name, CreatedAt: x.CreatedAt.Time.UTC()})
+		out = append(out, BlockedUser{UserID: x.BlockedID, Name: x.Name, DisplayName: users.ShownName(x.Name, x.DisplayName),
+			AvatarURL: users.AvatarURLFrom(x.BlockedID, x.AvatarAt), CreatedAt: x.CreatedAt.Time.UTC()})
 	}
 	return out, nil
 }
