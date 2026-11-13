@@ -73,7 +73,27 @@ type Profile struct {
 	AvatarURL   *string        `json:"avatar_url"`
 	Location    *catalog.Place `json:"location"`
 	Interests   []string       `json:"interests"`
+	// Mutual is nil on your own profile.
+	Mutual *MutualFriends `json:"mutual_friends,omitempty"`
 }
+
+// MutualFriends is how many friends you share with someone, and the first
+// few of them by name.
+type MutualFriends struct {
+	Count  int          `json:"count"`
+	People []PersonCard `json:"people"`
+}
+
+// PersonCard is a person in a short list.
+type PersonCard struct {
+	UserID      uuid.UUID `json:"user_id"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"display_name"`
+	AvatarURL   *string   `json:"avatar_url"`
+}
+
+// mutualShown is how many mutual friends a profile lists by name.
+const mutualShown = 3
 
 // AvatarURL is where a user's picture is served (see avatarURL).
 func AvatarURL(id uuid.UUID, at time.Time) *string { return avatarURL(id, at) }

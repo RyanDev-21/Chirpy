@@ -315,10 +315,15 @@ URL.
 ### View a profile
 
 `GET /api/users/{user_id}` →
-`200 {"id":"uuid","name":"bob","bio":"…","avatar_url":"/api/users/uuid/avatar?v=…","location":{…},"interests":["…"]}`.
+`200 {"id":"uuid","name":"bob","display_name":"Bob","bio":"…","avatar_url":"/api/users/uuid/avatar?v=…","location":{…},"interests":["…"],"mutual_friends":{"count":4,"people":[{"user_id":"uuid","name":"carol","display_name":"Carol","avatar_url":null}]}}`.
 No email. `location` and `interests` are only shown to friends, or to
 everyone if the user is discoverable (otherwise `null` and `[]`). `404` for
 unknown users, and when either of you blocked the other.
+
+`mutual_friends` is the friends you and this person share: `count` is how
+many, and `people` the first 3 by username (show "Carol, David and 2 others").
+Suspended accounts don't count. With nothing in common it's
+`{"count":0,"people":[]}`; on your own profile it's left out.
 
 ### Profile picture
 

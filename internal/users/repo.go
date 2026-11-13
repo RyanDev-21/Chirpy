@@ -200,7 +200,25 @@ func (r *userRepo) PublicProfile(ctx context.Context, id, viewer uuid.UUID) (Pro
 			return Profile{}, err
 		}
 	}
+	if id != viewer {
+		if out.Mutual, err = r.mutual(ctx, id, viewer); err != nil {
+			return Profile{}, err
+		}
+	}
 	return out, nil
+}
+
+func (r *userRepo) mutual(ctx context.Context, a, b uuid.UUID) (*MutualFriends, error) {
+	rows, err := r.queries.MutualFriends(ctx, database.MutualFriendsParams{A: a, B: b, Lim: mutualShown})
+	if err != nil {
+		return nil, err
+	}
+	m := &MutualFriends{People: make([]PersonCard, 0, len(rows))}
+	for _, x := range rows {
+		m.Count = int(x.Total)
+		m.People = append(m.People, PersonCard{UserID: x.ID, Name: x.Name, DisplayName: ShownName(x.Name, x.DisplayName), AvatarURL: AvatarURLFrom(x.ID, x.AvatarAt)})
+	}
+	return m, nil
 }
 
 func (r *userRepo) SetAvatar(ctx context.Context, id uuid.UUID, image []byte, at time.Time) error {
