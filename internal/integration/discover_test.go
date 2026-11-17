@@ -123,3 +123,19 @@ func TestDiscoveryProfileFields(t *testing.T) {
 		t.Fatalf("options %d countries, %d interests", len(opts.Countries), len(opts.Interests))
 	}
 }
+
+// Someone without a location still gets suggestions (by interests and
+// mutual friends); people with a location aren't "same place" for them.
+func TestDiscoverWithoutLocation(t *testing.T) {
+	e := newEnv(t)
+	me, local, fan := e.seedUser("nowhere"), e.seedUser("local"), e.seedUser("fan")
+	e.profile(me, map[string]any{"discoverable": true, "interests": []string{"gaming"}})
+	e.profile(local, map[string]any{"discoverable": true, "location": "th-bangkok"})
+	e.profile(fan, map[string]any{"discoverable": true, "location": "th-bangkok", "interests": []string{"gaming"}})
+
+	var s suggestions
+	e.expect(e.do("GET", "/api/discover", me.Token, nil), 200).json(t, &s)
+	if len(s.List) != 1 || s.List[0].Name != "fan" {
+		t.Fatalf("suggestions %+v", s.List)
+	}
+}
