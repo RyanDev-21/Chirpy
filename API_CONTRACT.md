@@ -1293,8 +1293,25 @@ over the WebSocket (when the app is open, the live events are enough).
 | `friend_request` | Friend request | `bob sent you a friend request` | `from_id` | |
 | `friend_accept` | Friend request accepted | `bob accepted your friend request` | `from_id` | |
 | `reaction` | reactor (`in <group>`) | `reacted ❤️ to your message` | `from_id`, `msg_id`, `group_id`? | one per message |
+| `big_file` | sender name, or the group | `Video from Maya will be deleted in 3 hours` | `from_id`, `msg_id`, `media_id`, `group_id`? | one per file |
 
-Android channel id: `messages`. Tapping should open the chat from `data`.
+**Big files** (over 16 MB, deleted at a fixed time):
+- A `private` or `public` message carrying one gets `data.big = "true"`, the
+  `big-files` channel, and a body with the size and deadline instead of the
+  text: `Sent a 48 MB video · download within 3 days` (group: `Maya: sent a
+  48 MB video · download within 3 days`; several: `sent 2 big files (130 MB)`).
+- **Reminder** (`big_file`): about 3 hours before the file is deleted, each
+  recipient who hasn't downloaded it yet gets one push, on the `big-files`
+  channel. Once per file and person; never the sender, nor anyone who
+  downloaded it (`GET /api/media/{id}` counts). Groups over 50 members don't
+  get reminders (downloads aren't tracked there), nor members who joined
+  after it was sent.
+- Both follow the chat's setting: `private` / `groups` notifications and
+  chat mutes. Like every push, only phones that aren't connected get them.
+
+Android channel id: `messages`, or `big-files` for the big-file pushes
+above (create it with high importance). Tapping should open the chat from
+`data`.
 
 ### Settings
 

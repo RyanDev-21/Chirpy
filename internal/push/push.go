@@ -8,8 +8,10 @@ import (
 	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -33,7 +35,13 @@ const (
 	KindGroupAdded    = "group_added"    // a group admin or moderator added me
 	KindCall          = "call"           // incoming call: data-only, rings the phone
 	KindMissedCall    = "missed_call"    // a call I didn't answer
+	KindBigFile       = "big_file"       // a big file sent to me is deleted soon and I haven't downloaded it
 )
+
+// ChannelBigFiles is the Android channel for messages with a big file and
+// their reminders (the app makes it look urgent); everything else uses
+// "messages".
+const ChannelBigFiles = "big-files"
 
 // CallRingTTL: an incoming-call push that arrives later than this is useless.
 const CallRingTTL = 45 * time.Second
@@ -48,6 +56,13 @@ type Job struct {
 	MsgID   uuid.UUID `json:"msg_id,omitempty"`
 	Preview string    `json:"preview,omitempty"` // message text, or the emoji for reactions
 	CallID  uuid.UUID `json:"call_id,omitempty"`
+	// Big: the message carries a file that's deleted at a fixed time
+	// (Preview then says its size and deadline).
+	Big bool `json:"big,omitempty"`
+	// MediaID and Left (seconds until deletion) are set for KindBigFile.
+	MediaID   uuid.UUID `json:"media_id,omitempty"`
+	MediaKind string    `json:"media_kind,omitempty"`
+	Left      int       `json:"left,omitempty"`
 }
 
 const maxPreview = 120
@@ -137,8 +152,12 @@ func (s *Service) Handle(ctx context.Context, j Job) error {
 	if j.Group != uuid.Nil {
 		chatType, chatID = "public", j.Group
 	}
+	pref := prefKind(j.Kind)
+	if j.Kind == KindBigFile { // follows the chat's own setting
+		pref = map[string]string{"private": KindPrivate, "public": KindGroup}[chatType]
+	}
 	targets, err := s.q.PushTargets(ctx, database.PushTargetsParams{
-		Users: to, Kind: prefKind(j.Kind), ChatType: chatType, ChatID: chatID,
+		Users: to, Kind: pref, ChatType: chatType, ChatID: chatID,
 		Now: pgtype.Timestamp{Time: s.now().UTC(), Valid: true},
 	})
 	if err != nil || len(targets) == 0 {
@@ -180,6 +199,10 @@ func (s *Service) render(ctx context.Context, j Job) (Message, error) {
 	if j.MsgID != uuid.Nil {
 		m.Data["msg_id"] = j.MsgID.String()
 	}
+	if j.Big {
+		m.Data["big"] = "true"
+		m.Channel = ChannelBigFiles
+	}
 	group := ""
 	if j.Group != uuid.Nil {
 		m.Data["group_id"] = j.Group.String()
@@ -190,8 +213,18 @@ func (s *Service) render(ctx context.Context, j Job) (Message, error) {
 	switch j.Kind {
 	case KindPrivate:
 		m.Title, m.Body, m.Tag = from, j.Preview, "dm:"+j.From.String()
+		if j.Big {
+			m.Body = upperFirst(j.Preview)
+		}
 	case KindGroup:
 		m.Title, m.Body, m.Tag = group, from+": "+j.Preview, "group:"+j.Group.String()
+	case KindBigFile:
+		m.Title, m.Body, m.Tag = from, kindWord(j.MediaKind)+" from "+from+" will be deleted in "+hoursLeft(j.Left), "bigfile:"+j.MediaID.String()
+		if group != "" {
+			m.Title = group
+		}
+		m.Data["media_id"] = j.MediaID.String()
+		m.Channel = ChannelBigFiles
 	case KindFriendRequest:
 		m.Title, m.Body, m.Tag = "Friend request", from+" sent you a friend request", "friends"
 	case KindFriendAccept:
@@ -211,6 +244,39 @@ func (s *Service) render(ctx context.Context, j Job) (Message, error) {
 		}
 	}
 	return m, nil
+}
+
+func upperFirst(s string) string {
+	r, n := utf8.DecodeRuneInString(s)
+	if n == 0 {
+		return s
+	}
+	return strings.ToUpper(string(r)) + s[n:]
+}
+
+// kindWord names a media kind for a reminder ("Video from Maya ...").
+func kindWord(kind string) string {
+	switch kind {
+	case "video":
+		return "Video"
+	case "voice":
+		return "Voice message"
+	case "image":
+		return "Photo"
+	}
+	return "File"
+}
+
+// hoursLeft is "3 hours", "1 hour" or "less than an hour".
+func hoursLeft(secs int) string {
+	h := (secs + 1800) / 3600
+	switch {
+	case h <= 0:
+		return "less than an hour"
+	case h == 1:
+		return "1 hour"
+	}
+	return fmt.Sprintf("%d hours", h)
 }
 
 // --- settings ---

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"RyanDev-21.com/Chirpy/internal/database"
+	"RyanDev-21.com/Chirpy/internal/push"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -77,6 +78,17 @@ func (a *App) Cleanup(ctx context.Context) error {
 		a.logger.WarnContext(ctx, "failed to lift expired bans", "error", err)
 	} else if lifted > 0 {
 		a.logger.InfoContext(ctx, "temporary bans lifted", "users", lifted)
+	}
+	// before cleaning up: remind people about big files deleted soon
+	if a.notifier != nil {
+		rems, err := a.media.DueReminders(ctx)
+		if err != nil {
+			a.logger.WarnContext(ctx, "failed to find big files to remind about", "error", err)
+		}
+		for _, r := range rems {
+			a.notifier.Notify(ctx, push.Job{Kind: push.KindBigFile, To: r.To, From: r.Owner, Group: r.Group, MsgID: r.MsgID,
+				MediaID: r.MediaID, MediaKind: r.Kind, Left: int(r.Left.Seconds())})
+		}
 	}
 	files, err := a.media.Cleanup(ctx)
 	if err != nil {

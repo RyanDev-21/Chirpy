@@ -656,3 +656,22 @@ func TestStreakDay(t *testing.T) {
 		t.Fatalf("23:59 in Thailand is still the 19th, got %v", got)
 	}
 }
+
+func TestBigPreview(t *testing.T) {
+	in3 := time.Now().Add(72 * time.Hour)
+	if got := bigPreview([]media.Attachment{{Kind: "image", Size: 1 << 20}}); got != "" {
+		t.Fatalf("small file: %q", got)
+	}
+	if got := bigPreview([]media.Attachment{{Kind: "video", Size: 48_000_000, ExpiresAt: in3}}); got != "sent a 48 MB video · download within 3 days" {
+		t.Fatalf("got %q", got)
+	}
+	two := []media.Attachment{{Kind: "file", Size: 30_000_000, ExpiresAt: in3}, {Kind: "video", Size: 20_000_000, ExpiresAt: in3}, {Kind: "image", Size: 100}}
+	if got := bigPreview(two); got != "sent 2 big files (50 MB) · download within 3 days" {
+		t.Fatalf("got %q", got)
+	}
+	for d, want := range map[time.Duration]string{30 * time.Hour: "1 day", 5 * time.Hour: "5 hours", 10 * time.Minute: "1 hour", 60 * time.Hour: "3 days"} {
+		if got := untilText(d); got != want {
+			t.Fatalf("%v: %q, want %q", d, got, want)
+		}
+	}
+}

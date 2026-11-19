@@ -270,6 +270,9 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 	telemetry.Message(ctx, in.Type, len(attached) > 0)
 	if s.notify != nil {
 		j := push.Job{Kind: push.KindPrivate, To: targets, From: from, MsgID: msgID, Preview: mediaPreview(in.Content, attached)}
+		if big := bigPreview(attached); big != "" {
+			j.Preview, j.Big = big, true
+		}
 		if in.Type == TypePublic {
 			j.Kind, j.Group = push.KindGroup, to
 		}
@@ -837,6 +840,47 @@ func (s *chatService) Forward(ctx context.Context, me, msgID uuid.UUID, to []For
 }
 
 // mediaPreview is the push text for a message: its text, or what it carries.
+// bigPreview says what a message with a big file (deleted at a fixed time)
+// carries and until when, e.g. "sent a 48 MB video · download within 3
+// days"; "" if it has none.
+func bigPreview(att []media.Attachment) string {
+	var big []media.Attachment
+	var total int64
+	for _, a := range att {
+		if a.Size > media.LargeBytes {
+			big = append(big, a)
+			total += a.Size
+		}
+	}
+	if len(big) == 0 {
+		return ""
+	}
+	what := map[string]string{"video": "video", "image": "photo", "voice": "voice message"}[big[0].Kind]
+	if what == "" {
+		what = "file"
+	}
+	mb := (total + 500_000) / 1_000_000
+	sent := fmt.Sprintf("sent a %d MB %s", mb, what)
+	if len(big) > 1 {
+		sent = fmt.Sprintf("sent %d big files (%d MB)", len(big), mb)
+	}
+	return sent + " · download within " + untilText(time.Until(big[0].ExpiresAt))
+}
+
+// untilText is "3 days", "1 day" or "5 hours".
+func untilText(d time.Duration) string {
+	hours := int((d + 30*time.Minute) / time.Hour)
+	switch {
+	case hours >= 48:
+		return fmt.Sprintf("%d days", (hours+12)/24)
+	case hours >= 24:
+		return "1 day"
+	case hours <= 1:
+		return "1 hour"
+	}
+	return fmt.Sprintf("%d hours", hours)
+}
+
 func mediaPreview(text string, att []media.Attachment) string {
 	if text != "" || len(att) == 0 {
 		return text
