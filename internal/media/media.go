@@ -3,7 +3,7 @@
 // directly with short-lived signed links. To stay free:
 //   - small uploads (up to 16 MB) are deleted 24 h after every recipient
 //     downloaded them, after 7 days at most;
-//   - large ones (16-100 MB) 24 h after upload, whatever happens;
+//   - large ones (16-100 MB) 3 days after upload, whatever happens;
 //   - least-recently-used cleanup runs when storage nears 10 GB.
 package media
 
@@ -44,7 +44,7 @@ const (
 	lruLowBytes    = 8 << 30
 
 	maxLifetime   = 7 * 24 * time.Hour
-	largeLifetime = 24 * time.Hour
+	largeLifetime = 3 * 24 * time.Hour
 	keepAfterAll  = 24 * time.Hour // after every recipient downloaded it
 	pendingTTL    = time.Hour      // an upload link nobody attached
 	uploadTTL     = 10 * time.Minute
