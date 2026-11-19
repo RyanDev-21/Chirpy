@@ -1086,7 +1086,7 @@ If the server has no storage configured, these routes return `503`.
 | Size | Kept |
 |---|---|
 | up to 16 MB ("small") | 24 h after everyone in the chat downloaded it, 7 days at most |
-| over 16 MB ("large") | **24 h after upload**, whatever happens |
+| over 16 MB ("large") | **3 days after upload**, whatever happens |
 
 Show the expiry (`expires_at`) for large uploads ("available until …"), and
 download them automatically on Wi-Fi so recipients don't miss them.
@@ -1163,7 +1163,8 @@ apps, never execute them.
   video. It's deleted with the video.
 - **Save the file on the phone.** The server keeps it only **24 hours after
   everyone in the chat has downloaded it**, and never longer than **7 days**
-  (in groups over 50 members, just the 7 days). After that `GET` returns `410`
+  (in groups over 50 members, just the 7 days); large ones (over 16 MB)
+  **3 days after upload**. After that `GET` returns `410`
   and history shows `"expired":true`; show the phone's copy, or "expired".
 - Deleting a message for everyone, deleting the group, or the sender deleting
   their account also deletes the media.
