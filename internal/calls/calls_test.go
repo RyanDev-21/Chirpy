@@ -3,7 +3,9 @@ package calls
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -57,6 +59,11 @@ func (h *fakeHub) WriteToUserExcept(u, except uuid.UUID, ev ws.Event) {
 			h.out <- got{ws.Conn{User: u, ID: d}, ev}
 		}
 	}
+}
+func (h *fakeHub) Conns(u uuid.UUID) []uuid.UUID {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]uuid.UUID(nil), h.devices[u]...)
 }
 func (h *fakeHub) Online(u uuid.UUID) bool {
 	h.mu.Lock()
@@ -217,10 +224,10 @@ func TestCallFlow(t *testing.T) {
 		t.Fatal("every device of the callee rings")
 	}
 
-	// signals before answering are refused
+	// while ringing the caller must say which device a signal is for
 	f.send(t, a, EvSignal, map[string]any{"call_id": id, "data": map[string]string{"sdp": "x"}})
-	if ev := f.next(t, a); ev.Event != EvError || field(ev, "error") != ErrUnknownCall {
-		t.Fatalf("early signal: %s", ev.Event)
+	if ev := f.next(t, a); ev.Event != EvError || field(ev, "error") != ErrBadRequest {
+		t.Fatalf("early signal without a device: %s %v", ev.Event, ev.Payload)
 	}
 
 	f.send(t, b, EvAccept, map[string]any{"call_id": id})
@@ -391,7 +398,8 @@ func TestUnfriendEndsCallAndLimits(t *testing.T) {
 		}
 		if ev.Event == EvRinging {
 			f.send(t, c, EvEnd, map[string]any{"call_id": field(ev, "call_id")})
-			f.next(t, c) // CallEnded
+			for f.next(t, c).Event != EvEnded { // CallDevice for alice's device first
+			}
 		}
 	}
 	if !limited {
@@ -439,5 +447,117 @@ func TestDailyCallLimit(t *testing.T) {
 		case <-deadline:
 			t.Fatal("the call outlived the daily limit")
 		}
+	}
+}
+
+// The connection can be set up while the phone rings: one per ringing
+// device, relay candidates only, so the caller learns no IP of the callee
+// (nor the callee of the caller) unless the call is answered.
+func TestConnectWhileRinging(t *testing.T) {
+	f := newFixture()
+	a := f.hub.connect(f.alice)
+	phone, tablet := f.hub.connect(f.bob), f.hub.connect(f.bob)
+	f.send(t, a, EvStart, map[string]string{"to_id": f.bob.String()})
+	var id string
+	devices := map[string]bool{}
+	for len(devices) < 2 {
+		ev := f.next(t, a)
+		switch ev.Event {
+		case EvRinging:
+			id = field(ev, "call_id")
+		case EvDevice:
+			if field(ev, "call_id") != id {
+				t.Fatalf("device for %v", ev.Payload)
+			}
+			devices[field(ev, "device")] = true
+		default:
+			t.Fatalf("caller got %s", ev.Event)
+		}
+	}
+	f.next(t, phone)  // CallIncoming
+	f.next(t, tablet) // CallIncoming
+	var devPhone, devTablet string
+	for d := range devices {
+		// find which id is which: offer to d, see who gets it
+		f.send(t, a, EvSignal, map[string]any{"call_id": id, "device": d, "data": map[string]string{"type": "offer", "sdp": "v=0\r\nc=IN IP4 171.96.138.164\r\na=" + hostCand + "\r\na=" + relayCand + "\r\n"}})
+		g := <-f.hub.out
+		if g.ev.Event != EvSignal {
+			t.Fatalf("got %s", g.ev.Event)
+		}
+		raw, _ := json.Marshal(g.ev.Payload)
+		noLeak(t, string(raw))
+		if g.to == phone {
+			devPhone = d
+		} else if g.to == tablet {
+			devTablet = d
+		} else {
+			t.Fatalf("offer for %s reached %v", d, g.to)
+		}
+	}
+	if devPhone == "" || devTablet == "" {
+		t.Fatal("each device gets its own offer")
+	}
+
+	// the callee's host and srflx candidates never reach the caller; relay
+	// ones do, tagged with the device, with the related address blanked
+	f.send(t, phone, EvSignal, map[string]any{"call_id": id, "data": json.RawMessage(cand(srflxCand))})
+	f.send(t, phone, EvSignal, map[string]any{"call_id": id, "data": json.RawMessage(cand(hostCand))})
+	f.send(t, phone, EvSignal, map[string]any{"call_id": id, "data": json.RawMessage(cand(relayCand))})
+	ev := f.next(t, a)
+	raw, _ := json.Marshal(ev.Payload)
+	if ev.Event != EvSignal || field(ev, "device") != devPhone || !json.Valid(raw) {
+		t.Fatalf("caller got %s %v", ev.Event, ev.Payload)
+	}
+	noLeak(t, string(raw))
+	if !strings.Contains(string(raw), "typ relay") {
+		t.Fatalf("relay candidate missing: %s", raw)
+	}
+	// anything that isn't an offer, answer or candidate is refused
+	f.send(t, phone, EvSignal, map[string]any{"call_id": id, "data": map[string]string{"type": "chat", "msg": "hi"}})
+	if ev := f.next(t, phone); ev.Event != EvError || field(ev, "error") != ErrBadRequest {
+		t.Fatalf("odd signal: %s", ev.Event)
+	}
+	// strangers can't take part
+	x := f.hub.connect(f.carol)
+	f.send(t, x, EvSignal, map[string]any{"call_id": id, "device": devPhone, "data": json.RawMessage(cand(relayCand))})
+	if ev := f.next(t, x); field(ev, "error") != ErrUnknownCall {
+		t.Fatalf("stranger: %s", ev.Event)
+	}
+
+	// a device that goes away is announced; one that comes online rings too
+	f.hub.drop(tablet)
+	f.m.Disconnected(tablet)
+	if ev := f.next(t, a); ev.Event != EvGone || field(ev, "device") != devTablet {
+		t.Fatalf("caller got %s %v", ev.Event, ev.Payload)
+	}
+	late := f.hub.connect(f.bob)
+	f.m.Connected(late)
+	if ev := f.next(t, a); ev.Event != EvDevice || field(ev, "device") == "" || field(ev, "device") == devTablet {
+		t.Fatalf("late device: %s %v", ev.Event, ev.Payload)
+	}
+
+	// answering: the caller learns which device; from then on signals pass
+	// unchanged between the two, and no more devices are announced
+	f.send(t, phone, EvAccept, map[string]any{"call_id": id})
+	if ev := f.next(t, a); ev.Event != EvAccepted || field(ev, "device") != devPhone {
+		t.Fatalf("accepted: %s %v", ev.Event, ev.Payload)
+	}
+	if ev := f.next(t, late); field(ev, "reason") != ReasonElsewhere {
+		t.Fatalf("late device: %v", ev.Payload)
+	}
+	f.send(t, phone, EvSignal, map[string]any{"call_id": id, "data": json.RawMessage(cand(srflxCand))})
+	if ev := f.next(t, a); field(ev, "device") != devPhone {
+		t.Fatalf("after accept: %v", fmt.Sprint(ev.Payload))
+	} else if raw, _ := json.Marshal(ev.Payload); !strings.Contains(string(raw), "typ srflx") {
+		t.Fatalf("after accept signals pass unchanged: %s", raw)
+	}
+	another := f.hub.connect(f.bob)
+	f.m.Connected(another)
+	select {
+	case g := <-f.hub.out:
+		if g.to == a {
+			t.Fatalf("caller got %s after accept", g.ev.Event)
+		}
+	case <-time.After(50 * time.Millisecond):
 	}
 }

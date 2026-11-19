@@ -77,6 +77,10 @@ func TestVoiceCall(t *testing.T) {
 	if ev, _ := nextCall(t, malloryWS); ev != "CallError" {
 		t.Fatal("a stranger answered someone else's call")
 	}
+	// alice hears that a device of bob's is ringing now
+	if ev, p := nextCall(t, aliceWS); ev != "CallDevice" || p["device"] == "" {
+		t.Fatalf("alice got %s %v", ev, p)
+	}
 	callSend(t, bobWS, "CallAccept", map[string]string{"call_id": callID})
 	if ev, _ := nextCall(t, aliceWS); ev != "CallAccepted" {
 		t.Fatalf("alice got %s", ev)
@@ -131,6 +135,7 @@ func TestVoiceCall(t *testing.T) {
 	second := p["call_id"].(string)
 	nextCall(t, bobWS) // CallIncoming
 	callSend(t, bobWS, "CallAccept", map[string]string{"call_id": second})
+	nextCall(t, aliceWS) // CallDevice
 	nextCall(t, aliceWS) // CallAccepted
 	e.expect(e.do("POST", "/api/users/blocks", bob.Token, map[string]string{"user_id": alice.ID}), 204)
 	if ev, p := nextCall(t, aliceWS); ev != "CallEnded" || p["reason"] != "unfriended" {
@@ -139,5 +144,56 @@ func TestVoiceCall(t *testing.T) {
 	callSend(t, aliceWS, "CallStart", map[string]string{"to_id": bob.ID})
 	if ev, p := nextCall(t, aliceWS); ev != "CallError" || p["error"] != "not_friends" {
 		t.Fatalf("calling someone who blocked you: %s %v", ev, p)
+	}
+}
+
+// Over real sockets: while ringing, each callee device gets its own
+// connection, only relay candidates pass, and nothing reveals an IP.
+func TestCallConnectsWhileRinging(t *testing.T) {
+	e := newEnv(t)
+	alice, bob := e.signup("alice"), e.signup("bobby")
+	e.befriend(alice, bob)
+	aliceWS, bobPhone := e.dial(alice.Token), e.dial(bob.Token)
+
+	callSend(t, aliceWS, "CallStart", map[string]string{"to_id": bob.ID})
+	ev, p := nextCall(t, aliceWS)
+	if ev != "CallRinging" {
+		t.Fatalf("got %s", ev)
+	}
+	id := p["call_id"]
+	ev, p = nextCall(t, aliceWS)
+	if ev != "CallDevice" || p["device"] == "" {
+		t.Fatalf("got %s %v", ev, p)
+	}
+	device := p["device"]
+	if ev, _ := nextCall(t, bobPhone); ev != "CallIncoming" {
+		t.Fatalf("bob got %s", ev)
+	}
+
+	const public = "171.96.138.164"
+	sdp := "v=0\r\nc=IN IP4 " + public + "\r\na=candidate:1 1 udp 1 " + public + " 5000 typ srflx raddr 10.0.0.2 rport 5000\r\n" +
+		"a=candidate:2 1 udp 1 104.30.1.2 3478 typ relay raddr " + public + " rport 5000\r\n"
+	callSend(t, aliceWS, "CallSignal", map[string]any{"call_id": id, "device": device, "data": map[string]string{"type": "offer", "sdp": sdp}})
+	ev, p = nextCall(t, bobPhone)
+	raw, _ := json.Marshal(p)
+	if ev != "CallSignal" || strings.Contains(string(raw), public) || !strings.Contains(string(raw), "typ relay") {
+		t.Fatalf("bob got %s %s", ev, raw)
+	}
+	// bob's srflx candidate is dropped, his relay one arrives tagged
+	callSend(t, bobPhone, "CallSignal", map[string]any{"call_id": id, "data": map[string]any{"type": "candidate", "candidate": map[string]any{"candidate": "candidate:1 1 udp 1 " + public + " 5000 typ srflx raddr 10.0.0.2 rport 5000"}}})
+	callSend(t, bobPhone, "CallSignal", map[string]any{"call_id": id, "data": map[string]any{"type": "candidate", "candidate": map[string]any{"candidate": "candidate:2 1 udp 1 104.30.1.2 3478 typ relay raddr " + public + " rport 5000"}}})
+	ev, p = nextCall(t, aliceWS)
+	raw, _ = json.Marshal(p)
+	if ev != "CallSignal" || p["device"] != device || strings.Contains(string(raw), public) || !strings.Contains(string(raw), "typ relay") {
+		t.Fatalf("alice got %s %s", ev, raw)
+	}
+
+	callSend(t, bobPhone, "CallAccept", map[string]string{"call_id": id.(string)})
+	if ev, p := nextCall(t, aliceWS); ev != "CallAccepted" || p["device"] != device {
+		t.Fatalf("alice got %s %v", ev, p)
+	}
+	callSend(t, aliceWS, "CallEnd", map[string]string{"call_id": id.(string)})
+	if ev, _ := nextCall(t, aliceWS); ev != "CallEnded" {
+		t.Fatalf("alice got %s", ev)
 	}
 }

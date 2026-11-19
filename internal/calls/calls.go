@@ -27,19 +27,21 @@ import (
 const (
 	EvStart   = "CallStart"   // {"to_id"}
 	EvAccept  = "CallAccept"  // {"call_id"}
-	EvSignal  = "CallSignal"  // {"call_id","data":{...}}: SDP offer/answer or ICE candidate, relayed as is
+	EvSignal  = "CallSignal"  // {"call_id","device"?,"data":{...}}: SDP offer/answer or ICE candidate (relay-only while ringing)
 	EvDecline = "CallDecline" // {"call_id"}
 	EvEnd     = "CallEnd"     // {"call_id"}
 )
 
 // Events the server sends.
 const (
-	EvRinging  = "CallRinging"  // to the caller's device: {"call_id","to_id"}
-	EvIncoming = "CallIncoming" // to all the callee's devices: {"call_id","from_id"}
-	EvAccepted = "CallAccepted" // to the caller's device: {"call_id"}; the caller now sends the offer
-	EvEnded    = "CallEnded"    // to both: {"call_id","reason","duration_ms"}
-	EvError    = "CallError"    // to the device that sent something refused: {"call_id"?,"error"}
-	EvResumed  = "CallResumed"  // to a device that reconnected mid-call: {"call_id","peer_id"}; restart ICE
+	EvRinging  = "CallRinging"    // to the caller's device: {"call_id","to_id"}
+	EvIncoming = "CallIncoming"   // to all the callee's devices: {"call_id","from_id"}
+	EvAccepted = "CallAccepted"   // to the caller's device: {"call_id","device"?}
+	EvDevice   = "CallDevice"     // to the caller's device while ringing: {"call_id","device"}: a callee device is ringing
+	EvGone     = "CallDeviceGone" // to the caller's device while ringing: {"call_id","device"}: it stopped ringing
+	EvEnded    = "CallEnded"      // to both: {"call_id","reason","duration_ms"}
+	EvError    = "CallError"      // to the device that sent something refused: {"call_id"?,"error"}
+	EvResumed  = "CallResumed"    // to a device that reconnected mid-call: {"call_id","peer_id"}; restart ICE
 )
 
 // End reasons (CallEnded.reason) and call log states.
@@ -71,7 +73,8 @@ const (
 	ReconnectGrace  = 30 * time.Second // an active call survives a short drop
 	MaxDuration     = 4 * time.Hour
 	maxSignalBytes  = 16 << 10
-	maxSignals      = 500 // per side per call
+	maxSignals      = 500 // per side per connection
+	maxDevices      = 5   // ringing callee devices that may set up early
 	startsPerMinute = 10
 )
 
@@ -81,6 +84,7 @@ type Hub interface {
 	WriteToUsers(targets []uuid.UUID, ev ws.Event) error
 	WriteToUserExcept(user, except uuid.UUID, ev ws.Event)
 	Online(user uuid.UUID) bool
+	Conns(user uuid.UUID) []uuid.UUID
 }
 
 // Friends is implemented by friends.Service.
@@ -107,7 +111,23 @@ type call struct {
 	answered       time.Time
 	timer          *time.Timer // ring timeout, then the maximum length
 	lost           map[uuid.UUID]*time.Timer
-	signals        map[uuid.UUID]int
+	signals        map[string]int // per sender and connection
+	// while ringing: the callee's devices that may set up a connection
+	// early (opaque ids for this call only), and which one answered
+	devices        map[string]uuid.UUID // device id -> connection
+	deviceOf       map[uuid.UUID]string // connection -> device id
+	answeredDevice string
+}
+
+// addDevice gives a ringing callee connection a device id (under mu); ""
+// when there are already maxDevices.
+func (c *call) addDevice(conn uuid.UUID) string {
+	if d, ok := c.deviceOf[conn]; ok || len(c.devices) >= maxDevices {
+		return d
+	}
+	d := uuid.NewString()[:8] + uuid.NewString()[:8]
+	c.devices[d], c.deviceOf[conn] = conn, d
+	return d
 }
 
 func (c *call) peer(u uuid.UUID) uuid.UUID {
@@ -182,6 +202,7 @@ func (m *Manager) Recover(ctx context.Context) {
 type idPayload struct {
 	ToID   uuid.UUID       `json:"to_id"`
 	CallID uuid.UUID       `json:"call_id"`
+	Device string          `json:"device"`
 	Data   json.RawMessage `json:"data"`
 }
 
@@ -206,7 +227,7 @@ func (m *Manager) HandleCall(ctx context.Context, from ws.Conn, event string, ra
 	case EvAccept:
 		m.accept(ctx, from, p.CallID)
 	case EvSignal:
-		m.signal(from, p.CallID, p.Data)
+		m.signal(from, p.CallID, p.Device, p.Data)
 	case EvDecline, EvEnd:
 		m.hangUp(ctx, from, p.CallID)
 	default:
@@ -277,18 +298,32 @@ func (m *Manager) start(ctx context.Context, from ws.Conn, to uuid.UUID) {
 		return
 	}
 	c := &call{id: id, caller: from.User, callee: to, callerConn: from.ID, started: now,
-		lost: map[uuid.UUID]*time.Timer{}, signals: map[uuid.UUID]int{}}
+		lost: map[uuid.UUID]*time.Timer{}, signals: map[string]int{},
+		devices: map[string]uuid.UUID{}, deviceOf: map[uuid.UUID]string{}}
 	c.timer = time.AfterFunc(m.ring, func() { m.end(context.Background(), id, ReasonMissed) })
+	var ringing []string
+	for _, conn := range m.hub.Conns(to) {
+		if d := c.addDevice(conn); d != "" {
+			ringing = append(ringing, d)
+		}
+	}
 	m.calls[id], m.byUser[from.User], m.byUser[to] = c, c, c
 	m.mu.Unlock()
 
 	m.record(ctx, database.InsertCallParams{ID: id, CallerID: pgUUID(from.User), CalleeID: pgUUID(to), State: "ringing", StartedAt: ts(now)})
 	telemetry.Call(ctx, "started")
 	m.hub.SendToConn(from, ws.Event{Event: EvRinging, Payload: map[string]string{"call_id": id.String(), "to_id": to.String()}})
+	for _, d := range ringing {
+		m.hub.SendToConn(from, deviceEvent(EvDevice, id, d))
+	}
 	_ = m.hub.WriteToUsers([]uuid.UUID{to}, ws.Event{Event: EvIncoming, Payload: incoming(c)})
 	if !m.hub.Online(to) && m.notify != nil {
 		m.notify.Notify(ctx, push.Job{Kind: push.KindCall, To: []uuid.UUID{to}, From: from.User, CallID: id})
 	}
+}
+
+func deviceEvent(ev string, id uuid.UUID, device string) ws.Event {
+	return ws.Event{Event: ev, Payload: map[string]string{"call_id": id.String(), "device": device}}
 }
 
 func incoming(c *call) map[string]string {
@@ -336,6 +371,9 @@ func (m *Manager) accept(ctx context.Context, from ws.Conn, id uuid.UUID) {
 		return
 	}
 	c.active, c.calleeConn, c.answered = true, from.ID, now
+	c.answeredDevice = c.deviceOf[from.ID]
+	clear(c.devices) // the others' connections are closed; their signals are dropped
+	clear(c.deviceOf)
 	c.timer.Stop()
 	endReason := ReasonEnded
 	if limit < MaxDuration {
@@ -343,40 +381,94 @@ func (m *Manager) accept(ctx context.Context, from ws.Conn, id uuid.UUID) {
 	}
 	c.timer = time.AfterFunc(limit, func() { m.end(context.Background(), id, endReason) })
 	callerConn := ws.Conn{User: c.caller, ID: c.callerConn}
+	accepted := map[string]string{"call_id": id.String()}
+	if c.answeredDevice != "" {
+		accepted["device"] = c.answeredDevice
+	}
 	m.mu.Unlock()
 
 	if err := m.db.AnswerCall(ctx, database.AnswerCallParams{ID: id, At: ts(now)}); err != nil {
 		m.logger.WarnContext(ctx, "failed to record answered call", "error", err)
 	}
 	telemetry.Call(ctx, "answered")
-	m.hub.SendToConn(callerConn, ws.Event{Event: EvAccepted, Payload: map[string]string{"call_id": id.String()}})
+	m.hub.SendToConn(callerConn, ws.Event{Event: EvAccepted, Payload: accepted})
 	m.hub.WriteToUserExcept(from.User, from.ID, ws.Event{Event: EvEnded, Payload: endedPayload(id, ReasonElsewhere, 0)})
 }
 
-// signal relays WebRTC signalling to the other device of an active call.
-func (m *Manager) signal(from ws.Conn, id uuid.UUID, data json.RawMessage) {
+// signal relays WebRTC signalling. Once a call is answered it goes between
+// the caller's device and the one that answered, unchanged. While it rings
+// it goes between the caller's device and each ringing callee device (the
+// caller names the device), relay candidates only (see relayOnly).
+func (m *Manager) signal(from ws.Conn, id uuid.UUID, device string, data json.RawMessage) {
 	if len(data) == 0 || len(data) > maxSignalBytes || !json.Valid(data) {
 		m.fail(from, id, ErrBadRequest)
 		return
 	}
 	m.mu.Lock()
 	c := m.calls[id]
-	if c == nil || !c.active || (from.User != c.caller && from.User != c.callee) || c.conn(from.User) != from.ID {
+	if c == nil || (from.User != c.caller && from.User != c.callee) {
 		m.mu.Unlock()
 		m.fail(from, id, ErrUnknownCall)
 		return
 	}
-	if c.signals[from.User]++; c.signals[from.User] > maxSignals {
+	var to ws.Conn
+	var key, tag string // key: the signal budget; tag: the device the caller hears from
+	switch {
+	case c.active:
+		if c.conn(from.User) != from.ID {
+			m.mu.Unlock()
+			m.fail(from, id, ErrUnknownCall)
+			return
+		}
+		peer := c.peer(from.User)
+		to, key = ws.Conn{User: peer, ID: c.conn(peer)}, from.ID.String()
+		if from.User == c.callee {
+			tag = c.answeredDevice
+		}
+	case from.User == c.caller && from.ID == c.callerConn:
+		if device == "" { // while ringing the caller names the device
+			m.mu.Unlock()
+			m.fail(from, id, ErrBadRequest)
+			return
+		}
+		conn, ok := c.devices[device]
+		if !ok { // gone already (CallDeviceGone)
+			m.mu.Unlock()
+			return
+		}
+		to, key = ws.Conn{User: c.callee, ID: conn}, "caller/"+device
+	case from.User == c.callee && c.deviceOf[from.ID] != "":
+		tag = c.deviceOf[from.ID]
+		to, key = ws.Conn{User: c.caller, ID: c.callerConn}, from.ID.String()
+	default:
+		m.mu.Unlock()
+		m.fail(from, id, ErrUnknownCall)
+		return
+	}
+	early := !c.active
+	if c.signals[key]++; c.signals[key] > maxSignals {
 		m.mu.Unlock()
 		m.fail(from, id, ErrRateLimited)
 		return
 	}
-	peer := c.peer(from.User)
-	to := ws.Conn{User: peer, ID: c.conn(peer)}
 	m.mu.Unlock()
 
-	ev := ws.Event{Event: EvSignal, Payload: map[string]any{"call_id": id.String(), "from_id": from.User.String(), "data": data}}
-	if !m.hub.SendToConn(to, ev) {
+	if early {
+		out, keep, err := relayOnly(data)
+		if err != nil {
+			m.fail(from, id, ErrBadRequest)
+			return
+		}
+		if !keep { // a host or srflx candidate: it would reveal an address
+			return
+		}
+		data = out
+	}
+	p := map[string]any{"call_id": id.String(), "from_id": from.User.String(), "data": data}
+	if tag != "" {
+		p["device"] = tag
+	}
+	if !m.hub.SendToConn(to, ws.Event{Event: EvSignal, Payload: p}) {
 		// that device is reconnecting; it gets CallResumed and restarts ICE
 		m.logger.Debug("call signal not delivered", "call_id", id)
 	}
@@ -460,9 +552,17 @@ func (m *Manager) Connected(conn ws.Conn) {
 	}
 	if !c.active {
 		ringing := conn.User == c.callee
+		var device string
+		if ringing {
+			device = c.addDevice(conn.ID)
+		}
+		callerConn := ws.Conn{User: c.caller, ID: c.callerConn}
 		m.mu.Unlock()
 		if ringing {
 			m.hub.SendToConn(conn, ws.Event{Event: EvIncoming, Payload: incoming(c)})
+			if device != "" {
+				m.hub.SendToConn(callerConn, deviceEvent(EvDevice, c.id, device))
+			}
 		}
 		return
 	}
@@ -491,6 +591,18 @@ func (m *Manager) Connected(conn ws.Conn) {
 func (m *Manager) Disconnected(conn ws.Conn) {
 	m.mu.Lock()
 	c := m.byUser[conn.User]
+	if c != nil && !c.active && conn.User == c.callee {
+		// a ringing device went away: the caller closes its connection
+		device := c.deviceOf[conn.ID]
+		delete(c.devices, device)
+		delete(c.deviceOf, conn.ID)
+		callerConn := ws.Conn{User: c.caller, ID: c.callerConn}
+		m.mu.Unlock()
+		if device != "" {
+			m.hub.SendToConn(callerConn, deviceEvent(EvGone, c.id, device))
+		}
+		return
+	}
 	if c == nil || c.conn(conn.User) != conn.ID {
 		m.mu.Unlock()
 		return
