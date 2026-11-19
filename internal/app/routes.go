@@ -37,6 +37,7 @@ var (
 	// verification, reset and Google sign-in; codes also die after 5 wrong tries
 	limitAccount = limitPolicy{"account", 10, time.Minute}
 	limitNote    = limitPolicy{"note", 10, time.Minute}
+	limitStory   = limitPolicy{"story_post", 30, time.Hour}
 	limitReact   = limitPolicy{"react", 60, time.Minute}
 	limitEdit    = limitPolicy{"edit_message", 60, time.Minute}
 	// each upload decodes and resizes an image
@@ -125,6 +126,16 @@ func (a *App) Router() http.Handler {
 			r.With(limit(limitNote)).Put("/users/me/note", a.handlers.notes.Set)
 			r.With(limit(limitNote)).Delete("/users/me/note", a.handlers.notes.Delete)
 			r.Get("/notes", a.handlers.notes.List)
+			r.Route("/stories", func(r chi.Router) {
+				r.Get("/", a.handlers.stories.List)
+				r.With(limit(limitStory)).Post("/", a.handlers.stories.Create)
+				r.Get("/mutes", a.handlers.stories.Mutes)
+				r.With(limit(limitAccount)).Put("/mutes/{user_id}", a.handlers.stories.Mute)
+				r.With(limit(limitAccount)).Delete("/mutes/{user_id}", a.handlers.stories.Unmute)
+				r.Post("/{story_id}/view", a.handlers.stories.View)
+				r.Get("/{story_id}/viewers", a.handlers.stories.Viewers)
+				r.Delete("/{story_id}", a.handlers.stories.Delete)
+			})
 			r.With(limit(limitAccount)).Post("/users/me/logout-all", a.handlers.users.LogoutAll)
 			r.With(limit(limitAccount)).Delete("/users/me", a.handlers.account.DeleteAccount)
 			r.With(limit(limitAccount)).Post("/users/me/email", a.handlers.account.StartEmailChange)

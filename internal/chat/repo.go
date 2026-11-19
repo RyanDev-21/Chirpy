@@ -23,6 +23,8 @@ type ChatRepo interface {
 	TouchStreak(ctx context.Context, from, to uuid.UUID, day time.Time) error
 	// AddOnce saves m unless its sender already used client (false then).
 	AddOnce(ctx context.Context, kind string, m MessageMetaDataRes, client uuid.UUID) (bool, error)
+	// LiveStoryOwner is who posted a story that hasn't expired (false if none).
+	LiveStoryOwner(ctx context.Context, storyID uuid.UUID, now time.Time) (uuid.UUID, bool, error)
 	// SentID is the message a sender's client id was used for (7 days).
 	SentID(ctx context.Context, from, client uuid.UUID) (uuid.UUID, bool, error)
 	// Changes* are messages in me's chats edited, deleted or reacted to
@@ -100,6 +102,14 @@ func pgOptUUID(s string) pgtype.UUID {
 func pgText(s string) pgtype.Text         { return pgtype.Text{String: s, Valid: true} }
 func pgTime(t time.Time) pgtype.Timestamp { return pgtype.Timestamp{Time: t, Valid: true} }
 
+func (r *chatRepo) LiveStoryOwner(ctx context.Context, storyID uuid.UUID, now time.Time) (uuid.UUID, bool, error) {
+	id, err := r.q.LiveStoryOwner(ctx, database.LiveStoryOwnerParams{ID: storyID, Now: pgTime(now.UTC())})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, false, nil
+	}
+	return id, err == nil, err
+}
+
 func pgDate(t time.Time) pgtype.Date { return pgtype.Date{Time: t, Valid: true} }
 
 func (r *chatRepo) TouchStreak(ctx context.Context, from, to uuid.UUID, day time.Time) error {
@@ -138,6 +148,7 @@ func (r *chatRepo) AddPrivate(ctx context.Context, m MessageMetaDataRes) error {
 		ToID:      pgOptUUID(m.MsgInfo.Msg.ToID),
 		CreatedAt: pgTime(m.CreatedAt),
 		Forwarded: m.Forwarded,
+		StoryID:   pgOptUUID(m.MsgInfo.Msg.StoryID),
 	})
 }
 
@@ -160,7 +171,7 @@ func (r *chatRepo) AddOnce(ctx context.Context, kind string, m MessageMetaDataRe
 		n, err = r.q.AddMessagePrivateOnce(ctx, database.AddMessagePrivateOnceParams{
 			FromID: pgUUID(m.MsgInfo.FromID), ClientID: pgUUID(client), ID: m.ID, CreatedAt: pgTime(m.CreatedAt),
 			Content: pgText(m.MsgInfo.Msg.Content), Parentid: pgOptUUID(m.MsgInfo.Msg.ParendID),
-			ToID: pgOptUUID(m.MsgInfo.Msg.ToID), Forwarded: m.Forwarded,
+			ToID: pgOptUUID(m.MsgInfo.Msg.ToID), Forwarded: m.Forwarded, StoryID: pgOptUUID(m.MsgInfo.Msg.StoryID),
 		})
 	} else {
 		n, err = r.q.AddMessagePublicOnce(ctx, database.AddMessagePublicOnceParams{
@@ -216,6 +227,7 @@ func fromPrivate(rows []database.Message) []MessageMetaDataRes {
 					ParendID: optString(m.Parentid),
 					ToID:     optString(m.ToID),
 					Type:     TypePrivate,
+					StoryID:  optString(m.StoryID),
 				},
 			},
 		})

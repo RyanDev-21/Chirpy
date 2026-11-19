@@ -48,6 +48,9 @@ func (f *fakeRepo) AddOnce(ctx context.Context, _ string, m MessageMetaDataRes, 
 	f.history = append(f.history, m)
 	return true, nil
 }
+func (f *fakeRepo) LiveStoryOwner(context.Context, uuid.UUID, time.Time) (uuid.UUID, bool, error) {
+	return uuid.Nil, false, nil
+}
 func (f *fakeRepo) TouchStreak(context.Context, uuid.UUID, uuid.UUID, time.Time) error { return nil }
 func (f *fakeRepo) SentID(_ context.Context, from, client uuid.UUID) (uuid.UUID, bool, error) {
 	f.mu.Lock()

@@ -26,6 +26,7 @@ var (
 	ErrNotValidUUID        = errors.New("not valid uuid")
 	ErrNotValidTimeFmt     = errors.New("since must be an RFC3339 timestamp")
 	ErrNotValidParentID    = errors.New("parent_id must be the id of a message in the same chat")
+	ErrNotValidStory       = errors.New("story_id must be a live story of the person you're writing to")
 	ErrNotSupportedTypeMsg = errors.New(`type must be "private" or "public"`)
 	ErrEmptyMessage        = errors.New("msg must be 1-500 characters")
 	ErrMessageNotInChat    = errors.New("msg_id is not a message in this chat")
@@ -58,6 +59,9 @@ type InCommingMessage struct {
 	// retries safe: the same id within DedupeWindow returns the first
 	// message instead of sending it twice.
 	ClientMsgID string `json:"client_msg_id,omitempty"`
+	// StoryID (private messages only): this is a reply to the recipient's
+	// story. Kept after the story expires.
+	StoryID string `json:"story_id,omitempty"`
 	// Forwarded is set by the server when forwarding (never by clients).
 	Forwarded bool `json:"-"`
 }

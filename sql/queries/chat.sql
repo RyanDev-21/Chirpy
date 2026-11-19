@@ -1,6 +1,6 @@
 -- name: AddMessagePrivate :exec
-INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded)
-VALUES ($1, $2, $3, $4, $5, $6, @forwarded);
+INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, story_id)
+VALUES ($1, $2, $3, $4, $5, $6, @forwarded, @story_id);
 
 -- name: AddMessagePublic :exec
 -- searchable: groups of up to 50 members are indexed for search
@@ -15,8 +15,8 @@ WITH s AS (
     ON CONFLICT DO NOTHING
     RETURNING msg_id
 )
-INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, client_msg_id)
-SELECT @id, @content, @parentid, @from_id, @to_id, @created_at, @forwarded, @client_id FROM s;
+INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, client_msg_id, story_id)
+SELECT @id, @content, @parentid, @from_id, @to_id, @created_at, @forwarded, @client_id, @story_id FROM s;
 
 -- name: AddMessagePublicOnce :execrows
 WITH s AS (

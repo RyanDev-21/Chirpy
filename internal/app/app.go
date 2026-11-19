@@ -36,6 +36,7 @@ import (
 	"RyanDev-21.com/Chirpy/internal/presence"
 	"RyanDev-21.com/Chirpy/internal/push"
 	"RyanDev-21.com/Chirpy/internal/search"
+	"RyanDev-21.com/Chirpy/internal/stories"
 	"RyanDev-21.com/Chirpy/internal/users"
 	"RyanDev-21.com/Chirpy/internal/ws"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -88,6 +89,7 @@ type handlers struct {
 	media    *media.Handler
 	presence *presence.Handler
 	notes    *notes.Handler
+	stories  *stories.Handler
 	calls    *calls.Handler
 	search   *search.Handler
 }
@@ -302,6 +304,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		media:    media.NewHandler(a.media),
 		presence: presence.NewHandler(presenceSvc),
 		notes:    notes.NewHandler(queries),
+		stories:  stories.NewHandler(queries, a.media),
 		calls:    calls.NewHandler(calls.NewTURN(cfg.TURNKeyID, cfg.TURNToken), queries, logger),
 		search:   search.NewHandler(search.NewService(queries, chatRepo)),
 	}
