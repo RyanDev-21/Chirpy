@@ -37,7 +37,8 @@ WITH me AS (
     SELECT u.id, u.name, u.display_name, u.avatar_at, u.location_id,
            COALESCE(m.n, 0)::int AS mutual_friends,
            COALESCE(s.ids, '{}'::text[]) AS shared_interests,
-           (u.location_id IS NOT NULL AND u.location_id = me.location_id) AS same_place,
+           -- COALESCE: NULL (my location unset) means "not the same place"
+           COALESCE(u.location_id = me.location_id, false) AS same_place,
            (u.location_country <> '' AND u.location_country = me.location_country) AS same_country
     FROM users u
     CROSS JOIN me
