@@ -1258,6 +1258,67 @@ Only the two devices in the call can signal (the callee's device that
 answered, and the caller's device that called). `CallSignal` is only
 accepted after `CallAccepted`.
 
+### Proposed: connecting while ringing (not built yet)
+
+**Status: proposal, 19 November 2026.** Nothing below works yet; today's
+rules above still apply. Frontend: please confirm or comment in
+`SERVER_STATUS.md`, then the server side gets built.
+
+**Goal:** audio starts the moment the callee taps Accept, by doing the
+WebRTC setup while the phone rings, **without revealing either person's IP
+address before the call is answered.** (ICE candidates of type `host` and
+`srflx` contain the device's local and public IP: the internet provider,
+the rough area, and that the phone is online. A caller who rings and hangs
+up must not learn that.)
+
+**1. Relay only before Accept.** Until `CallAccepted`, both sides use only
+TURN relay addresses:
+- Create the `RTCPeerConnection` with `iceTransportPolicy: "relay"` while
+  ringing.
+- The server enforces it: before `CallAccepted` it passes only
+  `{"type":"offer"|"answer","sdp":…}` and `{"type":"candidate",…}`
+  messages. It forwards a candidate only if it is `typ relay` (or the empty
+  end-of-candidates one), and removes every `a=candidate` line that isn't
+  `typ relay` from an SDP. Other `data` is dropped while ringing.
+- If `GET /api/calls/ice` says `"relay": false` (no TURN), there is no
+  early setup: negotiate after `CallAccepted`, as today.
+
+**2. Nothing is sent before Accept.** The callee's connection is
+receive-only (no microphone track) until the user taps Accept. The
+caller's microphone track isn't sent either until `CallAccepted` (attach it
+with `replaceTrack` then). No audio from either side leaves the phone
+before the call is answered. The server can't see media, so this is the
+apps' rule.
+
+**3. Every ringing device gets its own connection.** The callee may have
+several devices ringing. Device ids are opaque strings for this call only.
+- `CallRinging` gets `"devices":["dev-a","dev-b"]`: the callee's devices
+  ringing now.
+- `CallDevice {"call_id","device"}` (to the caller): another device started
+  ringing, for example a phone that came online from the push.
+- The caller makes **one `RTCPeerConnection` and offer per device** and
+  sends it with `CallSignal {"call_id","device":"dev-a","data":{…}}`.
+- Each callee device receives only its own, as `CallSignal
+  {"call_id","from_id","data"}`, and replies without `device`. The caller
+  receives `CallSignal {"call_id","from_id","device":"dev-a","data"}`.
+- At most 5 devices per call. The existing limits (500 signals per side,
+  16 KB each) apply to each connection.
+
+**4. On Accept.**
+- `CallAccepted` gets `"device"`: the one that answered. The caller keeps
+  that connection and closes the others.
+- The other devices get `CallEnded` `answered_elsewhere`, and the server
+  drops their later signals.
+- Audio starts at once over the relay that's already connected.
+- **Then go direct:** the caller switches to `iceTransportPolicy: "all"`
+  (`setConfiguration`) and sends a new offer with `iceRestart: true`. If a
+  direct path works, the call moves to it without a gap (lower delay, less
+  relay use); if not, it stays on the relay. From `CallAccepted` on, signals
+  pass unchanged, as today.
+
+**Unchanged:** who may call, ringing for 45 s, decline, missed calls, the
+call log and caps.
+
 `reason` is one of: `ended` (hung up after talking), `missed` (no answer in
 45 seconds), `declined`, `cancelled` (the caller gave up while ringing),
 `busy` (the callee is in another call), `disconnected` (a device was gone
