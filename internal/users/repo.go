@@ -65,6 +65,7 @@ func toUser(u database.User) *User {
 	out.Location = PlaceOf(u.LocationID.String)
 	out.Discoverable = u.Discoverable
 	out.HideLastSeen = u.HideLastSeen
+	out.HideStreaks = u.HideStreaks
 	if u.NameChangedAt.Valid {
 		if next := u.NameChangedAt.Time.UTC().Add(RenameEvery); next.After(time.Now()) {
 			out.NameChangeAvailableAt = &next

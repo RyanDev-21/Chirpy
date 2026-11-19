@@ -219,6 +219,11 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 	if err != nil {
 		return uuid.Nil, err
 	}
+	if in.Type == TypePrivate && !in.Forwarded {
+		if err := s.repo.TouchStreak(ctx, from, to, StreakDay(now)); err != nil {
+			s.logger.WarnContext(ctx, "failed to count streak", "error", err)
+		}
+	}
 	out := ws.OutGoingMessage{
 		ID:        msgID.String(),
 		Content:   in.Content,

@@ -182,6 +182,21 @@ type Conversation struct {
 	AvatarURL   *string      `json:"avatar_url"`   // the other user's or the group's picture
 	LastMessage *LastMessage `json:"last_message"` // null for a group with no messages
 	Unread      int          `json:"unread"`
+	// Streak (private chats): days in a row you both sent each other a
+	// message; omitted when there is none or either of you hides streaks.
+	// StreakEndsSoon: it counted yesterday but not yet today.
+	Streak         int  `json:"streak,omitempty"`
+	StreakEndsSoon bool `json:"streak_ends_soon,omitempty"`
+}
+
+// streakZone: streak days run midnight to midnight Thailand time, the
+// same for everyone.
+var streakZone = time.FixedZone("ICT", 7*3600)
+
+// StreakDay is the streak day t falls on.
+func StreakDay(t time.Time) time.Time {
+	y, m, d := t.In(streakZone).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
 type LastMessage struct {

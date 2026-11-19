@@ -846,29 +846,42 @@ SELECT l.other_id::uuid AS other_id, u.name AS other_name, u.display_name AS oth
               SELECT sm.created_at FROM seen_messages s JOIN message sm ON sm.id = s.message_id
               WHERE s.seen_id = $1::uuid AND s.chat_id = l.chat_key
           ), '-infinity'::timestamp)
-       )::int AS unread
+       )::int AS unread,
+       -- streak: days in a row; 0 when broken or when either of us hides streaks
+       (CASE WHEN st.done_day >= $2::date - 1 AND NOT u.hide_streaks
+                  AND NOT (SELECT v.hide_streaks FROM users v WHERE v.id = $1::uuid)
+             THEN st.count ELSE 0 END)::int AS streak,
+       COALESCE(st.done_day = $2::date - 1, false)::bool AS streak_yesterday
 FROM latest l
 JOIN users u ON u.id = l.other_id
+LEFT JOIN streaks st ON st.user_lo = LEAST($1::uuid, l.other_id::uuid) AND st.user_hi = GREATEST($1::uuid, l.other_id::uuid)
 ORDER BY l.created_at DESC, l.id DESC
 `
 
+type ListPrivateConversationsParams struct {
+	Me    uuid.UUID
+	Today pgtype.Date
+}
+
 type ListPrivateConversationsRow struct {
-	OtherID       uuid.UUID
-	OtherName     string
-	OtherDisplay  string
-	OtherAvatarAt pgtype.Timestamp
-	LastID        uuid.UUID
-	LastContent   pgtype.Text
-	LastFrom      pgtype.UUID
-	LastAt        pgtype.Timestamp
-	LastDeleted   bool
-	Unread        int32
+	OtherID         uuid.UUID
+	OtherName       string
+	OtherDisplay    string
+	OtherAvatarAt   pgtype.Timestamp
+	LastID          uuid.UUID
+	LastContent     pgtype.Text
+	LastFrom        pgtype.UUID
+	LastAt          pgtype.Timestamp
+	LastDeleted     bool
+	Unread          int32
+	Streak          int32
+	StreakYesterday bool
 }
 
 // one row per person the caller has exchanged messages with: the latest
 // message and how many of theirs arrived after the caller's read marker
-func (q *Queries) ListPrivateConversations(ctx context.Context, me uuid.UUID) ([]ListPrivateConversationsRow, error) {
-	rows, err := q.db.Query(ctx, listPrivateConversations, me)
+func (q *Queries) ListPrivateConversations(ctx context.Context, arg ListPrivateConversationsParams) ([]ListPrivateConversationsRow, error) {
+	rows, err := q.db.Query(ctx, listPrivateConversations, arg.Me, arg.Today)
 	if err != nil {
 		return nil, err
 	}
@@ -887,6 +900,8 @@ func (q *Queries) ListPrivateConversations(ctx context.Context, me uuid.UUID) ([
 			&i.LastAt,
 			&i.LastDeleted,
 			&i.Unread,
+			&i.Streak,
+			&i.StreakYesterday,
 		); err != nil {
 			return nil, err
 		}
@@ -1225,4 +1240,37 @@ func (q *Queries) SentMessageID(ctx context.Context, arg SentMessageIDParams) (u
 	var msg_id uuid.UUID
 	err := row.Scan(&msg_id)
 	return msg_id, err
+}
+
+const touchStreak = `-- name: TouchStreak :exec
+INSERT INTO streaks (user_lo, user_hi, lo_day, hi_day, done_day, count)
+VALUES (LEAST($1::uuid, $2::uuid), GREATEST($1::uuid, $2::uuid),
+        CASE WHEN $1::uuid < $2::uuid THEN $3::date END,
+        CASE WHEN $1::uuid > $2::uuid THEN $3::date END,
+        NULL, 0)
+ON CONFLICT (user_lo, user_hi) DO UPDATE SET
+    lo_day = CASE WHEN $1::uuid = streaks.user_lo THEN $3::date ELSE streaks.lo_day END,
+    hi_day = CASE WHEN $1::uuid = streaks.user_hi THEN $3::date ELSE streaks.hi_day END,
+    count = CASE
+        WHEN streaks.done_day IS NOT DISTINCT FROM $3::date THEN streaks.count
+        WHEN (CASE WHEN $1::uuid = streaks.user_lo THEN $3::date ELSE streaks.lo_day END) = $3::date
+         AND (CASE WHEN $1::uuid = streaks.user_hi THEN $3::date ELSE streaks.hi_day END) = $3::date
+        THEN CASE WHEN streaks.done_day = $3::date - 1 THEN streaks.count + 1 ELSE 1 END
+        ELSE streaks.count END,
+    done_day = CASE
+        WHEN (CASE WHEN $1::uuid = streaks.user_lo THEN $3::date ELSE streaks.lo_day END) = $3::date
+         AND (CASE WHEN $1::uuid = streaks.user_hi THEN $3::date ELSE streaks.hi_day END) = $3::date
+        THEN $3::date ELSE streaks.done_day END
+`
+
+type TouchStreakParams struct {
+	FromID uuid.UUID
+	ToID   uuid.UUID
+	Day    pgtype.Date
+}
+
+// @from sent @to a private message on @day: count the day once both did
+func (q *Queries) TouchStreak(ctx context.Context, arg TouchStreakParams) error {
+	_, err := q.db.Exec(ctx, touchStreak, arg.FromID, arg.ToID, arg.Day)
+	return err
 }

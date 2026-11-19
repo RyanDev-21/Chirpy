@@ -127,3 +127,33 @@ JOIN users u ON u.id = fa.fid
 WHERE u.banned_at IS NULL
 ORDER BY u.name
 LIMIT @lim;
+
+-- name: SetHideStreaks :exec
+UPDATE users SET hide_streaks = @hide, updated_at = NOW() WHERE id = @id;
+
+-- name: GetPrivacy :one
+SELECT hide_last_seen, hide_streaks FROM users WHERE id = @id;
+
+-- name: SetNote :one
+INSERT INTO notes (user_id, text, created_at, expires_at) VALUES (@user_id, @text, @now::timestamp, @expires_at::timestamp)
+ON CONFLICT (user_id) DO UPDATE SET text = EXCLUDED.text, created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at
+RETURNING user_id, text, created_at, expires_at;
+
+-- name: DeleteNote :exec
+DELETE FROM notes WHERE user_id = @user_id;
+
+-- name: FriendNotes :many
+-- my note and my friends' notes that haven't expired (not suspended users)
+SELECT n.user_id, u.name, u.display_name, u.avatar_at, n.text, n.created_at, n.expires_at
+FROM notes n
+JOIN users u ON u.id = n.user_id
+WHERE n.expires_at > @now::timestamp
+  AND u.banned_at IS NULL
+  AND (n.user_id = @me::uuid OR n.user_id IN (
+      SELECT CASE WHEN r.user_id = @me::uuid THEN r.otherUser_id ELSE r.user_id END
+      FROM user_relationships r
+      WHERE r.status = 'confirm' AND (r.user_id = @me::uuid OR r.otherUser_id = @me::uuid)))
+ORDER BY (n.user_id = @me::uuid) DESC, n.created_at DESC;
+
+-- name: DeleteExpiredNotes :execrows
+DELETE FROM notes WHERE expires_at <= @now::timestamp;

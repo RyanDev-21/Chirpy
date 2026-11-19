@@ -42,6 +42,8 @@ type Hub interface {
 type Store interface {
 	PresenceOf(ctx context.Context, ids []uuid.UUID) ([]database.PresenceOfRow, error)
 	SetHideLastSeen(ctx context.Context, arg database.SetHideLastSeenParams) error
+	SetHideStreaks(ctx context.Context, arg database.SetHideStreaksParams) error
+	GetPrivacy(ctx context.Context, id uuid.UUID) (database.GetPrivacyRow, error)
 	TouchLastSeen(ctx context.Context, arg database.TouchLastSeenParams) error
 }
 
@@ -242,15 +244,29 @@ func (h *Handler) SetPrivacy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b struct {
-		Hide *bool `json:"hide_last_seen"`
+		Hide        *bool `json:"hide_last_seen"`
+		HideStreaks *bool `json:"hide_streaks"`
 	}
-	if err := httpx.Decode(w, r, &b); err != nil || b.Hide == nil {
-		httpx.Error(w, http.StatusBadRequest, "hide_last_seen must be true or false")
+	if err := httpx.Decode(w, r, &b); err != nil || (b.Hide == nil && b.HideStreaks == nil) {
+		httpx.Error(w, http.StatusBadRequest, "hide_last_seen and hide_streaks must be true or false")
 		return
 	}
-	if err := h.svc.SetHidden(r.Context(), me, *b.Hide); err != nil {
+	if b.Hide != nil {
+		if err := h.svc.SetHidden(r.Context(), me, *b.Hide); err != nil {
+			httpx.ServerError(w, r, err)
+			return
+		}
+	}
+	if b.HideStreaks != nil {
+		if err := h.svc.db.SetHideStreaks(r.Context(), database.SetHideStreaksParams{ID: me, Hide: *b.HideStreaks}); err != nil {
+			httpx.ServerError(w, r, err)
+			return
+		}
+	}
+	p, err := h.svc.db.GetPrivacy(r.Context(), me)
+	if err != nil {
 		httpx.ServerError(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]bool{"hide_last_seen": *b.Hide})
+	httpx.JSON(w, http.StatusOK, map[string]bool{"hide_last_seen": p.HideLastSeen, "hide_streaks": p.HideStreaks})
 }

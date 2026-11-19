@@ -36,6 +36,7 @@ var (
 	limitGroupJoin = limitPolicy{"group_join", 20, time.Minute}
 	// verification, reset and Google sign-in; codes also die after 5 wrong tries
 	limitAccount = limitPolicy{"account", 10, time.Minute}
+	limitNote    = limitPolicy{"note", 10, time.Minute}
 	limitReact   = limitPolicy{"react", 60, time.Minute}
 	limitEdit    = limitPolicy{"edit_message", 60, time.Minute}
 	// each upload decodes and resizes an image
@@ -121,6 +122,9 @@ func (a *App) Router() http.Handler {
 			r.Get("/users/me", a.handlers.users.Me)
 			r.With(limit(limitAccount)).Patch("/users/me", a.handlers.users.UpdateMe)
 			r.With(limit(limitAccount)).Put("/users/me/privacy", a.handlers.presence.SetPrivacy)
+			r.With(limit(limitNote)).Put("/users/me/note", a.handlers.notes.Set)
+			r.With(limit(limitNote)).Delete("/users/me/note", a.handlers.notes.Delete)
+			r.Get("/notes", a.handlers.notes.List)
 			r.With(limit(limitAccount)).Post("/users/me/logout-all", a.handlers.users.LogoutAll)
 			r.With(limit(limitAccount)).Delete("/users/me", a.handlers.account.DeleteAccount)
 			r.With(limit(limitAccount)).Post("/users/me/email", a.handlers.account.StartEmailChange)

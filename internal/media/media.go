@@ -65,7 +65,7 @@ var (
 )
 
 var allowedTypes = map[string]map[string]bool{
-	"image": {"image/jpeg": true, "image/png": true, "image/webp": true, "image/heic": true},
+	"image": {"image/jpeg": true, "image/png": true, "image/webp": true, "image/heic": true, "image/gif": true},
 	"video": {"video/mp4": true, "video/quicktime": true, "video/webm": true},
 }
 
