@@ -287,7 +287,39 @@ func (s *Service) Attach(ctx context.Context, owner uuid.UUID, ids []uuid.UUID, 
 	return out, nil
 }
 
-// ForMessages returns the media of a page of messages.
+// AttachStory makes the owner's uploaded photo a story's; it expires with
+// the story.
+func (s *Service) AttachStory(ctx context.Context, owner, id, storyID uuid.UUID, expires time.Time) (Attachment, error) {
+	if s.store == nil {
+		return Attachment{}, ErrDisabled
+	}
+	m, err := s.q.GetMedia(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && (m.OwnerID != pu(owner) || m.Status != "pending" || m.DeletedAt.Valid || m.Kind != "image")) {
+		return Attachment{}, ErrBadAttachment
+	}
+	if err != nil {
+		return Attachment{}, err
+	}
+	size, err := s.store.Size(ctx, key(id))
+	if errors.Is(err, ErrNoObject) || (err == nil && size != m.Size) {
+		return Attachment{}, ErrBadAttachment
+	}
+	if err != nil {
+		return Attachment{}, err
+	}
+	n, err := s.q.AttachStoryMedia(ctx, database.AttachStoryMediaParams{ID: id, OwnerID: pu(owner), StoryID: pu(storyID), ExpiresAt: ts(expires)})
+	if err != nil {
+		return Attachment{}, err
+	}
+	if n == 0 {
+		return Attachment{}, ErrBadAttachment
+	}
+	return Attachment{ID: id, Kind: m.Kind, ContentType: m.ContentType, Size: m.Size, ExpiresAt: expires.UTC(),
+		Width: int(m.Width.Int32), Height: int(m.Height.Int32)}, nil
+}
+
+// ForMessages returns the media of a page of messages (or of stories:
+// a story's photo is filed under the story's id).
 func (s *Service) ForMessages(ctx context.Context, msgIDs []uuid.UUID) (map[uuid.UUID][]Attachment, error) {
 	out := map[uuid.UUID][]Attachment{}
 	if len(msgIDs) == 0 {
@@ -465,6 +497,11 @@ func (s *Service) access(ctx context.Context, viewer, id uuid.UUID) (database.Me
 		}
 		if len(members) <= trackGroupsUpTo {
 			recipients = slices.DeleteFunc(members, func(u uuid.UUID) bool { return u == owner })
+		}
+	case "story":
+		// the poster, or a friend, while the story is live
+		if _, err := s.q.VisibleStoryOwner(ctx, database.VisibleStoryOwnerParams{ID: uuid.UUID(m.MessageID.Bytes), Viewer: viewer, Now: ts(s.now())}); err != nil {
+			return none, uuid.Nil, nil, ErrNotFound
 		}
 	default:
 		return none, uuid.Nil, nil, ErrNotFound

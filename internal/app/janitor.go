@@ -54,6 +54,9 @@ func (a *App) Cleanup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if _, err := q.DeleteExpiredStories(ctx, ts(now)); err != nil { // their photos expire with them
+		a.logger.WarnContext(ctx, "failed to delete expired stories", "error", err)
+	}
 	if _, err := q.DeleteExpiredNotes(ctx, ts(now)); err != nil {
 		a.logger.WarnContext(ctx, "failed to delete expired notes", "error", err)
 	}

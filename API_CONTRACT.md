@@ -439,6 +439,65 @@ today!"). One note per person; a new one replaces the old.
 Refetch on app start and when the friends screen opens; there's no
 WebSocket event for notes in v1.
 
+## Stories
+
+A **photo** shown to your friends for **24 hours**. Text or drawings are
+part of the image (made on the phone). Only friends see stories: blocking
+(which ends the friendship) or unfriending hides them at once.
+
+**Post:** upload the photo as usual (`POST /api/media` with `kind: "image"`,
+then `PUT` it), then `POST /api/stories` `{"media_id":"…"}` →
+`201 {"id","created_at","expires_at","media":{…},"views":0}`.
+- The photo must be your own upload, not used yet, and an image (`400`
+  otherwise). It counts toward the daily upload quota.
+- At most 30 live stories (`429`), and 30 posts per hour.
+- `503` when photos are off on the server.
+
+**List:** `GET /api/stories` →
+
+```json
+{"mine":[{"id","created_at","expires_at","media":{…},"views":3}],
+ "friends":[{"user_id","name","display_name","avatar_url","all_seen":false,
+   "stories":[{"id","created_at","expires_at","media":{…},"seen":false}]}]}
+```
+
+- `mine`: your live stories, oldest first, with how many friends saw each.
+- `friends`: people with something you haven't seen first, then by their
+  newest story. Each person's stories are oldest first. Muted people and
+  suspended accounts are left out.
+- `media` is the usual attachment. Fetch the photo with
+  `GET /api/media/{id}` (friends only, while the story is live). `media` is
+  `null` if the photo is already gone; skip that story.
+- Refetch when the app opens and when the chat list is shown; there's no
+  WebSocket event for stories in v1, and no push.
+
+**Seen:** `POST /api/stories/{id}/view` → `204` when you open it (once is
+enough; repeats are fine). Your own views aren't counted. `404` for stories
+you can't see.
+
+**Who saw it** (yours only): `GET /api/stories/{id}/viewers` →
+`200 {"viewers":[{"user_id","name","display_name","avatar_url","viewed_at"}]}`,
+newest first. Viewers never see each other.
+
+**Delete early:** `DELETE /api/stories/{id}` → `204` (yours only, else
+`404`). The photo is removed too.
+
+**Reply:** send a normal private message to the poster with
+`"story_id":"…"` (`POST /api/chats/message`). It must be a live story of the
+person you're writing to (`400` otherwise). The message keeps `story_id` in
+history (`message_info.Msg.story_id`) and in the `msg` event, so show
+"replied to your story". After 24 hours the story itself is gone; show
+"story unavailable".
+
+**Mute someone's stories:** `PUT /api/stories/mutes/{user_id}` → `204`,
+`DELETE` the same → `204`, `GET /api/stories/mutes` →
+`200 {"muted":[{"user_id","name","display_name","avatar_url"}]}`. They
+aren't told.
+
+**Report a story:** use **Reporting a user** with the poster's `user_id`,
+and say in the note that it's about a story. In v1 the photo itself isn't
+attached to the report.
+
 ## Reporting a user
 
 `POST /api/reports` with

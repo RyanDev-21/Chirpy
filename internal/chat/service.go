@@ -135,6 +135,20 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 	if err != nil || to == from {
 		return uuid.Nil, ErrNotValidToID
 	}
+	if in.StoryID != "" {
+		storyID, err := uuid.Parse(in.StoryID)
+		if err != nil || in.Type != TypePrivate || in.Forwarded {
+			return uuid.Nil, ErrNotValidStory
+		}
+		owner, ok, err := s.repo.LiveStoryOwner(ctx, storyID, time.Now())
+		if err != nil {
+			return uuid.Nil, err
+		}
+		if !ok || owner != to {
+			return uuid.Nil, ErrNotValidStory
+		}
+		in.StoryID = storyID.String()
+	}
 	var parentID uuid.UUID
 	if in.ParendID != "" {
 		if parentID, err = uuid.Parse(in.ParendID); err != nil {
@@ -232,6 +246,7 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 		Type:      in.Type,
 		CreatedAt: now,
 		Forwarded: in.Forwarded,
+		StoryID:   in.StoryID,
 	}
 	if len(attached) > 0 {
 		out.Media = attached

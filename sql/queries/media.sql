@@ -81,3 +81,8 @@ SELECT EXISTS (
 -- uploads and forward copies a user started since @since (count quota:
 -- every one is a paid storage write, however small)
 SELECT count(*)::bigint FROM media WHERE owner_id = @owner_id AND created_at > @since::timestamp;
+
+-- name: AttachStoryMedia :execrows
+-- the owner's own pending photo becomes a story's; it expires with it
+UPDATE media SET status = 'ready', chat_type = 'story', chat_id = @owner_id, message_id = @story_id, expires_at = @expires_at::timestamp
+WHERE id = @id AND owner_id = @owner_id AND status = 'pending' AND deleted_at IS NULL AND kind = 'image';

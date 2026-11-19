@@ -145,6 +145,7 @@ type Message struct {
 	Forwarded   bool
 	ChangedAt   pgtype.Timestamp
 	ClientMsgID pgtype.UUID
+	StoryID     pgtype.UUID
 }
 
 type MessageReaction struct {
@@ -213,6 +214,25 @@ type SentID struct {
 	ClientID  uuid.UUID
 	MsgID     uuid.UUID
 	CreatedAt pgtype.Timestamp
+}
+
+type Story struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	CreatedAt pgtype.Timestamp
+	ExpiresAt pgtype.Timestamp
+}
+
+type StoryMute struct {
+	UserID    uuid.UUID
+	MutedID   uuid.UUID
+	CreatedAt pgtype.Timestamp
+}
+
+type StoryView struct {
+	StoryID  uuid.UUID
+	ViewerID uuid.UUID
+	ViewedAt pgtype.Timestamp
 }
 
 type Streak struct {

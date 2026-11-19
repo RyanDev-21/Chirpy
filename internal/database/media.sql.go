@@ -40,6 +40,32 @@ func (q *Queries) AttachMedia(ctx context.Context, arg AttachMediaParams) (int64
 	return result.RowsAffected(), nil
 }
 
+const attachStoryMedia = `-- name: AttachStoryMedia :execrows
+UPDATE media SET status = 'ready', chat_type = 'story', chat_id = $1, message_id = $2, expires_at = $3::timestamp
+WHERE id = $4 AND owner_id = $1 AND status = 'pending' AND deleted_at IS NULL AND kind = 'image'
+`
+
+type AttachStoryMediaParams struct {
+	OwnerID   pgtype.UUID
+	StoryID   pgtype.UUID
+	ExpiresAt pgtype.Timestamp
+	ID        uuid.UUID
+}
+
+// the owner's own pending photo becomes a story's; it expires with it
+func (q *Queries) AttachStoryMedia(ctx context.Context, arg AttachStoryMediaParams) (int64, error) {
+	result, err := q.db.Exec(ctx, attachStoryMedia,
+		arg.OwnerID,
+		arg.StoryID,
+		arg.ExpiresAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countMediaDownloads = `-- name: CountMediaDownloads :one
 SELECT count(*)::int FROM media_downloads WHERE media_id = $1
 `
