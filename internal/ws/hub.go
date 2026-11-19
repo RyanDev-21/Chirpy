@@ -198,6 +198,17 @@ func (h *Hub) Count() int {
 	return len(h.clients)
 }
 
+// Conns lists userID's live connections, oldest first.
+func (h *Hub) Conns(userID uuid.UUID) []uuid.UUID {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := make([]uuid.UUID, 0, len(h.clients[userID]))
+	for _, c := range h.clients[userID] {
+		out = append(out, c.ID)
+	}
+	return out
+}
+
 // Online reports whether userID has a live connection on any device.
 func (h *Hub) Online(userID uuid.UUID) bool {
 	h.mu.RLock()
