@@ -330,9 +330,9 @@ type Reminder struct {
 	Left    time.Duration // until it's deleted
 }
 
-// RemindBefore: how long before a big file is deleted its recipients who
-// haven't downloaded it are reminded.
-const RemindBefore = 3 * time.Hour
+// RemindBefore: on the last day before a big file is deleted, recipients
+// who haven't downloaded it are reminded (once).
+const RemindBefore = 24 * time.Hour
 
 // DueReminders claims big files that expire within RemindBefore (each
 // once) and returns who to remind. Run from the hourly cleanup.

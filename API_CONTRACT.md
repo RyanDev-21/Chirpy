@@ -1295,21 +1295,19 @@ over the WebSocket (when the app is open, the live events are enough).
 | `reaction` | reactor (`in <group>`) | `reacted ❤️ to your message` | `from_id`, `msg_id`, `group_id`? | one per message |
 | `big_file` | sender name, or the group | `Video from Maya will be deleted in 3 hours` | `from_id`, `msg_id`, `media_id`, `group_id`? | one per file |
 
-**Big files** (over 16 MB, deleted at a fixed time):
-- A `private` or `public` message carrying one gets `data.big = "true"`, the
-  `big-files` channel, and a body with the size and deadline instead of the
-  text: `Sent a 48 MB video · download within 3 days` (group: `Maya: sent a
-  48 MB video · download within 3 days`; several: `sent 2 big files (130 MB)`).
-- **Reminder** (`big_file`): about 3 hours before the file is deleted, each
-  recipient who hasn't downloaded it yet gets one push, on the `big-files`
-  channel. Once per file and person; never the sender, nor anyone who
-  downloaded it (`GET /api/media/{id}` counts). Groups over 50 members don't
-  get reminders (downloads aren't tracked there), nor members who joined
-  after it was sent.
-- Both follow the chat's setting: `private` / `groups` notifications and
-  chat mutes. Like every push, only phones that aren't connected get them.
+**Big files** (over 16 MB, deleted at a fixed time, see Photos, videos and
+files): sending one is an ordinary `private` / `public` push ("🎥 Video").
+- **Reminder** (`big_file`): on the **last day** (about 24 hours before it's
+  deleted), each recipient who hasn't downloaded it yet gets one push on the
+  `big-files` channel: `Video from Maya will be deleted in 23 hours`. Once
+  per file and person; never the sender, nor anyone who downloaded it
+  (`GET /api/media/{id}` counts). Groups over 50 members don't get
+  reminders (downloads aren't tracked there), nor members who joined after
+  it was sent.
+- It follows the chat's setting (`private` / `groups` notifications and
+  chat mutes). Like every push, only phones that aren't connected get it.
 
-Android channel id: `messages`, or `big-files` for the big-file pushes
+Android channel id: `messages`, or `big-files` for the big-file reminder
 above (create it with high importance). Tapping should open the chat from
 `data`.
 
@@ -1612,6 +1610,15 @@ search, view and action is written to an audit log.
   come back; groups don't).
 
 ## Frontend implementation notes
+
+- **Phone storage screen** (app only, nothing on the server): photos,
+  videos and files pile up on the phone, because the phone's copy is the
+  one that lasts. Offer "Manage storage": space used per chat, biggest
+  files first, filters by type (videos, photos, files, voice). Users select
+  and delete **from this phone only**; the messages stay in the chat. If
+  the server still has a file (`expired: false`), it can be downloaded
+  again. If it's expired, warn before deleting: "This can't be downloaded
+  again."
 
 - On `401`, attempt one refresh using the current refresh token, atomically
   replace both tokens, then retry the original request once. If refresh fails,

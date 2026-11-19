@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -38,9 +37,8 @@ const (
 	KindBigFile       = "big_file"       // a big file sent to me is deleted soon and I haven't downloaded it
 )
 
-// ChannelBigFiles is the Android channel for messages with a big file and
-// their reminders (the app makes it look urgent); everything else uses
-// "messages".
+// ChannelBigFiles is the Android channel for big-file reminders (the app
+// makes it look urgent); everything else uses "messages".
 const ChannelBigFiles = "big-files"
 
 // CallRingTTL: an incoming-call push that arrives later than this is useless.
@@ -56,9 +54,6 @@ type Job struct {
 	MsgID   uuid.UUID `json:"msg_id,omitempty"`
 	Preview string    `json:"preview,omitempty"` // message text, or the emoji for reactions
 	CallID  uuid.UUID `json:"call_id,omitempty"`
-	// Big: the message carries a file that's deleted at a fixed time
-	// (Preview then says its size and deadline).
-	Big bool `json:"big,omitempty"`
 	// MediaID and Left (seconds until deletion) are set for KindBigFile.
 	MediaID   uuid.UUID `json:"media_id,omitempty"`
 	MediaKind string    `json:"media_kind,omitempty"`
@@ -199,10 +194,6 @@ func (s *Service) render(ctx context.Context, j Job) (Message, error) {
 	if j.MsgID != uuid.Nil {
 		m.Data["msg_id"] = j.MsgID.String()
 	}
-	if j.Big {
-		m.Data["big"] = "true"
-		m.Channel = ChannelBigFiles
-	}
 	group := ""
 	if j.Group != uuid.Nil {
 		m.Data["group_id"] = j.Group.String()
@@ -213,9 +204,6 @@ func (s *Service) render(ctx context.Context, j Job) (Message, error) {
 	switch j.Kind {
 	case KindPrivate:
 		m.Title, m.Body, m.Tag = from, j.Preview, "dm:"+j.From.String()
-		if j.Big {
-			m.Body = upperFirst(j.Preview)
-		}
 	case KindGroup:
 		m.Title, m.Body, m.Tag = group, from+": "+j.Preview, "group:"+j.Group.String()
 	case KindBigFile:
@@ -244,14 +232,6 @@ func (s *Service) render(ctx context.Context, j Job) (Message, error) {
 		}
 	}
 	return m, nil
-}
-
-func upperFirst(s string) string {
-	r, n := utf8.DecodeRuneInString(s)
-	if n == 0 {
-		return s
-	}
-	return strings.ToUpper(string(r)) + s[n:]
 }
 
 // kindWord names a media kind for a reminder ("Video from Maya ...").

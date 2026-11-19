@@ -40,12 +40,13 @@ func TestBigFilePushes(t *testing.T) {
 
 	priv, grp := e.uploadBigVideo(alice), e.uploadBigVideo(alice)
 	e.expect(e.do("POST", "/api/chats/message", alice.Token, map[string]any{"to_id": bob.ID, "type": "private", "media": []string{priv}}), 200)
+	// sending it is an ordinary message push: no warning yet
 	m := e.waitPush("tok-bob", 1)[0]
-	if m.Channel != push.ChannelBigFiles || m.Data["big"] != "true" || m.Body != "Sent a 21 MB video · download within 3 days" || m.Title != "alice" {
+	if m.Channel != "" || m.Body != "🎥 Video" || m.Title != "alice" {
 		t.Fatalf("private push %+v", m)
 	}
 	e.expect(e.do("POST", "/api/chats/message", alice.Token, map[string]any{"to_id": g, "type": "public", "media": []string{grp}}), 200)
-	if m := e.waitPush("tok-bob", 2)[1]; m.Channel != push.ChannelBigFiles || m.Body != "alice: sent a 21 MB video · download within 3 days" {
+	if m := e.waitPush("tok-bob", 2)[1]; m.Channel != "" || m.Body != "alice: 🎥 Video" {
 		t.Fatalf("group push %+v", m)
 	}
 	e.waitPush("tok-carol", 1)
@@ -53,9 +54,14 @@ func TestBigFilePushes(t *testing.T) {
 	// carol downloads hers; bob downloads nothing
 	e.expect(e.do("GET", "/api/media/"+grp, carol.Token, nil), 200)
 
-	// 2 hours before they're deleted, the hourly cleanup reminds bob (twice:
+	// not yet the last day: no reminder
+	if err := e.app.Cleanup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	e.waitPush("tok-bob", 2)
+	// on the last day (20 hours left), the hourly cleanup reminds bob (twice:
 	// one per file) and not carol, who has it already
-	if _, err := e.db.Exec(`UPDATE media SET expires_at = now() AT TIME ZONE 'UTC' + interval '2 hours' WHERE id = ANY($1)`, []string{priv, grp}); err != nil {
+	if _, err := e.db.Exec(`UPDATE media SET expires_at = now() AT TIME ZONE 'UTC' + interval '20 hours' WHERE id = ANY($1)`, []string{priv, grp}); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.app.Cleanup(context.Background()); err != nil {
@@ -64,12 +70,12 @@ func TestBigFilePushes(t *testing.T) {
 	got := e.waitPush("tok-bob", 4)[2:]
 	titles := map[string]push.Message{}
 	for _, r := range got {
-		if r.Channel != push.ChannelBigFiles || r.Data["type"] != push.KindBigFile || !strings.HasSuffix(r.Body, "will be deleted in 2 hours") {
+		if r.Channel != push.ChannelBigFiles || r.Data["type"] != push.KindBigFile || !strings.HasSuffix(r.Body, "will be deleted in 20 hours") {
 			t.Fatalf("reminder %+v", r)
 		}
 		titles[r.Title] = r
 	}
-	if p, ok := titles["alice"]; !ok || p.Body != "Video from alice will be deleted in 2 hours" || p.Data["media_id"] != priv {
+	if p, ok := titles["alice"]; !ok || p.Body != "Video from alice will be deleted in 20 hours" || p.Data["media_id"] != priv {
 		t.Fatalf("private reminder %+v", titles)
 	}
 	if p, ok := titles["crew"]; !ok || p.Data["group_id"] != g || p.Data["media_id"] != grp {
