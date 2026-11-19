@@ -54,6 +54,9 @@ func (a *App) Cleanup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if _, err := q.DeleteExpiredNotes(ctx, ts(now)); err != nil {
+		a.logger.WarnContext(ctx, "failed to delete expired notes", "error", err)
+	}
 	if _, err := q.DeleteOldSentIDs(ctx, ts(now.Add(-sentIDKeep))); err != nil {
 		a.logger.WarnContext(ctx, "failed to delete old sent ids", "error", err)
 	}

@@ -147,9 +147,15 @@ SELECT l.other_id::uuid AS other_id, u.name AS other_name, u.display_name AS oth
               SELECT sm.created_at FROM seen_messages s JOIN message sm ON sm.id = s.message_id
               WHERE s.seen_id = @me::uuid AND s.chat_id = l.chat_key
           ), '-infinity'::timestamp)
-       )::int AS unread
+       )::int AS unread,
+       -- streak: days in a row; 0 when broken or when either of us hides streaks
+       (CASE WHEN st.done_day >= sqlc.arg(today)::date - 1 AND NOT u.hide_streaks
+                  AND NOT (SELECT v.hide_streaks FROM users v WHERE v.id = @me::uuid)
+             THEN st.count ELSE 0 END)::int AS streak,
+       COALESCE(st.done_day = sqlc.arg(today)::date - 1, false)::bool AS streak_yesterday
 FROM latest l
 JOIN users u ON u.id = l.other_id
+LEFT JOIN streaks st ON st.user_lo = LEAST(@me::uuid, l.other_id::uuid) AND st.user_hi = GREATEST(@me::uuid, l.other_id::uuid)
 ORDER BY l.created_at DESC, l.id DESC;
 
 -- name: ListGroupConversations :many
@@ -280,3 +286,24 @@ WHERE g.group_id = @group_id
   AND g.created_at >= (SELECT mt.joined_at FROM member_table mt WHERE mt.group_id = @group_id AND mt.member_id = @viewer::uuid)
 ORDER BY g.created_at ASC, g.id ASC
 LIMIT @lim;
+
+-- name: TouchStreak :exec
+-- @from sent @to a private message on @day: count the day once both did
+INSERT INTO streaks (user_lo, user_hi, lo_day, hi_day, done_day, count)
+VALUES (LEAST(@from_id::uuid, @to_id::uuid), GREATEST(@from_id::uuid, @to_id::uuid),
+        CASE WHEN @from_id::uuid < @to_id::uuid THEN sqlc.arg(day)::date END,
+        CASE WHEN @from_id::uuid > @to_id::uuid THEN sqlc.arg(day)::date END,
+        NULL, 0)
+ON CONFLICT (user_lo, user_hi) DO UPDATE SET
+    lo_day = CASE WHEN @from_id::uuid = streaks.user_lo THEN sqlc.arg(day)::date ELSE streaks.lo_day END,
+    hi_day = CASE WHEN @from_id::uuid = streaks.user_hi THEN sqlc.arg(day)::date ELSE streaks.hi_day END,
+    count = CASE
+        WHEN streaks.done_day IS NOT DISTINCT FROM sqlc.arg(day)::date THEN streaks.count
+        WHEN (CASE WHEN @from_id::uuid = streaks.user_lo THEN sqlc.arg(day)::date ELSE streaks.lo_day END) = sqlc.arg(day)::date
+         AND (CASE WHEN @from_id::uuid = streaks.user_hi THEN sqlc.arg(day)::date ELSE streaks.hi_day END) = sqlc.arg(day)::date
+        THEN CASE WHEN streaks.done_day = sqlc.arg(day)::date - 1 THEN streaks.count + 1 ELSE 1 END
+        ELSE streaks.count END,
+    done_day = CASE
+        WHEN (CASE WHEN @from_id::uuid = streaks.user_lo THEN sqlc.arg(day)::date ELSE streaks.lo_day END) = sqlc.arg(day)::date
+         AND (CASE WHEN @from_id::uuid = streaks.user_hi THEN sqlc.arg(day)::date ELSE streaks.hi_day END) = sqlc.arg(day)::date
+        THEN sqlc.arg(day)::date ELSE streaks.done_day END;

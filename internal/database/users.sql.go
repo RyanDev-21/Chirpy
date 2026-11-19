@@ -52,7 +52,7 @@ func (q *Queries) AreFriendsSQL(ctx context.Context, arg AreFriendsSQLParams) (b
 const createUser = `-- name: CreateUser :one
 INSERT INTO users(id, name, display_name, created_at, updated_at, email, password)
 VALUES (gen_random_uuid(), $1, $4, NOW(), NOW(), $2, $3)
-RETURNING id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen
+RETURNING id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks
 `
 
 type CreateUserParams struct {
@@ -91,6 +91,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.LastSeenAt,
 		&i.DisplayName,
 		&i.HideLastSeen,
+		&i.HideStreaks,
 	)
 	return i, err
 }
@@ -105,6 +106,27 @@ func (q *Queries) DeleteAvatar(ctx context.Context, userID uuid.UUID) error {
 	return err
 }
 
+const deleteExpiredNotes = `-- name: DeleteExpiredNotes :execrows
+DELETE FROM notes WHERE expires_at <= $1::timestamp
+`
+
+func (q *Queries) DeleteExpiredNotes(ctx context.Context, now pgtype.Timestamp) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredNotes, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteNote = `-- name: DeleteNote :exec
+DELETE FROM notes WHERE user_id = $1
+`
+
+func (q *Queries) DeleteNote(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteNote, userID)
+	return err
+}
+
 const deleteUser = `-- name: DeleteUser :exec
 DELETE FROM users
 `
@@ -112,6 +134,63 @@ DELETE FROM users
 func (q *Queries) DeleteUser(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, deleteUser)
 	return err
+}
+
+const friendNotes = `-- name: FriendNotes :many
+SELECT n.user_id, u.name, u.display_name, u.avatar_at, n.text, n.created_at, n.expires_at
+FROM notes n
+JOIN users u ON u.id = n.user_id
+WHERE n.expires_at > $1::timestamp
+  AND u.banned_at IS NULL
+  AND (n.user_id = $2::uuid OR n.user_id IN (
+      SELECT CASE WHEN r.user_id = $2::uuid THEN r.otherUser_id ELSE r.user_id END
+      FROM user_relationships r
+      WHERE r.status = 'confirm' AND (r.user_id = $2::uuid OR r.otherUser_id = $2::uuid)))
+ORDER BY (n.user_id = $2::uuid) DESC, n.created_at DESC
+`
+
+type FriendNotesParams struct {
+	Now pgtype.Timestamp
+	Me  uuid.UUID
+}
+
+type FriendNotesRow struct {
+	UserID      uuid.UUID
+	Name        string
+	DisplayName string
+	AvatarAt    pgtype.Timestamp
+	Text        string
+	CreatedAt   pgtype.Timestamp
+	ExpiresAt   pgtype.Timestamp
+}
+
+// my note and my friends' notes that haven't expired (not suspended users)
+func (q *Queries) FriendNotes(ctx context.Context, arg FriendNotesParams) ([]FriendNotesRow, error) {
+	rows, err := q.db.Query(ctx, friendNotes, arg.Now, arg.Me)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FriendNotesRow
+	for rows.Next() {
+		var i FriendNotesRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Name,
+			&i.DisplayName,
+			&i.AvatarAt,
+			&i.Text,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getAvatar = `-- name: GetAvatar :one
@@ -177,6 +256,22 @@ func (q *Queries) GetInterests(ctx context.Context, userID uuid.UUID) ([]string,
 	return items, nil
 }
 
+const getPrivacy = `-- name: GetPrivacy :one
+SELECT hide_last_seen, hide_streaks FROM users WHERE id = $1
+`
+
+type GetPrivacyRow struct {
+	HideLastSeen bool
+	HideStreaks  bool
+}
+
+func (q *Queries) GetPrivacy(ctx context.Context, id uuid.UUID) (GetPrivacyRow, error) {
+	row := q.db.QueryRow(ctx, getPrivacy, id)
+	var i GetPrivacyRow
+	err := row.Scan(&i.HideLastSeen, &i.HideStreaks)
+	return i, err
+}
+
 const getPublicProfile = `-- name: GetPublicProfile :one
 SELECT u.id, u.name, u.display_name, u.bio, u.avatar_at, u.location_id, u.discoverable FROM users u
 WHERE u.id = $1
@@ -220,7 +315,7 @@ func (q *Queries) GetPublicProfile(ctx context.Context, arg GetPublicProfilePara
 }
 
 const getUserInfoByEmail = `-- name: GetUserInfoByEmail :one
-SELECT id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen FROM users WHERE email = $1
+SELECT id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, error) {
@@ -247,12 +342,13 @@ func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, e
 		&i.LastSeenAt,
 		&i.DisplayName,
 		&i.HideLastSeen,
+		&i.HideStreaks,
 	)
 	return i, err
 }
 
 const getUserInfoByID = `-- name: GetUserInfoByID :one
-SELECT id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen FROM users WHERE id = $1
+SELECT id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, error) {
@@ -279,6 +375,7 @@ func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, erro
 		&i.LastSeenAt,
 		&i.DisplayName,
 		&i.HideLastSeen,
+		&i.HideStreaks,
 	)
 	return i, err
 }
@@ -390,7 +487,7 @@ func (q *Queries) RemoveOtherInterests(ctx context.Context, arg RemoveOtherInter
 const renameUser = `-- name: RenameUser :one
 UPDATE users SET name = $1, name_changed_at = $2::timestamp, updated_at = $2::timestamp
 WHERE id = $3 AND (name_changed_at IS NULL OR name_changed_at < $4::timestamp)
-RETURNING id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen
+RETURNING id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks
 `
 
 type RenameUserParams struct {
@@ -431,6 +528,7 @@ func (q *Queries) RenameUser(ctx context.Context, arg RenameUserParams) (User, e
 		&i.LastSeenAt,
 		&i.DisplayName,
 		&i.HideLastSeen,
+		&i.HideStreaks,
 	)
 	return i, err
 }
@@ -510,7 +608,7 @@ func (q *Queries) SetAvatar(ctx context.Context, arg SetAvatarParams) error {
 }
 
 const setBio = `-- name: SetBio :one
-UPDATE users SET bio = $1, updated_at = NOW() WHERE id = $2 RETURNING id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen
+UPDATE users SET bio = $1, updated_at = NOW() WHERE id = $2 RETURNING id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks
 `
 
 type SetBioParams struct {
@@ -542,6 +640,7 @@ func (q *Queries) SetBio(ctx context.Context, arg SetBioParams) (User, error) {
 		&i.LastSeenAt,
 		&i.DisplayName,
 		&i.HideLastSeen,
+		&i.HideStreaks,
 	)
 	return i, err
 }
@@ -588,6 +687,20 @@ func (q *Queries) SetHideLastSeen(ctx context.Context, arg SetHideLastSeenParams
 	return err
 }
 
+const setHideStreaks = `-- name: SetHideStreaks :exec
+UPDATE users SET hide_streaks = $1, updated_at = NOW() WHERE id = $2
+`
+
+type SetHideStreaksParams struct {
+	Hide bool
+	ID   uuid.UUID
+}
+
+func (q *Queries) SetHideStreaks(ctx context.Context, arg SetHideStreaksParams) error {
+	_, err := q.db.Exec(ctx, setHideStreaks, arg.Hide, arg.ID)
+	return err
+}
+
 const setLocation = `-- name: SetLocation :exec
 UPDATE users SET location_id = $1, location_country = $2, updated_at = NOW() WHERE id = $3
 `
@@ -601,6 +714,36 @@ type SetLocationParams struct {
 func (q *Queries) SetLocation(ctx context.Context, arg SetLocationParams) error {
 	_, err := q.db.Exec(ctx, setLocation, arg.LocationID, arg.Country, arg.ID)
 	return err
+}
+
+const setNote = `-- name: SetNote :one
+INSERT INTO notes (user_id, text, created_at, expires_at) VALUES ($1, $2, $3::timestamp, $4::timestamp)
+ON CONFLICT (user_id) DO UPDATE SET text = EXCLUDED.text, created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at
+RETURNING user_id, text, created_at, expires_at
+`
+
+type SetNoteParams struct {
+	UserID    uuid.UUID
+	Text      string
+	Now       pgtype.Timestamp
+	ExpiresAt pgtype.Timestamp
+}
+
+func (q *Queries) SetNote(ctx context.Context, arg SetNoteParams) (Note, error) {
+	row := q.db.QueryRow(ctx, setNote,
+		arg.UserID,
+		arg.Text,
+		arg.Now,
+		arg.ExpiresAt,
+	)
+	var i Note
+	err := row.Scan(
+		&i.UserID,
+		&i.Text,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
 }
 
 const updatePassword = `-- name: UpdatePassword :exec

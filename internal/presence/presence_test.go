@@ -36,6 +36,12 @@ func (f *fakeDB) SetHideLastSeen(_ context.Context, a database.SetHideLastSeenPa
 	f.hide[a.ID] = a.Hide
 	return nil
 }
+func (f *fakeDB) SetHideStreaks(context.Context, database.SetHideStreaksParams) error { return nil }
+func (f *fakeDB) GetPrivacy(_ context.Context, id uuid.UUID) (database.GetPrivacyRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return database.GetPrivacyRow{HideLastSeen: f.hide[id]}, nil
+}
 func (f *fakeDB) TouchLastSeen(_ context.Context, a database.TouchLastSeenParams) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

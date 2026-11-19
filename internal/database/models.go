@@ -154,6 +154,13 @@ type MessageReaction struct {
 	CreatedAt pgtype.Timestamp
 }
 
+type Note struct {
+	UserID    uuid.UUID
+	Text      string
+	CreatedAt pgtype.Timestamp
+	ExpiresAt pgtype.Timestamp
+}
+
 type NotificationPref struct {
 	UserID    uuid.UUID
 	Private   bool
@@ -208,6 +215,15 @@ type SentID struct {
 	CreatedAt pgtype.Timestamp
 }
 
+type Streak struct {
+	UserLo  uuid.UUID
+	UserHi  uuid.UUID
+	LoDay   pgtype.Date
+	HiDay   pgtype.Date
+	DoneDay pgtype.Date
+	Count   int32
+}
+
 type User struct {
 	ID              uuid.UUID
 	CreatedAt       time.Time
@@ -229,6 +245,7 @@ type User struct {
 	LastSeenAt      pgtype.Timestamp
 	DisplayName     string
 	HideLastSeen    bool
+	HideStreaks     bool
 }
 
 type UserAvatar struct {

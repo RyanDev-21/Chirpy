@@ -48,6 +48,7 @@ func (f *fakeRepo) AddOnce(ctx context.Context, _ string, m MessageMetaDataRes, 
 	f.history = append(f.history, m)
 	return true, nil
 }
+func (f *fakeRepo) TouchStreak(context.Context, uuid.UUID, uuid.UUID, time.Time) error { return nil }
 func (f *fakeRepo) SentID(_ context.Context, from, client uuid.UUID) (uuid.UUID, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -639,5 +640,16 @@ func TestClientMsgIDOnlyForSender(t *testing.T) {
 	}
 	if c := last(theirs).ClientMsgID; c != nil || last(theirs).MsgInfo.Msg.ClientMsgID != "" {
 		t.Fatalf("recipient sees %v", c)
+	}
+}
+
+func TestStreakDay(t *testing.T) {
+	// 23:30 UTC is 06:30 the next day in Thailand
+	got := StreakDay(time.Date(2026, 11, 19, 23, 30, 0, 0, time.UTC))
+	if want := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if got := StreakDay(time.Date(2026, 11, 19, 16, 59, 0, 0, time.UTC)); got.Day() != 19 {
+		t.Fatalf("23:59 in Thailand is still the 19th, got %v", got)
 	}
 }

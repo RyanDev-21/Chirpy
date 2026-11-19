@@ -27,6 +27,7 @@ import (
 	"RyanDev-21.com/Chirpy/internal/friends"
 	"RyanDev-21.com/Chirpy/internal/groups"
 	"RyanDev-21.com/Chirpy/internal/media"
+	"RyanDev-21.com/Chirpy/internal/notes"
 	"RyanDev-21.com/Chirpy/internal/platform/mail"
 	"RyanDev-21.com/Chirpy/internal/platform/migrate"
 	"RyanDev-21.com/Chirpy/internal/platform/queue"
@@ -86,6 +87,7 @@ type handlers struct {
 	reports  *reports.Handler
 	media    *media.Handler
 	presence *presence.Handler
+	notes    *notes.Handler
 	calls    *calls.Handler
 	search   *search.Handler
 }
@@ -299,6 +301,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		reports:  reports.NewHandler(reports.NewService(db, logger)),
 		media:    media.NewHandler(a.media),
 		presence: presence.NewHandler(presenceSvc),
+		notes:    notes.NewHandler(queries),
 		calls:    calls.NewHandler(calls.NewTURN(cfg.TURNKeyID, cfg.TURNToken), queries, logger),
 		search:   search.NewHandler(search.NewService(queries, chatRepo)),
 	}

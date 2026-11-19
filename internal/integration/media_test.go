@@ -211,7 +211,7 @@ func TestMediaValidationAndLimits(t *testing.T) {
 	for _, c := range []struct {
 		kind, ct string
 		size     int
-	}{{"image", "image/gif", 10}, {"image", "image/jpeg", 6 << 20}, {"video", "video/mp4", 101 << 20}, {"audio", "audio/mpeg", 10}, {"image", "image/jpeg", 0}} {
+	}{{"image", "image/svg+xml", 10}, {"image", "image/jpeg", 6 << 20}, {"video", "video/mp4", 101 << 20}, {"audio", "audio/mpeg", 10}, {"image", "image/jpeg", 0}} {
 		if got := post(c.kind, c.ct, c.size); got != 400 {
 			t.Errorf("%+v: %d, want 400", c, got)
 		}

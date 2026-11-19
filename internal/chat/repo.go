@@ -19,6 +19,8 @@ import (
 type ChatRepo interface {
 	AddPrivate(ctx context.Context, m MessageMetaDataRes) error
 	AddPublic(ctx context.Context, m MessageMetaDataRes) error
+	// TouchStreak counts from's private message to `to` for the streak day.
+	TouchStreak(ctx context.Context, from, to uuid.UUID, day time.Time) error
 	// AddOnce saves m unless its sender already used client (false then).
 	AddOnce(ctx context.Context, kind string, m MessageMetaDataRes, client uuid.UUID) (bool, error)
 	// SentID is the message a sender's client id was used for (7 days).
@@ -97,6 +99,12 @@ func pgOptUUID(s string) pgtype.UUID {
 
 func pgText(s string) pgtype.Text         { return pgtype.Text{String: s, Valid: true} }
 func pgTime(t time.Time) pgtype.Timestamp { return pgtype.Timestamp{Time: t, Valid: true} }
+
+func pgDate(t time.Time) pgtype.Date { return pgtype.Date{Time: t, Valid: true} }
+
+func (r *chatRepo) TouchStreak(ctx context.Context, from, to uuid.UUID, day time.Time) error {
+	return r.q.TouchStreak(ctx, database.TouchStreakParams{FromID: from, ToID: to, Day: pgDate(day)})
+}
 
 func optUUID(u pgtype.UUID) *uuid.UUID {
 	if !u.Valid {
@@ -374,7 +382,7 @@ func lastMessage(id uuid.UUID, content pgtype.Text, from pgtype.UUID, at pgtype.
 // Conversations lists private chats and groups, most recent activity first;
 // groups without messages come last, by name.
 func (r *chatRepo) Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error) {
-	priv, err := r.q.ListPrivateConversations(ctx, me)
+	priv, err := r.q.ListPrivateConversations(ctx, database.ListPrivateConversationsParams{Me: me, Today: pgDate(StreakDay(time.Now()))})
 	if err != nil {
 		return nil, err
 	}
@@ -385,7 +393,8 @@ func (r *chatRepo) Conversations(ctx context.Context, me uuid.UUID) ([]Conversat
 	out := make([]Conversation, 0, len(priv)+len(grp))
 	for _, p := range priv {
 		out = append(out, Conversation{Type: TypePrivate, ID: p.OtherID, Name: p.OtherName, DisplayName: users.ShownName(p.OtherName, p.OtherDisplay), AvatarURL: users.AvatarURLFrom(p.OtherID, p.OtherAvatarAt),
-			LastMessage: lastMessage(p.LastID, p.LastContent, p.LastFrom, p.LastAt, p.LastDeleted), Unread: int(p.Unread)})
+			LastMessage: lastMessage(p.LastID, p.LastContent, p.LastFrom, p.LastAt, p.LastDeleted), Unread: int(p.Unread),
+			Streak: int(p.Streak), StreakEndsSoon: p.Streak > 0 && p.StreakYesterday})
 	}
 	for _, g := range grp {
 		out = append(out, Conversation{Type: TypePublic, ID: g.GroupID, Name: g.GroupName, DisplayName: g.GroupName, AvatarURL: groups.AvatarURL(g.GroupID, g.GroupAvatarAt),

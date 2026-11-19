@@ -421,6 +421,24 @@ fail as if your account didn't exist (`404`).
   newest first. `display_name` falls back to `name`; `avatar_url` is `null`
   without a picture.
 
+## Notes
+
+A short text shown to your friends for **24 hours** ("at the gym", "🎂
+today!"). One note per person; a new one replaces the old.
+
+- `PUT /api/users/me/note` `{"text":"…"}` →
+  `200 {"text","created_at","expires_at"}`. 1–60 characters after trimming;
+  emoji are fine, line breaks and invisible characters are `400`. 10/minute.
+- `DELETE /api/users/me/note` → `204` (also if you have none).
+- `GET /api/notes` →
+  `200 {"notes":[{"user_id","name","display_name","avatar_url","text","created_at","expires_at"}]}`:
+  yours first, then your friends', newest first. Only notes that haven't
+  expired; not from suspended accounts. Strangers never see your note, and
+  blocking someone (which ends the friendship) hides it from them.
+
+Refetch on app start and when the friends screen opens; there's no
+WebSocket event for notes in v1.
+
 ## Reporting a user
 
 `POST /api/reports` with
@@ -509,7 +527,8 @@ yours** (it works both ways, as in WhatsApp): show nothing then, neither
 "online" nor a time.
 
 Turn it on or off: `PUT /api/users/me/privacy` `{"hide_last_seen":true}` →
-`200 {"hide_last_seen":true}` (`400` if not a boolean; 10/minute). Online
+`200 {"hide_last_seen":true,"hide_streaks":false}` (send either field or
+both; `400` if neither or not a boolean; 10/minute; the answer has both). Online
 friends get a `Presence` event right away. After turning it **off**, refetch
 `GET /api/friends/presence`, since you can see others again.
 
@@ -996,7 +1015,17 @@ before you joined don't count. For groups, `last_message.from_name` is the
 sender's display name (or username), for previews like "Jon: standup?"; it
 is left out for private chats and when the sender deleted their account.
 `from_id` is the zero UUID when the sender
-deleted their account. If the last message was deleted for everyone,
+deleted their account.
+
+**Streaks** (private chats only): `"streak": 5` is how many days in a row you
+and this friend both sent each other at least one message. Days run midnight
+to midnight **Thailand time (UTC+7)** for everyone. `"streak_ends_soon":
+true` means yesterday counted but today hasn't yet (show ⏳). Both are left
+out when there's no streak, when it broke (a day was missed), or when either
+of you turned streaks off (`PUT /api/users/me/privacy`
+`{"hide_streaks":true}`; also in `GET /api/users/me`). Forwarded messages
+don't count. Suggestion: show the 🔥 from 3 days. There are no streak push
+notifications, on purpose. If the last message was deleted for everyone,
 `last_message.deleted` is `true` and `msg` is `""`. If its sender is
 suspended, `last_message.sender_suspended` is `true` and `msg` is `""`.
 
@@ -1076,7 +1105,7 @@ If the server has no storage configured, these routes return `503`.
 
 | | Accepted types | Max size | Length |
 |---|---|---|---|
-| `image` | `image/jpeg`, `image/png`, `image/webp`, `image/heic` | 5 MB | |
+| `image` | `image/jpeg`, `image/png`, `image/webp`, `image/heic`, `image/gif` | 5 MB | |
 | `video` | `video/mp4`, `video/quicktime`, `video/webm` | 100 MB | 3 min up to 16 MB, 10 min above |
 | `file` | see below, with `file_name` | 100 MB | |
 | `voice` | `audio/ogg`, `audio/opus`, `audio/webm` (Opus), `audio/mp4`, `audio/aac`, `audio/x-m4a` (AAC), `audio/mpeg` | 10 MB | up to 15 min, `duration_ms` required |
@@ -1095,6 +1124,13 @@ Shrink before uploading: photos to ~1600 px, videos to 720p (a 720p minute
 is ~10–15 MB, so most videos stay small); make the video thumbnail on the
 phone. At most **300 MB and 300 files per user per 24 h** (`429`; forward copies count too), **10 per message**.
 When storage is nearly full, new uploads get `507` for a while.
+
+**GIFs** from the keyboard (Gboard's GIF search, for example): accept them
+as image content in the text field (Android `commitContent` / rich content
+insertion), then upload them as `kind: "image"`, `image/gif`, like a photo.
+No GIF provider is involved, so there is nothing to sign up for and no data
+goes to a third party. Optional: convert to MP4 on the phone (about 5x
+smaller) and send as a muted video instead.
 
 **Files** (`kind: "file"`) need `file_name`, and its extension must match
 `content_type`:
