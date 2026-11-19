@@ -23,14 +23,14 @@ func TestFilesAndLargeMedia(t *testing.T) {
 	e.expect(media(map[string]any{"kind": "file", "content_type": "application/pdf", "size": 101 << 20, "file_name": "big.pdf"}), 400)
 	e.expect(media(map[string]any{"kind": "image", "content_type": "image/png", "size": 100, "file_name": "x.png"}), 400) // names are for files
 
-	// video tiers: 3 minutes when small, 10 minutes and 24 hours when large
+	// video tiers: 3 minutes when small, 10 minutes and 3 days when large
 	e.expect(media(map[string]any{"kind": "video", "content_type": "video/mp4", "size": 10 << 20, "duration_ms": 8 * 60_000}), 400)
 	e.expect(media(map[string]any{"kind": "video", "content_type": "video/mp4", "size": 50 << 20, "duration_ms": 11 * 60_000}), 400)
 	var large upload
 	e.expect(media(map[string]any{"kind": "video", "content_type": "video/mp4", "size": 50 << 20, "duration_ms": 8 * 60_000}), 201).json(t, &large)
 	var hours float64
-	if err := e.db.QueryRow(`SELECT EXTRACT(EPOCH FROM expires_at - created_at) / 3600 FROM media WHERE id = $1`, large.ID).Scan(&hours); err != nil || hours != 24 {
-		t.Fatalf("large video lifetime %v h (%v), want 24", hours, err)
+	if err := e.db.QueryRow(`SELECT EXTRACT(EPOCH FROM expires_at - created_at) / 3600 FROM media WHERE id = $1`, large.ID).Scan(&hours); err != nil || hours != 72 {
+		t.Fatalf("large video lifetime %v h (%v), want 72", hours, err)
 	}
 	var small upload
 	e.expect(media(map[string]any{"kind": "video", "content_type": "video/mp4", "size": 10 << 20, "duration_ms": 2 * 60_000}), 201).json(t, &small)
