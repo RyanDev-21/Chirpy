@@ -86,3 +86,23 @@ SELECT count(*)::bigint FROM media WHERE owner_id = @owner_id AND created_at > @
 -- the owner's own pending photo becomes a story's; it expires with it
 UPDATE media SET status = 'ready', chat_type = 'story', chat_id = @owner_id, message_id = @story_id, expires_at = @expires_at::timestamp
 WHERE id = @id AND owner_id = @owner_id AND status = 'pending' AND deleted_at IS NULL AND kind = 'image';
+
+-- name: ClaimExpiringBigMedia :many
+-- big files in chats that expire before @until and haven't been reminded
+-- about: marked as reminded now, so the reminder goes out once
+UPDATE media SET reminded_at = @now::timestamp
+WHERE id IN (
+    SELECT id FROM media
+    WHERE deleted_at IS NULL AND status = 'ready' AND reminded_at IS NULL AND owner_id IS NOT NULL
+      AND size > @large::bigint AND chat_type IN ('private', 'public')
+      AND expires_at > @now::timestamp AND expires_at <= @until::timestamp
+    ORDER BY expires_at
+    LIMIT 200)
+RETURNING id, owner_id, kind, chat_type, chat_id, message_id, created_at, expires_at;
+
+-- name: MediaDownloaders :many
+SELECT media_id, user_id FROM media_downloads WHERE media_id = ANY(@ids::uuid[]);
+
+-- name: GroupMembersJoinedBy :many
+-- members of @group_id who had joined by @at (so they can see a message from then)
+SELECT member_id FROM member_table WHERE group_id = @group_id AND joined_at <= @at::timestamp;

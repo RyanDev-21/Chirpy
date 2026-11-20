@@ -60,6 +60,7 @@ type App struct {
 	limMu     sync.Mutex
 	memLimits map[string]ratelimit.Limiter
 	pushSvc   *push.Service
+	notifier  push.Notifier // nil when push is off
 	admin     *admin.Service
 	media     *media.Service
 	hub       *ws.Hub
@@ -237,6 +238,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	a.pushSvc = push.NewService(queries, pushSender, a.hub, pushNames{users: a.users, groups: a.groups}, logger)
 	if pushSender != nil {
 		d := push.NewDispatcher(a.queue, logger)
+		a.notifier = d
 		a.chat.SetNotifier(d)
 		a.friends.SetNotifier(d)
 		a.groups.SetNotifier(d)
