@@ -428,7 +428,8 @@ please confirm or comment in `SERVER_STATUS.md`, and send the first catalog
 (the ids below are examples). The server side gets built after the server
 move.
 
-Every user has a low-poly **character** they make at sign-up. Animated
+Every user has a low-poly **character**, made right after creating the
+account (first onboarding step). Animated
 messages play an animation **with the sender's character**. The app ships
 all models, textures and animations; the server only stores which pieces
 someone picked (about 200 bytes) and which animation a message plays.
@@ -484,9 +485,21 @@ person is shown:
 - private chats in `GET /api/chats`;
 - story and note authors.
 
-It's `null` for accounts that haven't made one yet (older accounts). Make
-the editor required at sign-up in the app, with a "randomize" button; the
-server doesn't force it.
+It's `null` for accounts that haven't made one yet (older accounts, or
+someone who closed the app during onboarding).
+
+**Onboarding flow** (in the app; the server doesn't force it):
+1. Create the account (email + code, or Google).
+2. Display name.
+3. Character: start from a random one, so "Done" works right away; with a
+   🎲 randomize button. Saving uploads the character and its snapshot as the
+   profile picture.
+4. Into the app.
+
+While `GET /api/users/me` says `character: null`, open step 3 again at
+start. Saving needs a signed-in user, so the character always comes after
+the account. Animated example characters can still be shown on the welcome
+and tour screens before sign-up.
 
 **Profile picture:** after saving, render a snapshot of the character and
 upload it with `PUT /api/users/me/avatar`, unless the user chose a photo.
