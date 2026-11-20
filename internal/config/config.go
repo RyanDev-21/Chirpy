@@ -57,6 +57,11 @@ type Config struct {
 	// emails are printed to the log on PLATFORM=dev and refused elsewhere.
 	ResendAPIKey string
 	MailFrom     string
+	// SES* enable Amazon SES (no daily cap). With both SES and Resend set,
+	// SES sends and Resend is the fallback.
+	SESRegion          string
+	SESAccessKeyID     string
+	SESSecretAccessKey string
 	// GoogleClientIDs are the OAuth client IDs Google ID tokens may be
 	// issued to. For Android sign-in this is the *Web* client ID the app
 	// passes as serverClientId. Empty disables Google sign-in.
@@ -102,8 +107,8 @@ func (c Config) Warnings() []string {
 	if u, err := url.Parse(c.DatabaseURL); err == nil && u.Query().Get("sslmode") != "verify-full" {
 		w = append(w, "DB_URL does not use sslmode=verify-full: the database certificate is not verified")
 	}
-	if c.ResendAPIKey == "" {
-		w = append(w, "RESEND_API_KEY is not set: sign-up and password reset cannot send codes")
+	if c.ResendAPIKey == "" && c.SESAccessKeyID == "" {
+		w = append(w, "neither SES_ACCESS_KEY_ID nor RESEND_API_KEY is set: sign-up and password reset cannot send codes")
 	}
 	if c.RedisURL != "" && !strings.HasPrefix(c.RedisURL, "rediss://") {
 		w = append(w, "REDIS_URL is not rediss://: Redis traffic is not encrypted")
@@ -128,6 +133,9 @@ func Load() (Config, error) {
 		RedisPass:              os.Getenv("REDIS_PASS"),
 		JWTSecret:              os.Getenv("SECRET"),
 		ResendAPIKey:           os.Getenv("RESEND_API_KEY"),
+		SESRegion:              getenv("SES_REGION", "ap-southeast-1"),
+		SESAccessKeyID:         os.Getenv("SES_ACCESS_KEY_ID"),
+		SESSecretAccessKey:     os.Getenv("SES_SECRET_ACCESS_KEY"),
 		MailFrom:               getenv("MAIL_FROM", "Chirpy <no-reply@mail.ponypigeon.com>"),
 		GoogleClientIDs:        splitList(os.Getenv("GOOGLE_CLIENT_IDS")),
 		TURNKeyID:              os.Getenv("CF_TURN_KEY_ID"),
@@ -192,6 +200,9 @@ func (c Config) validate() error {
 	}
 	if c.RateLimitBackend != "redis" && c.RateLimitBackend != "memory" {
 		errs = append(errs, errors.New(`RATE_LIMIT_BACKEND must be "redis" or "memory"`))
+	}
+	if (c.SESAccessKeyID == "") != (c.SESSecretAccessKey == "") {
+		errs = append(errs, errors.New("set both SES_ACCESS_KEY_ID and SES_SECRET_ACCESS_KEY, or neither"))
 	}
 	if c.CallMinutesPerDay < 0 {
 		errs = append(errs, errors.New("CALL_MINUTES_PER_DAY must be 0 (no cap) or more"))
