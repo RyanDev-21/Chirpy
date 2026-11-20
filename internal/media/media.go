@@ -37,11 +37,10 @@ const (
 	maxSmallVideoMs = 3*60_000 + 5_000
 	maxLargeVideoMs = 10*60_000 + 5_000
 
-	// R2's free tier is 10 GB: new uploads stop at 9.5 GB, and the cleanup
-	// deletes least-recently-downloaded files above 9 GB down to 8 GB.
-	uploadCapBytes = 9_500 << 20
-	lruHighBytes   = 9 << 30
-	lruLowBytes    = 8 << 30
+	// DefaultStorageBytes is R2's free 10 GB (MEDIA_STORAGE_GB changes it).
+	// New uploads stop at 95% of the limit, and the cleanup deletes
+	// least-recently-downloaded files above 90% down to 80%.
+	DefaultStorageBytes = 10_000_000_000 // decimal GB, as R2 bills
 
 	maxLifetime   = 7 * 24 * time.Hour
 	largeLifetime = 3 * 24 * time.Hour
@@ -102,10 +101,18 @@ type Service struct {
 	members Members
 	logger  *slog.Logger
 	now     func() time.Time
+	limit   int64 // storage in R2 (bytes)
 }
 
 func NewService(q *database.Queries, store Storage, members Members, logger *slog.Logger) *Service {
-	return &Service{q: q, store: store, members: members, logger: logger, now: func() time.Time { return time.Now().UTC() }}
+	return &Service{q: q, store: store, members: members, logger: logger, now: func() time.Time { return time.Now().UTC() }, limit: DefaultStorageBytes}
+}
+
+// SetStorageLimit sets how much R2 storage media may use (0: the default).
+func (s *Service) SetStorageLimit(bytes int64) {
+	if bytes > 0 {
+		s.limit = bytes
+	}
 }
 
 func key(id uuid.UUID) string { return "m/" + id.String() }
@@ -211,7 +218,7 @@ func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, req NewUploadR
 	if err != nil {
 		return Upload{}, err
 	}
-	if stored+size > uploadCapBytes {
+	if stored+size > s.limit*95/100 {
 		return Upload{}, ErrStorageFull
 	}
 	id, err := uuid.NewV7()
@@ -477,7 +484,7 @@ func (s *Service) Cleanup(ctx context.Context) (int, error) {
 	}
 	deleted := s.remove(ctx, ids, "expired")
 	stored, err := s.q.MediaStoredBytes(ctx)
-	if err != nil || stored <= lruHighBytes {
+	if err != nil || stored <= s.limit*90/100 {
 		return deleted, err
 	}
 	rows, err := s.q.LeastRecentlyUsedMedia(ctx)
@@ -486,13 +493,13 @@ func (s *Service) Cleanup(ctx context.Context) (int, error) {
 	}
 	var lru []uuid.UUID
 	for _, r := range rows {
-		if stored <= lruLowBytes {
+		if stored <= s.limit*80/100 {
 			break
 		}
 		lru = append(lru, r.ID)
 		stored -= r.Size
 	}
-	s.logger.WarnContext(ctx, "media storage above 9 GB: deleting least recently downloaded files", "files", len(lru))
+	s.logger.WarnContext(ctx, "media storage above 90% of the limit: deleting least recently downloaded files", "files", len(lru))
 	return deleted + s.remove(ctx, lru, "lru"), nil
 }
 
@@ -676,7 +683,7 @@ func (s *Service) Duplicate(ctx context.Context, owner, srcID uuid.UUID) (uuid.U
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if stored+m.Size > uploadCapBytes {
+	if stored+m.Size > s.limit*95/100 {
 		return uuid.Nil, ErrStorageFull
 	}
 	id, err := uuid.NewV7()

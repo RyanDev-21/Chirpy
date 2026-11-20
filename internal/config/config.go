@@ -47,6 +47,9 @@ type Config struct {
 	// CallMinutesPerDay caps each user's answered call time in 24 h, so
 	// the free TURN relay allowance can't be used up (0 = no cap).
 	CallMinutesPerDay int
+	// MediaStorageGB is how much R2 storage photos and files may use
+	// (10 = R2's free tier; more costs about $0.015 per GB and month).
+	MediaStorageGB int
 
 	JWTSecret string
 	// Token lifetimes; zero means the defaults (15 minutes, 30 days).
@@ -173,6 +176,9 @@ func Load() (Config, error) {
 	if c.CallMinutesPerDay, err = atoi("CALL_MINUTES_PER_DAY", 180); err != nil {
 		return c, err
 	}
+	if c.MediaStorageGB, err = atoi("MEDIA_STORAGE_GB", 10); err != nil {
+		return c, err
+	}
 	if c.RedisDB, err = strconv.Atoi(getenv("REDIS_DB", "0")); err != nil {
 		return c, fmt.Errorf("REDIS_DB: %w", err)
 	}
@@ -192,6 +198,9 @@ func (c Config) validate() error {
 	}
 	if c.RateLimitBackend != "redis" && c.RateLimitBackend != "memory" {
 		errs = append(errs, errors.New(`RATE_LIMIT_BACKEND must be "redis" or "memory"`))
+	}
+	if c.MediaStorageGB < 1 {
+		errs = append(errs, errors.New("MEDIA_STORAGE_GB must be at least 1"))
 	}
 	if c.CallMinutesPerDay < 0 {
 		errs = append(errs, errors.New("CALL_MINUTES_PER_DAY must be 0 (no cap) or more"))
