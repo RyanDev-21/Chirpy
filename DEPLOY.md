@@ -99,20 +99,13 @@ In **Google Cloud Console → APIs & Services**:
    app and the SHA-1 of its signing key (`./gradlew signingReport`). The
    Android client ID itself is not used by the server.
 
-## Stage 2: VPS (~$7/month)
+## Stage 2: one server (Azure for Students VM)
 
-When the app is in real use, move to one always-on server (1-2 GB RAM)
-running the app, Postgres and Redis with Docker Compose:
-
-- set `QUEUE_BACKEND=redis` (durable queue; no per-command billing)
-- run Postgres with a daily `pg_dump` backup copied off the machine
-- put Caddy in front for automatic HTTPS on `api.ponypigeon.com`, and keep
-  `TRUSTED_PROXIES=1` (Caddy is then the only public proxy; it appends the
-  client IP to `X-Forwarded-For`)
-- keep monitoring on Grafana Cloud's free tier rather than self-hosting
-  Prometheus/Loki/Grafana on a small server
-
-A `docker-compose.prod.yml` for this stage comes with the move.
+Everything that ran on Render, Neon and Upstash runs on one VM with Docker
+Compose: the API, Postgres, Redis (durable queue, `QUEUE_BACKEND=redis`)
+and Caddy (HTTPS, `TRUSTED_PROXIES=1`). Backups run on the VM to the same
+R2 bucket, in the same format. Monitoring stays on Grafana Cloud. The kit
+and the step-by-step move: **[deploy/vps/README.md](deploy/vps/README.md)**.
 
 ## Environment reference
 

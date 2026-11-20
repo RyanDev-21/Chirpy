@@ -1,0 +1,104 @@
+# Chirpy on one small server (Azure B2ats v2: 2 vCPU, 1 GB RAM): the API,
+# Postgres, Redis and Caddy (HTTPS). Setup and moving: README.md here.
+#
+#   cd ~/chirpy/deploy/vps
+#   VERSION=$(git rev-parse HEAD) docker compose up -d --build
+#
+# Secrets live in .env next to this file (copy .env.example), never in git.
+name: chirpy
+
+services:
+  api:
+    build:
+      context: ../..
+      args:
+        VERSION: ${VERSION:-}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_URL: postgres://chirpy:${POSTGRES_PASSWORD}@postgres:5432/chirpy?sslmode=disable
+      REDIS_ADDR: redis:6379
+      REDIS_PASS: ${REDIS_PASSWORD}
+      QUEUE_BACKEND: redis      # Redis is local now: no per-command bill, jobs survive crashes
+      RATE_LIMIT_BACKEND: redis
+      TRUSTED_PROXIES: "1"      # only Caddy in front (Cloudflare DNS-only, grey cloud)
+      DB_MAX_CONNS: "10"
+      DB_MAX_IDLE_TIME: 30m     # local Postgres: no need to let it sleep
+      GOMEMLIMIT: 300MiB        # the Go runtime collects harder before using more
+      PORT: "8080"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    mem_limit: 400m
+    logging: &logs
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
+
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: chirpy
+      POSTGRES_USER: chirpy
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # sized for 1 GB of RAM shared with the API and Redis
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=384MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=30
+      -c wal_compression=on
+      -c log_min_duration_statement=1000
+    volumes: ["pgdata:/var/lib/postgresql"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chirpy -d chirpy"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 350m
+    shm_size: 128m
+    logging: *logs
+
+  redis:
+    image: redis:8
+    restart: unless-stopped
+    # the queue lives in Redis now, so keep it on disk (appendonly) and never
+    # evict it; 64 MB is far more than Chirpy needs
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --appendonly yes
+      --maxmemory 64mb
+      --maxmemory-policy noeviction
+    volumes: ["redisdata:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    mem_limit: 100m
+    logging: *logs
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      API_DOMAIN: ${API_DOMAIN:-api.ponypigeon.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on: [api]
+    mem_limit: 100m
+    logging: *logs
+
+volumes:
+  pgdata:
+  redisdata:
+  caddydata:
+  caddyconfig:
