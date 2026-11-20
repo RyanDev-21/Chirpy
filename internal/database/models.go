@@ -123,6 +123,7 @@ type Medium struct {
 	HasThumbnail bool
 	FileName     pgtype.Text
 	Waveform     []byte
+	RemindedAt   pgtype.Timestamp
 }
 
 type MemberTable struct {
