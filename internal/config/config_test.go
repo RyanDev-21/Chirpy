@@ -128,3 +128,16 @@ func TestSESKeysTogether(t *testing.T) {
 		t.Fatalf("%v %+v", err, cfg.SESRegion)
 	}
 }
+
+func TestMediaStorageGB(t *testing.T) {
+	t.Setenv("ENV_FILE", "/dev/null")
+	t.Setenv("DB_URL", "postgres://x")
+	t.Setenv("SECRET", strings.Repeat("s", 32))
+	if cfg, err := Load(); err != nil || cfg.MediaStorageGB != 10 {
+		t.Fatalf("default: %d %v", cfg.MediaStorageGB, err)
+	}
+	t.Setenv("MEDIA_STORAGE_GB", "0")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MEDIA_STORAGE_GB") {
+		t.Fatalf("0 accepted: %v", err)
+	}
+}

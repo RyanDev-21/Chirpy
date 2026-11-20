@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"RyanDev-21.com/Chirpy/internal/config"
 	"bytes"
 	"context"
 	"image"
@@ -465,4 +466,16 @@ func pngFrame(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return b.Bytes()
+}
+
+// MEDIA_STORAGE_GB moves the "storage full" line.
+func TestMediaStorageLimitSetting(t *testing.T) {
+	e := newEnv(t, func(c *config.Config) { c.MediaStorageGB = 20 })
+	alice := e.signup("alice")
+	// 9.9 GB stored: full on the free 10 GB, fine with 20 GB
+	if _, err := e.db.Exec(`INSERT INTO media (id, owner_id, kind, content_type, size, created_at, expires_at, last_access_at)
+		VALUES (gen_random_uuid(), $1, 'video', 'video/mp4', 9900000000, NOW() - interval '2 days', NOW() + interval '7 days', NOW())`, alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.expect(e.do("POST", "/api/media", alice.Token, map[string]any{"kind": "image", "content_type": "image/jpeg", "size": 100}), 201)
 }

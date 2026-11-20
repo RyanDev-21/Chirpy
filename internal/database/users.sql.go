@@ -759,3 +759,22 @@ func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) 
 	_, err := q.db.Exec(ctx, updatePassword, arg.Password, arg.ID)
 	return err
 }
+
+const upgradePasswordHash = `-- name: UpgradePasswordHash :execrows
+UPDATE users SET password = $1 WHERE id = $2 AND password = $3
+`
+
+type UpgradePasswordHashParams struct {
+	NewHash pgtype.Text
+	ID      uuid.UUID
+	OldHash pgtype.Text
+}
+
+// same password, newer hash settings; only if it wasn't changed meanwhile
+func (q *Queries) UpgradePasswordHash(ctx context.Context, arg UpgradePasswordHashParams) (int64, error) {
+	result, err := q.db.Exec(ctx, upgradePasswordHash, arg.NewHash, arg.ID, arg.OldHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
