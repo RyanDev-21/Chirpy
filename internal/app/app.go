@@ -252,6 +252,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		store = media.NewR2(cfg.R2AccountID, cfg.R2Bucket, cfg.R2AccessKeyID, cfg.R2SecretAccessKey)
 	}
 	a.media = media.NewService(queries, store, a.groups, logger)
+	a.media.SetStorageLimit(int64(cfg.MediaStorageGB) * 1_000_000_000)
 	a.groups.OnDelete(a.media.ExpireGroup)
 	if store != nil {
 		a.chat.SetMedia(a.media)

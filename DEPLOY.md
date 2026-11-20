@@ -230,6 +230,20 @@ per 24 hours, so the free TURN allowance (1,000 GB a month) can't be used
 up; 0 turns the cap off. The `ChirpyCallHoursHigh` alert fires above 300
 call hours a day.
 
+## Media storage limit
+
+`MEDIA_STORAGE_GB` (default 10, R2's free tier) is how much R2 storage
+photos, videos and files may use. New uploads stop at 95% (`507`), and the
+cleanup deletes the least recently downloaded files above 90% down to 80%.
+Above 10 GB, R2 charges about $0.015 per GB and month: add a payment method
+on Cloudflare and a billing alert first, then raise this (for example 50).
+
+## Version in logs
+
+The server logs and reports the deployed commit. On Render it comes from
+`RENDER_GIT_COMMIT`; elsewhere build the image with
+`docker build --build-arg VERSION=$(git rev-parse HEAD) .`
+
 ## When a service is down
 
 | Down | What happens |

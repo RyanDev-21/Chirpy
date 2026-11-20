@@ -2,7 +2,11 @@ package secure
 
 import (
 	"errors"
+	"github.com/alexedwards/argon2id"
 	"net/http"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -109,5 +113,54 @@ func TestMakeRefreshTokenIsRandom(t *testing.T) {
 	b, _ := MakeRefreshToken()
 	if len(a) != 64 || a == b {
 		t.Fatalf("unexpected refresh tokens %q %q", a, b)
+	}
+}
+
+// Hashes made with the old (64 MiB) settings still verify, and are marked
+// for an upgrade; new ones use the lighter OWASP settings.
+func TestPasswordParamsUpgrade(t *testing.T) {
+	old, err := argon2id.CreateHash("correct horse", argon2id.DefaultParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := CheckPassword("correct horse", old); !ok || err != nil {
+		t.Fatalf("old hash: %v %v", ok, err)
+	}
+	if !NeedsRehash(old) {
+		t.Fatal("old hash should be upgraded")
+	}
+	h, err := HashPassword("correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if NeedsRehash(h) || !strings.Contains(h, "m=19456,t=2,p=1") {
+		t.Fatalf("new hash %s", h)
+	}
+	if ok, _ := CheckPassword("wrong", h); ok {
+		t.Fatal("wrong password accepted")
+	}
+}
+
+// At most two hashes run at once, whatever the number of callers.
+func TestHashingIsLimited(t *testing.T) {
+	var wg sync.WaitGroup
+	var running, peak atomic.Int32
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			withHashSlot(func() bool {
+				n := running.Add(1)
+				for p := peak.Load(); n > p && !peak.CompareAndSwap(p, n); p = peak.Load() {
+				}
+				time.Sleep(5 * time.Millisecond)
+				running.Add(-1)
+				return true
+			})
+		}()
+	}
+	wg.Wait()
+	if p := peak.Load(); p != 2 {
+		t.Fatalf("peak %d concurrent hashes, want 2", p)
 	}
 }

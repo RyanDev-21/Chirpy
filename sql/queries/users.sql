@@ -157,3 +157,7 @@ ORDER BY (n.user_id = @me::uuid) DESC, n.created_at DESC;
 
 -- name: DeleteExpiredNotes :execrows
 DELETE FROM notes WHERE expires_at <= @now::timestamp;
+
+-- name: UpgradePasswordHash :execrows
+-- same password, newer hash settings; only if it wasn't changed meanwhile
+UPDATE users SET password = @new_hash WHERE id = @id AND password = @old_hash;
