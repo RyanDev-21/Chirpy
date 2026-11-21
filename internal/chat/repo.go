@@ -65,7 +65,7 @@ type ChatRepo interface {
 	MessageContent(ctx context.Context, kind string, id uuid.UUID) (string, bool, error)
 	// LocateMessage finds which chat a message belongs to (ErrMessageNotFound).
 	LocateMessage(ctx context.Context, msgID uuid.UUID) (messageRef, error)
-	SetReaction(ctx context.Context, kind string, msgID, userID uuid.UUID, emoji string) error
+	SetReaction(ctx context.Context, kind string, msgID, userID uuid.UUID, emoji, anim string) error
 	// DeleteReaction reports whether there was a reaction to remove.
 	DeleteReaction(ctx context.Context, kind string, msgID, userID uuid.UUID) (bool, error)
 	// ReactionCounts returns per-message counts for a page of messages.
@@ -110,6 +110,11 @@ func (r *chatRepo) LiveStoryOwner(ctx context.Context, storyID uuid.UUID, now ti
 	return id, err == nil, err
 }
 
+func ptr[T any](v T) *T { return &v }
+
+// pgOptText is NULL for "".
+func pgOptText(s string) pgtype.Text { return pgtype.Text{String: s, Valid: s != ""} }
+
 func pgDate(t time.Time) pgtype.Date { return pgtype.Date{Time: t, Valid: true} }
 
 func (r *chatRepo) TouchStreak(ctx context.Context, from, to uuid.UUID, day time.Time) error {
@@ -149,6 +154,7 @@ func (r *chatRepo) AddPrivate(ctx context.Context, m MessageMetaDataRes) error {
 		CreatedAt: pgTime(m.CreatedAt),
 		Forwarded: m.Forwarded,
 		StoryID:   pgOptUUID(m.MsgInfo.Msg.StoryID),
+		Anim:      pgOptText(m.MsgInfo.Msg.Anim),
 	})
 }
 
@@ -161,6 +167,7 @@ func (r *chatRepo) AddPublic(ctx context.Context, m MessageMetaDataRes) error {
 		ParentID:  pgOptUUID(m.MsgInfo.Msg.ParendID),
 		CreatedAt: pgTime(m.CreatedAt),
 		Forwarded: m.Forwarded,
+		Anim:      pgOptText(m.MsgInfo.Msg.Anim),
 	})
 }
 
@@ -171,13 +178,13 @@ func (r *chatRepo) AddOnce(ctx context.Context, kind string, m MessageMetaDataRe
 		n, err = r.q.AddMessagePrivateOnce(ctx, database.AddMessagePrivateOnceParams{
 			FromID: pgUUID(m.MsgInfo.FromID), ClientID: pgUUID(client), ID: m.ID, CreatedAt: pgTime(m.CreatedAt),
 			Content: pgText(m.MsgInfo.Msg.Content), Parentid: pgOptUUID(m.MsgInfo.Msg.ParendID),
-			ToID: pgOptUUID(m.MsgInfo.Msg.ToID), Forwarded: m.Forwarded, StoryID: pgOptUUID(m.MsgInfo.Msg.StoryID),
+			ToID: pgOptUUID(m.MsgInfo.Msg.ToID), Forwarded: m.Forwarded, StoryID: pgOptUUID(m.MsgInfo.Msg.StoryID), Anim: pgOptText(m.MsgInfo.Msg.Anim),
 		})
 	} else {
 		n, err = r.q.AddMessagePublicOnce(ctx, database.AddMessagePublicOnceParams{
 			FromID: pgUUID(m.MsgInfo.FromID), ClientID: pgUUID(client), ID: m.ID, CreatedAt: pgTime(m.CreatedAt),
 			Content: pgText(m.MsgInfo.Msg.Content), GroupID: pgOptUUID(m.MsgInfo.Msg.ToID),
-			ParentID: pgOptUUID(m.MsgInfo.Msg.ParendID), Forwarded: m.Forwarded,
+			ParentID: pgOptUUID(m.MsgInfo.Msg.ParendID), Forwarded: m.Forwarded, Anim: pgOptText(m.MsgInfo.Msg.Anim),
 		})
 	}
 	return n > 0, err
@@ -228,6 +235,7 @@ func fromPrivate(rows []database.Message) []MessageMetaDataRes {
 					ToID:     optString(m.ToID),
 					Type:     TypePrivate,
 					StoryID:  optString(m.StoryID),
+					Anim:     m.Anim.String,
 				},
 			},
 		})
@@ -255,6 +263,7 @@ func fromPublic(rows []database.Groupmessage) []MessageMetaDataRes {
 					ParendID: optString(m.ParentID),
 					ToID:     optString(m.GroupID),
 					Type:     TypePublic,
+					Anim:     m.Anim.String,
 				},
 			},
 		})
@@ -406,7 +415,7 @@ func (r *chatRepo) Conversations(ctx context.Context, me uuid.UUID) ([]Conversat
 	for _, p := range priv {
 		out = append(out, Conversation{Type: TypePrivate, ID: p.OtherID, Name: p.OtherName, DisplayName: users.ShownName(p.OtherName, p.OtherDisplay), AvatarURL: users.AvatarURLFrom(p.OtherID, p.OtherAvatarAt),
 			LastMessage: lastMessage(p.LastID, p.LastContent, p.LastFrom, p.LastAt, p.LastDeleted), Unread: int(p.Unread),
-			Streak: int(p.Streak), StreakEndsSoon: p.Streak > 0 && p.StreakYesterday})
+			Streak: int(p.Streak), StreakEndsSoon: p.Streak > 0 && p.StreakYesterday, CharacterInfo: ptr(users.CharacterFrom(p.OtherCharacter, p.OtherCharacterV))})
 	}
 	for _, g := range grp {
 		out = append(out, Conversation{Type: TypePublic, ID: g.GroupID, Name: g.GroupName, DisplayName: g.GroupName, AvatarURL: groups.AvatarURL(g.GroupID, g.GroupAvatarAt),
@@ -444,11 +453,11 @@ func (r *chatRepo) LocateMessage(ctx context.Context, msgID uuid.UUID) (messageR
 	return messageRef{Kind: TypePublic, Group: uuid.UUID(g.GroupID.Bytes), From: uuid.UUID(g.FromID.Bytes), CreatedAt: g.CreatedAt.Time.UTC()}, nil
 }
 
-func (r *chatRepo) SetReaction(ctx context.Context, kind string, msgID, userID uuid.UUID, emoji string) error {
+func (r *chatRepo) SetReaction(ctx context.Context, kind string, msgID, userID uuid.UUID, emoji, anim string) error {
 	if kind == TypePrivate {
-		return r.q.SetPrivateReaction(ctx, database.SetPrivateReactionParams{MessageID: msgID, UserID: userID, Emoji: emoji, At: pgTime(time.Now().UTC())})
+		return r.q.SetPrivateReaction(ctx, database.SetPrivateReactionParams{MessageID: msgID, UserID: userID, Emoji: emoji, Anim: pgOptText(anim), At: pgTime(time.Now().UTC())})
 	}
-	return r.q.SetGroupReaction(ctx, database.SetGroupReactionParams{MessageID: msgID, UserID: userID, Emoji: emoji, At: pgTime(time.Now().UTC())})
+	return r.q.SetGroupReaction(ctx, database.SetGroupReactionParams{MessageID: msgID, UserID: userID, Emoji: emoji, Anim: pgOptText(anim), At: pgTime(time.Now().UTC())})
 }
 
 func (r *chatRepo) DeleteReaction(ctx context.Context, kind string, msgID, userID uuid.UUID) (bool, error) {
@@ -467,8 +476,12 @@ func (r *chatRepo) ReactionCounts(ctx context.Context, kind string, me uuid.UUID
 	if len(ids) == 0 {
 		return out, nil
 	}
-	add := func(id uuid.UUID, emoji string, n int32, mine bool) {
-		out[id] = append(out[id], ReactionCount{Emoji: emoji, Count: int(n), Me: mine})
+	add := func(id uuid.UUID, emoji, anim string, n int32, mine bool, who []uuid.UUID) {
+		rc := ReactionCount{Emoji: emoji, Count: int(n), Me: mine}
+		if anim != "" {
+			rc.Anim, rc.UserIDs = anim, who
+		}
+		out[id] = append(out[id], rc)
 	}
 	if kind == TypePrivate {
 		rows, err := r.q.PrivateReactionSummary(ctx, database.PrivateReactionSummaryParams{Me: me, Ids: ids})
@@ -476,7 +489,7 @@ func (r *chatRepo) ReactionCounts(ctx context.Context, kind string, me uuid.UUID
 			return nil, err
 		}
 		for _, x := range rows {
-			add(x.MessageID, x.Emoji, x.N, x.Mine)
+			add(x.MessageID, x.Emoji, x.Anim, x.N, x.Mine, x.UserIds)
 		}
 		return out, nil
 	}
@@ -485,7 +498,7 @@ func (r *chatRepo) ReactionCounts(ctx context.Context, kind string, me uuid.UUID
 		return nil, err
 	}
 	for _, x := range rows {
-		add(x.MessageID, x.Emoji, x.N, x.Mine)
+		add(x.MessageID, x.Emoji, x.Anim, x.N, x.Mine, x.UserIds)
 	}
 	return out, nil
 }
@@ -498,7 +511,7 @@ func (r *chatRepo) Reactors(ctx context.Context, kind string, msgID uuid.UUID) (
 			return nil, err
 		}
 		for _, x := range rows {
-			out = append(out, Reactor{UserID: x.UserID, Name: x.Name, DisplayName: users.ShownName(x.Name, x.DisplayName), Emoji: x.Emoji, CreatedAt: x.CreatedAt.Time.UTC()})
+			out = append(out, Reactor{UserID: x.UserID, Name: x.Name, DisplayName: users.ShownName(x.Name, x.DisplayName), Emoji: x.Emoji, Anim: x.Anim, CreatedAt: x.CreatedAt.Time.UTC()})
 		}
 		return out, nil
 	}
@@ -507,7 +520,7 @@ func (r *chatRepo) Reactors(ctx context.Context, kind string, msgID uuid.UUID) (
 		return nil, err
 	}
 	for _, x := range rows {
-		out = append(out, Reactor{UserID: x.UserID, Name: x.Name, DisplayName: users.ShownName(x.Name, x.DisplayName), Emoji: x.Emoji, CreatedAt: x.CreatedAt.Time.UTC()})
+		out = append(out, Reactor{UserID: x.UserID, Name: x.Name, DisplayName: users.ShownName(x.Name, x.DisplayName), Emoji: x.Emoji, Anim: x.Anim, CreatedAt: x.CreatedAt.Time.UTC()})
 	}
 	return out, nil
 }

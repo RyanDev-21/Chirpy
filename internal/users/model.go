@@ -1,6 +1,7 @@
 package users
 
 import (
+	"encoding/json"
 	"errors"
 	"github.com/jackc/pgx/v5/pgtype"
 	"strconv"
@@ -34,6 +35,27 @@ func (e *RenameTooSoonError) Error() string {
 	return "you can change your username again after " + e.Until.Format(time.RFC3339)
 }
 
+// CharacterInfo is someone's character (null if they haven't made one)
+// and its version, which changes on every save (cache renders by it).
+// Embedded in every response that shows a person.
+type CharacterInfo struct {
+	Character  json.RawMessage `json:"character"`
+	CharacterV *string         `json:"character_v"`
+}
+
+// CharacterFrom builds CharacterInfo from the database columns.
+func CharacterFrom(raw []byte, v pgtype.Text) CharacterInfo {
+	ci := CharacterInfo{}
+	if len(raw) > 0 {
+		ci.Character = json.RawMessage(raw)
+	}
+	if v.Valid {
+		s := v.String
+		ci.CharacterV = &s
+	}
+	return ci
+}
+
 type User struct {
 	ID          uuid.UUID `json:"id"`
 	Name        string    `json:"name"`
@@ -63,6 +85,7 @@ type User struct {
 	HideStreaks bool `json:"hide_streaks"`
 	// IsAdmin is never sent to clients; it gates the admin page.
 	IsAdmin bool `json:"-"`
+	CharacterInfo
 }
 
 // Profile is another user's public profile. Location and interests are
@@ -77,6 +100,7 @@ type Profile struct {
 	Interests   []string       `json:"interests"`
 	// Mutual is nil on your own profile.
 	Mutual *MutualFriends `json:"mutual_friends,omitempty"`
+	CharacterInfo
 }
 
 // MutualFriends is how many friends you share with someone, and the first

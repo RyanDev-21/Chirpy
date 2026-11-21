@@ -2,6 +2,7 @@
 package friends
 
 import (
+	"RyanDev-21.com/Chirpy/internal/users"
 	"errors"
 	"time"
 
@@ -33,6 +34,7 @@ type FriendMetaData struct {
 	Name        string    `json:"name"`
 	DisplayName string    `json:"display_name"`
 	AvatarURL   *string   `json:"avatar_url"`
+	users.CharacterInfo
 }
 
 // Snapshot is everything cached about one user's relationships.

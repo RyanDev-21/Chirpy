@@ -1,6 +1,7 @@
 package groups
 
 import (
+	"RyanDev-21.com/Chirpy/internal/users"
 	"errors"
 	"slices"
 	"strconv"
@@ -151,6 +152,7 @@ type GroupMember struct {
 	Role        string    `json:"role"`
 	Permissions []string  `json:"permissions"` // moderators only (else empty)
 	AvatarURL   *string   `json:"avatar_url"`
+	users.CharacterInfo
 }
 
 // GroupDetail is GET /api/chats/groups/{group_id}. Members is only filled

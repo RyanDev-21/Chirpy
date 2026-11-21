@@ -421,120 +421,136 @@ fail as if your account didn't exist (`404`).
   newest first. `display_name` falls back to `name`; `avatar_url` is `null`
   without a picture.
 
-## Characters and animated messages (proposed, not built yet)
+## Characters and animated messages
 
-**Status: proposal, 20 November 2026.** Nothing here works yet. Frontend:
-please confirm or comment in `SERVER_STATUS.md`, and send the first catalog
-(the ids below are examples). The server side gets built after the server
-move.
-
-Every user has a low-poly **character**, made right after creating the
-account (first onboarding step). Animated
-messages play an animation **with the sender's character**. The app ships
-all models, textures and animations; the server only stores which pieces
-someone picked (about 200 bytes) and which animation a message plays.
+Every user can have a low-poly **character** (pigeons in v1). Animated
+messages and pigeon reactions play an animation **with that person's
+character**. The app ships all models, textures and animations; the server
+only stores which pieces someone picked (about 200 bytes) and which
+animation a message or reaction plays.
 
 ### The catalog (shared by the app and the server)
 
-The list of valid pieces lives on the server, and the app ships the
-matching assets. The frontend owns the content: send new entries, and they
-go into the server's catalog **before** the app version that has them is
+The list of valid pieces lives on the server, and the app ships the matching
+assets. The frontend owns the content: new entries are sent to the backend
+and go into the server's catalog **before** the app version that has them is
 released.
 
-`GET /api/characters/catalog` →
+`GET /api/characters/catalog` → the catalog (cache it by `version`; the
+answer may be cached for an hour):
 
 ```json
 {"version":1,
- "bodies":["bird_round","bird_tall"],
- "slots":{"hair":["tuft_01","tuft_02"],"eyes":["big_01","sleepy_01"],"mouth":["beak_01"],"hat":[]},
- "palette":["#F2A65A","#5AA9F2","#7BD389","#F25A7B","#FFFFFF","#2B2B2B"],
- "colors":["body","hair","eyes"],
- "animations":[{"id":"wave_01","fallback":"👋 waved"},{"id":"dance_01","fallback":"💃 danced"}]}
+ "bodies":["pigeon_round","pigeon_tall"],
+ "slots":{"crest":["tuft_01","tuft_02"],"eyes":["round_01","sleepy_01","happy_01"],"hat":["cap_01","beanie_01","crown_01"]},
+ "palette":["#8A94A6","#5AA9F2","#F2A65A","#7BD389","#F25A7B","#FFFFFF","#2B2B2B","#B48CF2"],
+ "colors":["body","wings","hat"],
+ "animations":[{"id":"wave_01","fallback":"👋 waved"},{"id":"sus_01","fallback":"🤨 side-eyed"}, "…"]}
 ```
 
-- `slots`: each optional part, and its choices. A slot can be left empty
-  (`null`).
+- `slots`: each optional part and its choices (`null` = none). The app
+  always sets `eyes`; `crest` and `hat` may be `null`.
 - `palette`: colors are picked **by index** into this list, for these
   `colors` targets.
-- `animations[].fallback`: the text shown in push notifications and by app
-  versions that don't have this animation yet.
-- Cache it by `version`. Ids are never reused or removed: an old id stays
-  valid, so old characters and messages keep working.
+- **Only ever added to:** ids, palette entries and color targets are never
+  reordered, removed or reused, so old characters and messages keep working.
+- `animations[].fallback`: a short sentence, emoji + verb ("👋 waved"). It's
+  shown in push notifications and by app versions that don't have the
+  animation, and it's the **screen-reader label** ("Maya: 👋 waved").
+- **Pieces an older app doesn't have:** draw the default body (the first in
+  `bodies`) for an unknown body, leave out an unknown part, use color 0 for
+  an unknown index, and show the `fallback` for an unknown animation.
+  Nothing fails. The server accepts saves only against its own catalog, and
+  the app only offers pieces it has assets for.
 
 ### Your character
 
 `PUT /api/users/me/character` with
 
 ```json
-{"v":1,"body":"bird_round","parts":{"hair":"tuft_02","eyes":"big_01","mouth":"beak_01","hat":null},
- "colors":{"body":0,"hair":5,"eyes":4}}
+{"v":1,"body":"pigeon_round","parts":{"crest":"tuft_02","eyes":"round_01","hat":null},
+ "colors":{"body":0,"wings":5,"hat":2}}
 ```
 
 → `200 {"character":{…},"character_v":"…"}`.
 - `400` for an unknown body or part, a part in the wrong slot, a color index
-  outside `palette`, or an unknown color target.
-- Missing slots and colors mean "none" and "the default (0)".
-- `character_v` changes on every save, so use it to cache the rendered
-  character.
+  outside `palette`, an unknown color target, unknown fields, or `v` other
+  than 1.
+- Missing slots and colors mean "none" and "color 0".
+- `character` comes back in a normal form (keys sorted).
+- `character_v` changes whenever the character does, so cache the rendered
+  character by it.
 - 10 changes a minute.
 
 **Where it appears:** `"character":{…}` and `"character_v"` wherever a
 person is shown:
 - `GET /api/users/me` and `GET /api/users/{id}`;
-- friends and requests, and the people in group member lists;
+- friends and friend requests (`GET /api/friends`, `/requests`);
+- group members (`GET /api/chats/groups/{id}`);
 - private chats in `GET /api/chats`;
 - story and note authors.
 
-It's `null` for accounts that haven't made one yet (older accounts, or
-someone who closed the app during onboarding).
+Both are `null` for people without one. It isn't repeated in messages:
+use the sender's character from those lists (cached by `character_v`).
 
-**Onboarding flow** (in the app; the server doesn't force it):
-1. Create the account (email + code, or Google).
-2. Display name.
-3. Character: start from a random one, so "Done" works right away; with a
-   🎲 randomize button. Saving uploads the character and its snapshot as the
-   profile picture.
-4. Into the app.
+**Onboarding (in the app):** the character isn't forced. After the welcome
+tour the app asks once ("Make your pigeon?": make it / maybe later), and
+Settings → Your pigeon is always there. `character: null` is a normal state.
 
-While `GET /api/users/me` says `character: null`, open step 3 again at
-start. Saving needs a signed-in user, so the character always comes after
-the account. Animated example characters can still be shown on the welcome
-and tour screens before sign-up.
-
-**Profile picture:** after saving, render a snapshot of the character and
-upload it with `PUT /api/users/me/avatar`, unless the user chose a photo.
-Push notifications, the website and older app versions then show the
-character without any 3D.
+**Profile picture:** after saving, the app renders a snapshot and uploads it
+with `PUT /api/users/me/avatar` as a normal picture, unless the user chose a
+photo (the app remembers that). Push notifications, the website and older
+apps show the snapshot.
 
 ### Animated messages
 
 `POST /api/chats/message` takes `"anim":"wave_01"` (private chats and groups).
-- `msg` may then be empty; the animation can also come with text.
+- `msg` may be empty with an `anim`, may be the animation's `fallback`, or
+  may be real text: all three are fine. Apps written before `anim` existed
+  send the fallback as `msg`, so an app that knows the animation treats
+  `msg == fallback` as "no text".
 - `400` for an id that isn't in the catalog's `animations`.
+- A reply (`parent_id`) may carry an `anim` too.
 - History has `message_info.Msg.anim`, and the `msg` event has `anim`.
-- Play it with the **sender's** character. If this app version doesn't
-  have that animation, show the `fallback` text.
-- Push notifications use the fallback: `Maya: 👋 waved` (groups), `👋 waved`
-  (private).
-- Edits change the text only. Forwarding doesn't copy the animation in v1.
+- Play it with the **sender's** character. If the app doesn't have that
+  animation, show the `fallback`.
+- With no text (or the fallback as text), push notifications say the
+  fallback: `👋 waved` (private), `Maya: 👋 waved` (groups).
+- Edits change the text only. Forwarding doesn't copy the animation.
 
-**Performance note:** real-time 3D in a scrolling chat list is heavy on
-cheap Android phones. Consider full 3D in the editor and on profiles, and
-lighter prebuilt animations in chats (for example Rive, or pre-rendered
-sprites coloured at runtime). Test on a low-end phone early.
+### Pigeon reactions
 
-### Later (not in v1)
+A reaction can carry an animation of the reactor's character: see
+**Reactions** (`anim`).
 
-User-made animations and effects:
-- Uploaded as **source** and compiled by the server into a sandboxed
-  bytecode. Bytecode compiled on the phone is never accepted.
-- Run with hard limits: an instruction budget per frame, a memory cap, no
-  I/O, and the same result on every phone.
-- No unbounded shader loops.
-- A cap on flashing, for photosensitivity.
-- Reported and moderated like other user content.
-- The catalog's `version` and the `v` in the character are there so this
-  can be added later without breaking v1.
+### Later: user-made animations (not in v1)
+
+An animation will be **data, not code**:
+- **Poses:** a list of poses over time for the shared rig (`body`, `head`,
+  `limb_left`, `limb_right`, `eyes`, `feet`; every body uses the same joints,
+  so a wave works on any body).
+- **Camera:** an optional track of `{t, angle, height, distance, zoom,
+  ease}` keyframes. The camera always orbits the character and looks at it.
+- **Nothing runs:** the app only plays it back. No sandbox, bytecode or
+  shaders, and it plays the same on every phone.
+- **The server checks it:**
+  - total length (for example ≤ 8 s);
+  - keyframe counts;
+  - joint angles and camera values within ranges;
+  - caps on camera speed and shake (motion sickness) and on fast color
+    flashes (photosensitivity);
+  - a size cap of a few KB.
+
+The catalog's own animations will use the same format.
+
+Steps:
+1. Catalog animations only (v1).
+2. "Remix": catalog moves, props, a caption and camera presets.
+3. A pose editor that saves the same data.
+4. Effects or scripting only if step 3 isn't enough, probably never.
+
+More body types (other animals, maybe a stylised human) will use the same
+rig and work with every existing animation.
 
 ## Notes
 
@@ -1063,13 +1079,30 @@ exist.
 Each person can have one reaction per message, in private chats and groups.
 
 - `PUT /api/chat/messages/{msg_id}/reaction` with `{"emoji":"👍"}` → `204`.
-  Sets your reaction, replacing any earlier one. For "tap the same emoji to
-  remove it", call `DELETE` instead.
+  Sets your reaction, replacing any earlier one (plain or pigeon). For "tap
+  the same emoji to remove it", call `DELETE` instead.
+- **Pigeon reaction:** add `"anim"`: `{"emoji":"🤨","anim":"sus_01"}`. It's a
+  reaction with an animation of your character attached. `anim` must be in
+  the catalog's `animations` (`400` otherwise). `emoji` is still required:
+  apps that don't know the animation show the plain emoji.
 - `DELETE /api/chat/messages/{msg_id}/reaction` → `204` (also when you had
   none).
 - `GET /api/chat/messages/{msg_id}/reactions` →
   `200 {"reactions":[{"user_id":"…","name":"bob","emoji":"❤️","created_at":"…"}]}`,
-  oldest first.
+  oldest first. Pigeon reactions also have `"anim"`.
+
+In messages (history, `/api/chats/changes`), `reactions` groups by emoji
+**and** animation. A pigeon entry lists who reacted, so each person's
+character can play it:
+`"reactions":[{"emoji":"❤️","count":2,"me":true},{"emoji":"🤨","anim":"sus_01","count":1,"me":false,"user_ids":["…"]}]`.
+The `Reaction` WebSocket event also carries `anim` when set. Push stays
+`reacted 🤨 to your message`.
+
+**Two-pigeon reactions** (✋ high five, 🤝 handshake) work with the same rules
+once their animations are in the catalog: one person reacts with the
+invite's `anim` (waiting), the other reacting with the same `anim` accepts,
+and `hanging_01` means "left hanging". The app works it out from the two
+reactions.
 
 `emoji` must be exactly one emoji: skin tones (👍🏽), combined emojis (👩‍💻),
 flags (🇹🇭) and keycaps (1️⃣) are fine; text or two emojis are `400`. You can
@@ -1662,7 +1695,7 @@ upgrade (no or bad token) returns `401` JSON instead of switching protocols.
 | `AcceptFri` | `{"req_id":"request-uuid","from_id":"uuid"}` |
 | `DenyFri` | `{"req_id":"request-uuid","from_id":"uuid"}` |
 | `RemoveFri` | `{"from_id":"uuid"}`: that user removed you as a friend |
-| `Reaction` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","emoji":"❤️"}`: `emoji` is `""` when the reaction was removed; `group_id` only for group messages |
+| `Reaction` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","emoji":"❤️"}`: `emoji` is `""` when the reaction was removed; `group_id` only for group messages; `anim` for a pigeon reaction |
 | `MsgEdited` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","msg":"new text","edited_at":"…"}`; `group_id` only for group messages |
 | `MsgDeleted` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","by_id":"uuid"}`: show the placeholder and drop its reactions. `from_id` is the sender; `by_id` is present when a group's admin or a moderator removed it |
 | `GroupUpdated` | `{"group_id":"…","change":"info|admin|role|members|joined","user_id":"…"}`: `info` = name, description, picture or visibility changed; `admin` = `user_id` is the new admin; `role` = `user_id` became a moderator or member, or got different permissions; `members` = `user_id` left or was removed; `joined` = `user_id` joined or was added. Refetch the group |

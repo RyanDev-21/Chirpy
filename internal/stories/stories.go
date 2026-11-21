@@ -83,6 +83,7 @@ type Person struct {
 	AvatarURL   *string   `json:"avatar_url"`
 	AllSeen     bool      `json:"all_seen"`
 	Stories     []Story   `json:"stories"`
+	users.CharacterInfo
 }
 
 // me is the signed-in caller.
@@ -198,7 +199,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	for _, s := range friends {
 		if len(people) == 0 || people[len(people)-1].UserID != s.UserID {
 			people = append(people, Person{UserID: s.UserID, Name: s.Name, DisplayName: users.ShownName(s.Name, s.DisplayName),
-				AvatarURL: users.AvatarURLFrom(s.UserID, s.AvatarAt), AllSeen: true, Stories: []Story{}})
+				AvatarURL: users.AvatarURLFrom(s.UserID, s.AvatarAt), AllSeen: true, Stories: []Story{}, CharacterInfo: users.CharacterFrom(s.Character, s.CharacterV)})
 		}
 		p := &people[len(people)-1]
 		seen := s.Seen

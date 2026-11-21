@@ -73,6 +73,7 @@ type GroupMessageReaction struct {
 	UserID    uuid.UUID
 	Emoji     string
 	CreatedAt pgtype.Timestamp
+	Anim      pgtype.Text
 }
 
 type GroupRead struct {
@@ -95,6 +96,7 @@ type Groupmessage struct {
 	Forwarded   bool
 	ChangedAt   pgtype.Timestamp
 	ClientMsgID pgtype.UUID
+	Anim        pgtype.Text
 }
 
 type MediaDownload struct {
@@ -147,6 +149,7 @@ type Message struct {
 	ChangedAt   pgtype.Timestamp
 	ClientMsgID pgtype.UUID
 	StoryID     pgtype.UUID
+	Anim        pgtype.Text
 }
 
 type MessageReaction struct {
@@ -154,6 +157,7 @@ type MessageReaction struct {
 	UserID    uuid.UUID
 	Emoji     string
 	CreatedAt pgtype.Timestamp
+	Anim      pgtype.Text
 }
 
 type Note struct {
@@ -267,6 +271,8 @@ type User struct {
 	DisplayName     string
 	HideLastSeen    bool
 	HideStreaks     bool
+	Character       []byte
+	CharacterV      pgtype.Text
 }
 
 type UserAvatar struct {

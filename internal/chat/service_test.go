@@ -119,7 +119,7 @@ func (f *fakeRepo) LocateMessage(_ context.Context, id uuid.UUID) (messageRef, e
 	}
 	return messageRef{}, ErrMessageNotFound
 }
-func (f *fakeRepo) SetReaction(_ context.Context, _ string, msg, user uuid.UUID, emoji string) error {
+func (f *fakeRepo) SetReaction(_ context.Context, _ string, msg, user uuid.UUID, emoji, _ string) error {
 	if f.reactions == nil {
 		f.reactions = map[uuid.UUID]map[uuid.UUID]string{}
 	}
@@ -487,27 +487,27 @@ func TestReactions(t *testing.T) {
 	dm, _ := f.svc.SendMessage(ctx, f.alice, msg(f.bob, TypePrivate, "react to me"))
 	gm, _ := f.svc.SendMessage(ctx, f.alice, msg(f.group, TypePublic, "group msg"))
 
-	if err := f.svc.React(ctx, f.bob, dm, "ok"); !errors.Is(err, ErrNotAnEmoji) {
+	if err := f.svc.React(ctx, f.bob, dm, "ok", ""); !errors.Is(err, ErrNotAnEmoji) {
 		t.Fatalf("text as emoji: %v", err)
 	}
-	if err := f.svc.React(ctx, f.carol, dm, "👍"); !errors.Is(err, ErrMessageNotFound) {
+	if err := f.svc.React(ctx, f.carol, dm, "👍", ""); !errors.Is(err, ErrMessageNotFound) {
 		t.Fatalf("outsider on a private message: %v", err)
 	}
-	if err := f.svc.React(ctx, f.carol, gm, "👍"); !errors.Is(err, ErrMessageNotFound) {
+	if err := f.svc.React(ctx, f.carol, gm, "👍", ""); !errors.Is(err, ErrMessageNotFound) {
 		t.Fatalf("non-member on a group message: %v", err)
 	}
-	if err := f.svc.React(ctx, f.bob, uuid.New(), "👍"); !errors.Is(err, ErrMessageNotFound) {
+	if err := f.svc.React(ctx, f.bob, uuid.New(), "👍", ""); !errors.Is(err, ErrMessageNotFound) {
 		t.Fatalf("unknown message: %v", err)
 	}
 
 	pushes := len(f.push.targets)
-	if err := f.svc.React(ctx, f.bob, dm, "👍"); err != nil {
+	if err := f.svc.React(ctx, f.bob, dm, "👍", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.svc.React(ctx, f.bob, dm, "❤️"); err != nil { // replaces, one per person
+	if err := f.svc.React(ctx, f.bob, dm, "❤️", ""); err != nil { // replaces, one per person
 		t.Fatal(err)
 	}
-	_ = f.svc.React(ctx, f.alice, dm, "❤️")
+	_ = f.svc.React(ctx, f.alice, dm, "❤️", "")
 	if got := f.push.targets[pushes]; len(got) != 2 || got[0] != f.alice || got[1] != f.bob {
 		t.Fatalf("bob's reaction should reach alice and bob's other devices: %v", got)
 	}
@@ -533,7 +533,7 @@ func TestReactions(t *testing.T) {
 		t.Fatal("removing a missing reaction must be a quiet no-op")
 	}
 	// group: members react, the rest of the group hears it
-	if err := f.svc.React(ctx, f.bob, gm, "🔥"); err != nil {
+	if err := f.svc.React(ctx, f.bob, gm, "🔥", ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.push.targets[len(f.push.targets)-1]; len(got) != 2 || got[0] != f.alice || got[1] != f.bob {
@@ -589,7 +589,7 @@ func TestEditAndDelete(t *testing.T) {
 	if err := f.svc.DeleteMessage(ctx, f.alice, dm); !errors.Is(err, ErrMessageNotFound) {
 		t.Fatalf("second delete: %v", err)
 	}
-	if err := f.svc.React(ctx, f.bob, dm, "👍"); !errors.Is(err, ErrMessageNotFound) {
+	if err := f.svc.React(ctx, f.bob, dm, "👍", ""); !errors.Is(err, ErrMessageNotFound) {
 		t.Fatalf("react to deleted: %v", err)
 	}
 }

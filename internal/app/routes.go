@@ -2,6 +2,7 @@ package app
 
 import (
 	"RyanDev-21.com/Chirpy/internal/admin"
+	"RyanDev-21.com/Chirpy/internal/characters"
 	"context"
 	"net/http"
 	"time"
@@ -37,6 +38,7 @@ var (
 	// verification, reset and Google sign-in; codes also die after 5 wrong tries
 	limitAccount = limitPolicy{"account", 10, time.Minute}
 	limitNote    = limitPolicy{"note", 10, time.Minute}
+	limitChar    = limitPolicy{"character", 10, time.Minute}
 	limitStory   = limitPolicy{"story_post", 30, time.Hour}
 	limitReact   = limitPolicy{"react", 60, time.Minute}
 	limitEdit    = limitPolicy{"edit_message", 60, time.Minute}
@@ -126,6 +128,12 @@ func (a *App) Router() http.Handler {
 			r.With(limit(limitNote)).Put("/users/me/note", a.handlers.notes.Set)
 			r.With(limit(limitNote)).Delete("/users/me/note", a.handlers.notes.Delete)
 			r.Get("/notes", a.handlers.notes.List)
+			r.With(limit(limitChar)).Put("/users/me/character", a.handlers.users.SetCharacter)
+			r.Get("/characters/catalog", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "private, max-age=3600")
+				_, _ = w.Write(characters.RawCatalog())
+			})
 			r.Route("/stories", func(r chi.Router) {
 				r.Get("/", a.handlers.stories.List)
 				r.With(limit(limitStory)).Post("/", a.handlers.stories.Create)

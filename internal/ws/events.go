@@ -97,6 +97,7 @@ type OutReactionEvent struct {
 	Type    string `json:"type"`
 	GroupID string `json:"group_id,omitempty"`
 	Emoji   string `json:"emoji"`
+	Anim    string `json:"anim,omitempty"` // a pigeon reaction: the animation to play
 }
 
 // OutEditedEvent: from_id edited msg_id; msg is the new text.
@@ -158,6 +159,8 @@ type OutGoingMessage struct {
 	Media any `json:"media,omitempty"`
 	// Forwarded: label it "Forwarded" (the original sender isn't shown).
 	Forwarded bool `json:"forwarded,omitempty"`
+	// Anim: an animation played with the sender's character.
+	Anim string `json:"anim,omitempty"`
 	// StoryID: a reply to the recipient's story.
 	StoryID string `json:"story_id,omitempty"`
 	// ClientMsgID: only in the copy sent to the sender's own devices.

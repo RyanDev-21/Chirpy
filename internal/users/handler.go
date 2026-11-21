@@ -1,6 +1,7 @@
 package users
 
 import (
+	"RyanDev-21.com/Chirpy/internal/characters"
 	"errors"
 	"io"
 	"net/http"
@@ -133,6 +134,29 @@ func (h *UserHandler) Profile(w http.ResponseWriter, r *http.Request) {
 		httpx.JSON(w, http.StatusOK, p)
 	case errors.Is(err, ErrUserNotFound):
 		httpx.Error(w, http.StatusNotFound, "no user found")
+	default:
+		httpx.ServerError(w, r, err)
+	}
+}
+
+// SetCharacter handles PUT /api/users/me/character.
+func (h *UserHandler) SetCharacter(w http.ResponseWriter, r *http.Request) {
+	me, err := reqctx.User(r.Context())
+	if err != nil {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, characters.ErrBadCharacter.Error())
+		return
+	}
+	ci, err := h.svc.SetCharacter(r.Context(), me, raw)
+	switch {
+	case err == nil:
+		httpx.JSON(w, http.StatusOK, ci)
+	case errors.Is(err, characters.ErrBadCharacter):
+		httpx.Error(w, http.StatusBadRequest, err.Error())
 	default:
 		httpx.ServerError(w, r, err)
 	}

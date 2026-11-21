@@ -95,7 +95,7 @@ func (q *Queries) DeleteStory(ctx context.Context, arg DeleteStoryParams) (int64
 }
 
 const friendStories = `-- name: FriendStories :many
-SELECT s.id, s.user_id, u.name, u.display_name, u.avatar_at, s.created_at, s.expires_at,
+SELECT s.id, s.user_id, u.name, u.display_name, u.avatar_at, u.character, u.character_v, s.created_at, s.expires_at,
        EXISTS (SELECT 1 FROM story_views v WHERE v.story_id = s.id AND v.viewer_id = $1::uuid)::bool AS seen
 FROM stories s
 JOIN users u ON u.id = s.user_id
@@ -120,6 +120,8 @@ type FriendStoriesRow struct {
 	Name        string
 	DisplayName string
 	AvatarAt    pgtype.Timestamp
+	Character   []byte
+	CharacterV  pgtype.Text
 	CreatedAt   pgtype.Timestamp
 	ExpiresAt   pgtype.Timestamp
 	Seen        bool
@@ -142,6 +144,8 @@ func (q *Queries) FriendStories(ctx context.Context, arg FriendStoriesParams) ([
 			&i.Name,
 			&i.DisplayName,
 			&i.AvatarAt,
+			&i.Character,
+			&i.CharacterV,
 			&i.CreatedAt,
 			&i.ExpiresAt,
 			&i.Seen,

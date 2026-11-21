@@ -13,7 +13,7 @@ ORDER BY s.created_at, s.id;
 -- name: FriendStories :many
 -- my friends' live stories (not muted by me, not from suspended accounts),
 -- oldest first per person, and whether I've seen each
-SELECT s.id, s.user_id, u.name, u.display_name, u.avatar_at, s.created_at, s.expires_at,
+SELECT s.id, s.user_id, u.name, u.display_name, u.avatar_at, u.character, u.character_v, s.created_at, s.expires_at,
        EXISTS (SELECT 1 FROM story_views v WHERE v.story_id = s.id AND v.viewer_id = @me::uuid)::bool AS seen
 FROM stories s
 JOIN users u ON u.id = s.user_id

@@ -254,7 +254,7 @@ func (q *Queries) GroupAvatarForMember(ctx context.Context, arg GroupAvatarForMe
 }
 
 const listGroupMembers = `-- name: ListGroupMembers :many
-SELECT m.member_id, u.name, u.display_name, u.avatar_at, m.role, m.permissions
+SELECT m.member_id, u.name, u.display_name, u.avatar_at, u.character, u.character_v, m.role, m.permissions
 FROM member_table m
 JOIN users u ON u.id = m.member_id
 WHERE m.group_id = $1
@@ -266,6 +266,8 @@ type ListGroupMembersRow struct {
 	Name        string
 	DisplayName string
 	AvatarAt    pgtype.Timestamp
+	Character   []byte
+	CharacterV  pgtype.Text
 	Role        string
 	Permissions []string
 }
@@ -284,6 +286,8 @@ func (q *Queries) ListGroupMembers(ctx context.Context, groupID uuid.UUID) ([]Li
 			&i.Name,
 			&i.DisplayName,
 			&i.AvatarAt,
+			&i.Character,
+			&i.CharacterV,
 			&i.Role,
 			&i.Permissions,
 		); err != nil {

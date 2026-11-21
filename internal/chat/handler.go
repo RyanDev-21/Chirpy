@@ -36,7 +36,7 @@ func (h *ChatHandler) writeErr(w http.ResponseWriter, r *http.Request, err error
 	case errors.Is(err, ErrNotAuthorized), errors.Is(err, ErrNotFriends), errors.Is(err, ErrNotYourMessage),
 		errors.Is(err, ErrEditWindowClosed):
 		httpx.Error(w, http.StatusForbidden, err.Error())
-	case errors.Is(err, ErrNotValidToID), errors.Is(err, ErrNotValidParentID), errors.Is(err, ErrNotValidStory), errors.Is(err, ErrNotSupportedTypeMsg),
+	case errors.Is(err, ErrNotValidToID), errors.Is(err, ErrNotValidParentID), errors.Is(err, ErrNotValidStory), errors.Is(err, ErrNotValidAnim), errors.Is(err, ErrNotSupportedTypeMsg),
 		errors.Is(err, ErrEmptyMessage), errors.Is(err, ErrNotValidTimeFmt), errors.Is(err, ErrNotValidUUID),
 		errors.Is(err, ErrMessageNotInChat), errors.Is(err, ErrBadCursor), errors.Is(err, ErrSinceAndBefore),
 		errors.Is(err, ErrNotAnEmoji), errors.Is(err, ErrNotGroupMessage),
@@ -260,12 +260,13 @@ func (h *ChatHandler) React(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Emoji string `json:"emoji"`
+		Anim  string `json:"anim"`
 	}
 	if err := httpx.Decode(w, r, &body); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid parameters")
 		return
 	}
-	if err := h.svc.React(r.Context(), me, msgID, body.Emoji); err != nil {
+	if err := h.svc.React(r.Context(), me, msgID, body.Emoji, body.Anim); err != nil {
 		h.writeErr(w, r, err)
 		return
 	}

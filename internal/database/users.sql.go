@@ -52,7 +52,7 @@ func (q *Queries) AreFriendsSQL(ctx context.Context, arg AreFriendsSQLParams) (b
 const createUser = `-- name: CreateUser :one
 INSERT INTO users(id, name, display_name, created_at, updated_at, email, password)
 VALUES (gen_random_uuid(), $1, $4, NOW(), NOW(), $2, $3)
-RETURNING id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks
+RETURNING id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks, character, character_v
 `
 
 type CreateUserParams struct {
@@ -92,6 +92,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.DisplayName,
 		&i.HideLastSeen,
 		&i.HideStreaks,
+		&i.Character,
+		&i.CharacterV,
 	)
 	return i, err
 }
@@ -137,7 +139,7 @@ func (q *Queries) DeleteUser(ctx context.Context) error {
 }
 
 const friendNotes = `-- name: FriendNotes :many
-SELECT n.user_id, u.name, u.display_name, u.avatar_at, n.text, n.created_at, n.expires_at
+SELECT n.user_id, u.name, u.display_name, u.avatar_at, u.character, u.character_v, n.text, n.created_at, n.expires_at
 FROM notes n
 JOIN users u ON u.id = n.user_id
 WHERE n.expires_at > $1::timestamp
@@ -159,6 +161,8 @@ type FriendNotesRow struct {
 	Name        string
 	DisplayName string
 	AvatarAt    pgtype.Timestamp
+	Character   []byte
+	CharacterV  pgtype.Text
 	Text        string
 	CreatedAt   pgtype.Timestamp
 	ExpiresAt   pgtype.Timestamp
@@ -179,6 +183,8 @@ func (q *Queries) FriendNotes(ctx context.Context, arg FriendNotesParams) ([]Fri
 			&i.Name,
 			&i.DisplayName,
 			&i.AvatarAt,
+			&i.Character,
+			&i.CharacterV,
 			&i.Text,
 			&i.CreatedAt,
 			&i.ExpiresAt,
@@ -273,7 +279,7 @@ func (q *Queries) GetPrivacy(ctx context.Context, id uuid.UUID) (GetPrivacyRow, 
 }
 
 const getPublicProfile = `-- name: GetPublicProfile :one
-SELECT u.id, u.name, u.display_name, u.bio, u.avatar_at, u.location_id, u.discoverable FROM users u
+SELECT u.id, u.name, u.display_name, u.bio, u.avatar_at, u.location_id, u.discoverable, u.character, u.character_v FROM users u
 WHERE u.id = $1
   AND u.banned_at IS NULL
   AND NOT EXISTS (
@@ -296,6 +302,8 @@ type GetPublicProfileRow struct {
 	AvatarAt     pgtype.Timestamp
 	LocationID   pgtype.Text
 	Discoverable bool
+	Character    []byte
+	CharacterV   pgtype.Text
 }
 
 // hidden (no row) when either user blocked the other
@@ -310,12 +318,14 @@ func (q *Queries) GetPublicProfile(ctx context.Context, arg GetPublicProfilePara
 		&i.AvatarAt,
 		&i.LocationID,
 		&i.Discoverable,
+		&i.Character,
+		&i.CharacterV,
 	)
 	return i, err
 }
 
 const getUserInfoByEmail = `-- name: GetUserInfoByEmail :one
-SELECT id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks FROM users WHERE email = $1
+SELECT id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks, character, character_v FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, error) {
@@ -343,12 +353,14 @@ func (q *Queries) GetUserInfoByEmail(ctx context.Context, email string) (User, e
 		&i.DisplayName,
 		&i.HideLastSeen,
 		&i.HideStreaks,
+		&i.Character,
+		&i.CharacterV,
 	)
 	return i, err
 }
 
 const getUserInfoByID = `-- name: GetUserInfoByID :one
-SELECT id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks FROM users WHERE id = $1
+SELECT id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks, character, character_v FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, error) {
@@ -376,6 +388,8 @@ func (q *Queries) GetUserInfoByID(ctx context.Context, id uuid.UUID) (User, erro
 		&i.DisplayName,
 		&i.HideLastSeen,
 		&i.HideStreaks,
+		&i.Character,
+		&i.CharacterV,
 	)
 	return i, err
 }
@@ -487,7 +501,7 @@ func (q *Queries) RemoveOtherInterests(ctx context.Context, arg RemoveOtherInter
 const renameUser = `-- name: RenameUser :one
 UPDATE users SET name = $1, name_changed_at = $2::timestamp, updated_at = $2::timestamp
 WHERE id = $3 AND (name_changed_at IS NULL OR name_changed_at < $4::timestamp)
-RETURNING id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks
+RETURNING id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks, character, character_v
 `
 
 type RenameUserParams struct {
@@ -529,6 +543,8 @@ func (q *Queries) RenameUser(ctx context.Context, arg RenameUserParams) (User, e
 		&i.DisplayName,
 		&i.HideLastSeen,
 		&i.HideStreaks,
+		&i.Character,
+		&i.CharacterV,
 	)
 	return i, err
 }
@@ -608,7 +624,7 @@ func (q *Queries) SetAvatar(ctx context.Context, arg SetAvatarParams) error {
 }
 
 const setBio = `-- name: SetBio :one
-UPDATE users SET bio = $1, updated_at = NOW() WHERE id = $2 RETURNING id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks
+UPDATE users SET bio = $1, updated_at = NOW() WHERE id = $2 RETURNING id, created_at, updated_at, email, password, name, email_verified_at, bio, name_changed_at, avatar_at, location_id, location_country, discoverable, is_admin, banned_at, banned_until, ban_reason, last_seen_at, display_name, hide_last_seen, hide_streaks, character, character_v
 `
 
 type SetBioParams struct {
@@ -641,8 +657,25 @@ func (q *Queries) SetBio(ctx context.Context, arg SetBioParams) (User, error) {
 		&i.DisplayName,
 		&i.HideLastSeen,
 		&i.HideStreaks,
+		&i.Character,
+		&i.CharacterV,
 	)
 	return i, err
+}
+
+const setCharacter = `-- name: SetCharacter :exec
+UPDATE users SET character = $1::jsonb, character_v = $2, updated_at = NOW() WHERE id = $3
+`
+
+type SetCharacterParams struct {
+	Character []byte
+	Version   pgtype.Text
+	ID        uuid.UUID
+}
+
+func (q *Queries) SetCharacter(ctx context.Context, arg SetCharacterParams) error {
+	_, err := q.db.Exec(ctx, setCharacter, arg.Character, arg.Version, arg.ID)
+	return err
 }
 
 const setDiscoverable = `-- name: SetDiscoverable :exec

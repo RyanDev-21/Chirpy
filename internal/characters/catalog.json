@@ -1,0 +1,11 @@
+{"version":1,
+ "bodies":["pigeon_round","pigeon_tall"],
+ "slots":{"crest":["tuft_01","tuft_02"],"eyes":["round_01","sleepy_01","happy_01"],"hat":["cap_01","beanie_01","crown_01"]},
+ "palette":["#8A94A6","#5AA9F2","#F2A65A","#7BD389","#F25A7B","#FFFFFF","#2B2B2B","#B48CF2"],
+ "colors":["body","wings","hat"],
+ "animations":[
+  {"id":"wave_01","fallback":"👋 waved"},{"id":"hop_01","fallback":"🐦 hopped"},{"id":"dance_01","fallback":"💃 danced"},
+  {"id":"fart_01","fallback":"💨 farted"},{"id":"think_01","fallback":"🤔 thought about it"},{"id":"kiss_01","fallback":"😘 sent a kiss"},
+  {"id":"rose_01","fallback":"🌹 gave you a rose"},{"id":"inlove_01","fallback":"😍 fell in love"},{"id":"cry_01","fallback":"😭 cried"},
+  {"id":"laugh_01","fallback":"🤣 laughed"},{"id":"rage_01","fallback":"😤 raged"},{"id":"party_01","fallback":"🎉 celebrated"},
+  {"id":"night_01","fallback":"😴 said good night"},{"id":"sus_01","fallback":"🤨 side-eyed"}]}
