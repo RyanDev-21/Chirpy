@@ -325,6 +325,76 @@ func (s *Service) AttachStory(ctx context.Context, owner, id, storyID uuid.UUID,
 		Width: int(m.Width.Int32), Height: int(m.Height.Int32)}, nil
 }
 
+// Reminder: recipients who haven't downloaded a big file yet, shortly
+// before it's deleted.
+type Reminder struct {
+	MediaID uuid.UUID
+	Kind    string
+	Owner   uuid.UUID
+	Group   uuid.UUID // zero for private chats
+	MsgID   uuid.UUID
+	To      []uuid.UUID
+	Left    time.Duration // until it's deleted
+}
+
+// RemindBefore: on the last day before a big file is deleted, recipients
+// who haven't downloaded it are reminded (once).
+const RemindBefore = 24 * time.Hour
+
+// DueReminders claims big files that expire within RemindBefore (each
+// once) and returns who to remind. Run from the hourly cleanup.
+func (s *Service) DueReminders(ctx context.Context) ([]Reminder, error) {
+	now := s.now()
+	rows, err := s.q.ClaimExpiringBigMedia(ctx, database.ClaimExpiringBigMediaParams{Now: ts(now), Until: ts(now.Add(RemindBefore)), Large: LargeBytes})
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	ids := make([]uuid.UUID, len(rows))
+	for i, r := range rows {
+		ids[i] = r.ID
+	}
+	dl, err := s.q.MediaDownloaders(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	got := map[uuid.UUID]map[uuid.UUID]bool{}
+	for _, d := range dl {
+		if got[d.MediaID] == nil {
+			got[d.MediaID] = map[uuid.UUID]bool{}
+		}
+		got[d.MediaID][d.UserID] = true
+	}
+	out := make([]Reminder, 0, len(rows))
+	for _, r := range rows {
+		owner, chat := uuid.UUID(r.OwnerID.Bytes), uuid.UUID(r.ChatID.Bytes)
+		rem := Reminder{MediaID: r.ID, Kind: r.Kind, Owner: owner, MsgID: uuid.UUID(r.MessageID.Bytes), Left: r.ExpiresAt.Time.Sub(now)}
+		var candidates []uuid.UUID
+		if r.ChatType.String == "public" {
+			rem.Group = chat
+			// big groups don't track downloads; members who joined later can't see it
+			members, err := s.q.GroupMembersJoinedBy(ctx, database.GroupMembersJoinedByParams{GroupID: chat, At: r.CreatedAt})
+			if err != nil {
+				return nil, err
+			}
+			if len(members) > trackGroupsUpTo {
+				continue
+			}
+			candidates = members
+		} else {
+			candidates = []uuid.UUID{chat}
+		}
+		for _, u := range candidates {
+			if u != owner && !got[r.ID][u] {
+				rem.To = append(rem.To, u)
+			}
+		}
+		if len(rem.To) > 0 {
+			out = append(out, rem)
+		}
+	}
+	return out, nil
+}
+
 // ForMessages returns the media of a page of messages (or of stories:
 // a story's photo is filed under the story's id).
 func (s *Service) ForMessages(ctx context.Context, msgIDs []uuid.UUID) (map[uuid.UUID][]Attachment, error) {
