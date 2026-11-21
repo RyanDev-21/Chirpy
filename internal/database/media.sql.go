@@ -66,6 +66,39 @@ func (q *Queries) AttachStoryMedia(ctx context.Context, arg AttachStoryMediaPara
 	return result.RowsAffected(), nil
 }
 
+const blockedWith = `-- name: BlockedWith :many
+SELECT CASE WHEN blocker_id = $1::uuid THEN blocked_id ELSE blocker_id END::uuid AS user_id
+FROM user_blocks
+WHERE (blocker_id = $1::uuid AND blocked_id = ANY($2::uuid[]))
+   OR (blocked_id = $1::uuid AND blocker_id = ANY($2::uuid[]))
+`
+
+type BlockedWithParams struct {
+	Owner uuid.UUID
+	Users []uuid.UUID
+}
+
+// which of @users blocked @owner or were blocked by them
+func (q *Queries) BlockedWith(ctx context.Context, arg BlockedWithParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, blockedWith, arg.Owner, arg.Users)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var user_id uuid.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const claimExpiringBigMedia = `-- name: ClaimExpiringBigMedia :many
 UPDATE media SET reminded_at = $1::timestamp
 WHERE id IN (

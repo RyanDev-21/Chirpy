@@ -111,3 +111,22 @@ func TestBigFileReminderRespectsMutes(t *testing.T) {
 	e.waitPush("tok-bob", 0) // nothing: both chats are muted
 	e.now(`SELECT count(*)::text FROM media WHERE reminded_at IS NOT NULL AND id = ANY($1)`, "2", []string{priv, grp})
 }
+
+// No reminder (carrying the sender's name) across a block.
+func TestBigFileReminderSkipsBlocks(t *testing.T) {
+	e := newEnv(t)
+	alice, bob := e.signup("alice"), e.signup("bobby")
+	e.befriend(alice, bob)
+	e.device(bob, "tok-bob")
+	v := e.uploadBigVideo(alice)
+	e.expect(e.do("POST", "/api/chats/message", alice.Token, map[string]any{"to_id": bob.ID, "type": "private", "media": []string{v}}), 200)
+	e.waitPush("tok-bob", 1)
+	e.expect(e.do("POST", "/api/users/blocks", bob.Token, map[string]string{"user_id": alice.ID}), 204)
+	if _, err := e.db.Exec(`UPDATE media SET expires_at = now() AT TIME ZONE 'UTC' + interval '20 hours' WHERE id = $1`, v); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.app.Cleanup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	e.waitPush("tok-bob", 1) // still only the original message push
+}

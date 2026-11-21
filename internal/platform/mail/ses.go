@@ -63,7 +63,7 @@ func (s *SES) Send(ctx context.Context, m Message) error {
 		// names the problem (unverified address, sandbox, throttling); never
 		// the message or the key
 		msg, _ := io.ReadAll(io.LimitReader(res.Body, 512))
-		return fmt.Errorf("ses: status %d: %s", res.StatusCode, bytes.TrimSpace(msg))
+		return fmt.Errorf("ses: status %d: %s", res.StatusCode, redactEmails(string(bytes.TrimSpace(msg))))
 	}
 	return nil
 }

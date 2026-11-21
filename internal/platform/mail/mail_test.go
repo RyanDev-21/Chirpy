@@ -126,3 +126,22 @@ func TestFallback(t *testing.T) {
 		t.Fatalf("primary ok: %v", err)
 	}
 }
+
+func TestProviderErrorsHideAddresses(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		w.Write([]byte(`{"message":"Email address is not verified. The following identities failed the check in region AP-SOUTHEAST-1: someone.real+tag@gmail.com"}`))
+	}))
+	defer srv.Close()
+	s := NewSES("ap-southeast-1", "AKIATEST", "secret", "x@y.io")
+	s.endpoint = srv.URL
+	err := s.Send(context.Background(), Message{To: "someone.real+tag@gmail.com"})
+	if err == nil || strings.Contains(err.Error(), "gmail.com") || !strings.Contains(err.Error(), "<email>") || !strings.Contains(err.Error(), "not verified") {
+		t.Fatalf("err = %v", err)
+	}
+	r := NewResend("re_x", "x@y.io")
+	r.endpoint = srv.URL
+	if err := r.Send(context.Background(), Message{To: "a@b.io"}); err == nil || strings.Contains(err.Error(), "gmail.com") {
+		t.Fatalf("resend err = %v", err)
+	}
+}

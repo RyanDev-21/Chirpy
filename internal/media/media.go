@@ -383,8 +383,13 @@ func (s *Service) DueReminders(ctx context.Context) ([]Reminder, error) {
 		} else {
 			candidates = []uuid.UUID{chat}
 		}
+		// no reminder (with the sender's name) across a block
+		blocked, err := s.q.BlockedWith(ctx, database.BlockedWithParams{Owner: owner, Users: candidates})
+		if err != nil {
+			return nil, err
+		}
 		for _, u := range candidates {
-			if u != owner && !got[r.ID][u] {
+			if u != owner && !got[r.ID][u] && !slices.Contains(blocked, u) {
 				rem.To = append(rem.To, u)
 			}
 		}
