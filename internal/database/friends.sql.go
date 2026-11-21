@@ -177,7 +177,7 @@ func (q *Queries) ListBlocked(ctx context.Context, blockerID uuid.UUID) ([]ListB
 }
 
 const listFriends = `-- name: ListFriends :many
-SELECT u.id AS friend_id, u.name AS friend_name, u.display_name AS friend_display, u.avatar_at AS friend_avatar_at
+SELECT u.id AS friend_id, u.name AS friend_name, u.display_name AS friend_display, u.avatar_at AS friend_avatar_at, u.character AS friend_character, u.character_v AS friend_character_v
 FROM users u
 WHERE u.id IN (
     SELECT r1.otherUser_id FROM user_relationships r1 WHERE r1.user_id = $1 AND r1.status = 'confirm'
@@ -188,10 +188,12 @@ ORDER BY u.name
 `
 
 type ListFriendsRow struct {
-	FriendID       uuid.UUID
-	FriendName     string
-	FriendDisplay  string
-	FriendAvatarAt pgtype.Timestamp
+	FriendID         uuid.UUID
+	FriendName       string
+	FriendDisplay    string
+	FriendAvatarAt   pgtype.Timestamp
+	FriendCharacter  []byte
+	FriendCharacterV pgtype.Text
 }
 
 func (q *Queries) ListFriends(ctx context.Context, userID uuid.UUID) ([]ListFriendsRow, error) {
@@ -208,6 +210,8 @@ func (q *Queries) ListFriends(ctx context.Context, userID uuid.UUID) ([]ListFrie
 			&i.FriendName,
 			&i.FriendDisplay,
 			&i.FriendAvatarAt,
+			&i.FriendCharacter,
+			&i.FriendCharacterV,
 		); err != nil {
 			return nil, err
 		}
@@ -220,7 +224,7 @@ func (q *Queries) ListFriends(ctx context.Context, userID uuid.UUID) ([]ListFrie
 }
 
 const listIncomingFriendRequests = `-- name: ListIncomingFriendRequests :many
-SELECT ur.id, ur.user_id AS from_id, u.name AS from_name, u.display_name AS from_display, u.avatar_at AS from_avatar_at
+SELECT ur.id, ur.user_id AS from_id, u.name AS from_name, u.display_name AS from_display, u.avatar_at AS from_avatar_at, u.character AS from_character, u.character_v AS from_character_v
 FROM user_relationships ur
 JOIN users u ON u.id = ur.user_id
 WHERE ur.otherUser_id = $1 AND ur.status = 'pending'
@@ -228,11 +232,13 @@ ORDER BY ur.created_at
 `
 
 type ListIncomingFriendRequestsRow struct {
-	ID           uuid.UUID
-	FromID       uuid.UUID
-	FromName     string
-	FromDisplay  string
-	FromAvatarAt pgtype.Timestamp
+	ID             uuid.UUID
+	FromID         uuid.UUID
+	FromName       string
+	FromDisplay    string
+	FromAvatarAt   pgtype.Timestamp
+	FromCharacter  []byte
+	FromCharacterV pgtype.Text
 }
 
 func (q *Queries) ListIncomingFriendRequests(ctx context.Context, otheruserID uuid.UUID) ([]ListIncomingFriendRequestsRow, error) {
@@ -250,6 +256,8 @@ func (q *Queries) ListIncomingFriendRequests(ctx context.Context, otheruserID uu
 			&i.FromName,
 			&i.FromDisplay,
 			&i.FromAvatarAt,
+			&i.FromCharacter,
+			&i.FromCharacterV,
 		); err != nil {
 			return nil, err
 		}
@@ -262,7 +270,7 @@ func (q *Queries) ListIncomingFriendRequests(ctx context.Context, otheruserID uu
 }
 
 const listOutgoingFriendRequests = `-- name: ListOutgoingFriendRequests :many
-SELECT ur.id, ur.otherUser_id AS to_id, u.name AS to_name, u.display_name AS to_display, u.avatar_at AS to_avatar_at
+SELECT ur.id, ur.otherUser_id AS to_id, u.name AS to_name, u.display_name AS to_display, u.avatar_at AS to_avatar_at, u.character AS to_character, u.character_v AS to_character_v
 FROM user_relationships ur
 JOIN users u ON u.id = ur.otherUser_id
 WHERE ur.user_id = $1 AND ur.status = 'pending'
@@ -270,11 +278,13 @@ ORDER BY ur.created_at
 `
 
 type ListOutgoingFriendRequestsRow struct {
-	ID         uuid.UUID
-	ToID       uuid.UUID
-	ToName     string
-	ToDisplay  string
-	ToAvatarAt pgtype.Timestamp
+	ID           uuid.UUID
+	ToID         uuid.UUID
+	ToName       string
+	ToDisplay    string
+	ToAvatarAt   pgtype.Timestamp
+	ToCharacter  []byte
+	ToCharacterV pgtype.Text
 }
 
 func (q *Queries) ListOutgoingFriendRequests(ctx context.Context, userID uuid.UUID) ([]ListOutgoingFriendRequestsRow, error) {
@@ -292,6 +302,8 @@ func (q *Queries) ListOutgoingFriendRequests(ctx context.Context, userID uuid.UU
 			&i.ToName,
 			&i.ToDisplay,
 			&i.ToAvatarAt,
+			&i.ToCharacter,
+			&i.ToCharacterV,
 		); err != nil {
 			return nil, err
 		}

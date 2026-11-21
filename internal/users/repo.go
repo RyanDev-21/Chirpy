@@ -15,6 +15,7 @@ import (
 type UserRepo interface {
 	Create(ctx context.Context, input CreateUserInput) (*User, error)
 	GetUserByEmail(ctx context.Context, email string) (*User, string, error)
+	SetCharacter(ctx context.Context, id uuid.UUID, character []byte, version string) error
 	// UpgradePasswordHash swaps oldHash for newHash (same password, newer
 	// settings) unless the password changed meanwhile.
 	UpgradePasswordHash(ctx context.Context, id uuid.UUID, oldHash, newHash string) error
@@ -68,6 +69,7 @@ func toUser(u database.User) *User {
 	out.Location = PlaceOf(u.LocationID.String)
 	out.Discoverable = u.Discoverable
 	out.HideLastSeen = u.HideLastSeen
+	out.CharacterInfo = CharacterFrom(u.Character, u.CharacterV)
 	out.HideStreaks = u.HideStreaks
 	if u.NameChangedAt.Valid {
 		if next := u.NameChangedAt.Time.UTC().Add(RenameEvery); next.After(time.Now()) {
@@ -95,6 +97,10 @@ func (r *userRepo) Create(ctx context.Context, input CreateUserInput) (*User, er
 		return nil, err
 	}
 	return toUser(u), nil
+}
+
+func (r *userRepo) SetCharacter(ctx context.Context, id uuid.UUID, character []byte, version string) error {
+	return r.queries.SetCharacter(ctx, database.SetCharacterParams{ID: id, Character: character, Version: pgtype.Text{String: version, Valid: true}})
 }
 
 func (r *userRepo) UpgradePasswordHash(ctx context.Context, id uuid.UUID, oldHash, newHash string) error {
@@ -193,7 +199,8 @@ func (r *userRepo) PublicProfile(ctx context.Context, id, viewer uuid.UUID) (Pro
 	if err != nil {
 		return Profile{}, err
 	}
-	out := Profile{ID: p.ID, Name: p.Name, DisplayName: ShownName(p.Name, p.DisplayName), Bio: p.Bio, Interests: []string{}}
+	out := Profile{ID: p.ID, Name: p.Name, DisplayName: ShownName(p.Name, p.DisplayName), Bio: p.Bio, Interests: []string{},
+		CharacterInfo: CharacterFrom(p.Character, p.CharacterV)}
 	if p.AvatarAt.Valid {
 		out.AvatarURL = avatarURL(p.ID, p.AvatarAt.Time)
 	}

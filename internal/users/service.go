@@ -2,6 +2,7 @@ package users
 
 import (
 	"RyanDev-21.com/Chirpy/internal/catalog"
+	"RyanDev-21.com/Chirpy/internal/characters"
 	"context"
 	"errors"
 	"log/slog"
@@ -32,6 +33,8 @@ type UserService interface {
 	SearchUser(ctx context.Context, me uuid.UUID, q string) ([]PublicUser, error)
 	// Me returns the caller's own profile.
 	Me(ctx context.Context, userID uuid.UUID) (*User, error)
+	// SetCharacter saves the caller's character (checked against the catalog).
+	SetCharacter(ctx context.Context, me uuid.UUID, raw []byte) (CharacterInfo, error)
 	// GetName returns a user's display name (cached).
 	GetName(ctx context.Context, userID uuid.UUID) (string, error)
 	// UpdateProfile changes the caller's username (at most once per
@@ -356,6 +359,18 @@ func (s *userService) DeleteAvatar(ctx context.Context, me uuid.UUID) error {
 
 func (s *userService) Avatar(ctx context.Context, viewer, id uuid.UUID) ([]byte, time.Time, error) {
 	return s.repo.Avatar(ctx, id, viewer)
+}
+
+func (s *userService) SetCharacter(ctx context.Context, me uuid.UUID, raw []byte) (CharacterInfo, error) {
+	canonical, version, err := characters.Normalize(raw)
+	if err != nil {
+		return CharacterInfo{}, err
+	}
+	if err := s.repo.SetCharacter(ctx, me, canonical, version); err != nil {
+		return CharacterInfo{}, err
+	}
+	s.profileChanged(ctx, me) // friends' cached lists show it
+	return CharacterInfo{Character: canonical, CharacterV: &version}, nil
 }
 
 func (s *userService) profileChanged(ctx context.Context, id uuid.UUID) {

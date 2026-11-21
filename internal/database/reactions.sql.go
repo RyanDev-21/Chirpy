@@ -74,9 +74,10 @@ func (q *Queries) GroupMessageGroup(ctx context.Context, id uuid.UUID) (GroupMes
 }
 
 const groupReactionSummary = `-- name: GroupReactionSummary :many
-SELECT message_id, emoji, count(*)::int AS n, bool_or(user_id = $1::uuid) AS mine, min(created_at)::timestamp AS first_at
+SELECT message_id, emoji, COALESCE(anim, '')::text AS anim, count(*)::int AS n, bool_or(user_id = $1::uuid) AS mine,
+       min(created_at)::timestamp AS first_at, array_agg(user_id ORDER BY created_at)::uuid[] AS user_ids
 FROM group_message_reactions WHERE message_id = ANY($2::uuid[])
-GROUP BY message_id, emoji
+GROUP BY message_id, emoji, COALESCE(anim, '')
 ORDER BY message_id, first_at
 `
 
@@ -88,9 +89,11 @@ type GroupReactionSummaryParams struct {
 type GroupReactionSummaryRow struct {
 	MessageID uuid.UUID
 	Emoji     string
+	Anim      string
 	N         int32
 	Mine      bool
 	FirstAt   pgtype.Timestamp
+	UserIds   []uuid.UUID
 }
 
 func (q *Queries) GroupReactionSummary(ctx context.Context, arg GroupReactionSummaryParams) ([]GroupReactionSummaryRow, error) {
@@ -105,9 +108,11 @@ func (q *Queries) GroupReactionSummary(ctx context.Context, arg GroupReactionSum
 		if err := rows.Scan(
 			&i.MessageID,
 			&i.Emoji,
+			&i.Anim,
 			&i.N,
 			&i.Mine,
 			&i.FirstAt,
+			&i.UserIds,
 		); err != nil {
 			return nil, err
 		}
@@ -120,7 +125,7 @@ func (q *Queries) GroupReactionSummary(ctx context.Context, arg GroupReactionSum
 }
 
 const groupReactors = `-- name: GroupReactors :many
-SELECT r.user_id, u.name, u.display_name, r.emoji, r.created_at FROM group_message_reactions r
+SELECT r.user_id, u.name, u.display_name, r.emoji, COALESCE(r.anim, '')::text AS anim, r.created_at FROM group_message_reactions r
 JOIN users u ON u.id = r.user_id
 WHERE r.message_id = $1 ORDER BY r.created_at
 `
@@ -130,6 +135,7 @@ type GroupReactorsRow struct {
 	Name        string
 	DisplayName string
 	Emoji       string
+	Anim        string
 	CreatedAt   pgtype.Timestamp
 }
 
@@ -147,6 +153,7 @@ func (q *Queries) GroupReactors(ctx context.Context, messageID uuid.UUID) ([]Gro
 			&i.Name,
 			&i.DisplayName,
 			&i.Emoji,
+			&i.Anim,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -177,9 +184,10 @@ func (q *Queries) PrivateMessageParticipants(ctx context.Context, id uuid.UUID) 
 }
 
 const privateReactionSummary = `-- name: PrivateReactionSummary :many
-SELECT message_id, emoji, count(*)::int AS n, bool_or(user_id = $1::uuid) AS mine, min(created_at)::timestamp AS first_at
+SELECT message_id, emoji, COALESCE(anim, '')::text AS anim, count(*)::int AS n, bool_or(user_id = $1::uuid) AS mine,
+       min(created_at)::timestamp AS first_at, array_agg(user_id ORDER BY created_at)::uuid[] AS user_ids
 FROM message_reactions WHERE message_id = ANY($2::uuid[])
-GROUP BY message_id, emoji
+GROUP BY message_id, emoji, COALESCE(anim, '')
 ORDER BY message_id, first_at
 `
 
@@ -191,12 +199,15 @@ type PrivateReactionSummaryParams struct {
 type PrivateReactionSummaryRow struct {
 	MessageID uuid.UUID
 	Emoji     string
+	Anim      string
 	N         int32
 	Mine      bool
 	FirstAt   pgtype.Timestamp
+	UserIds   []uuid.UUID
 }
 
-// per message and emoji: count, and whether @me is among them
+// per message, emoji and animation: count, whether @me is among them, and who
+// (pigeon reactions play each person's character)
 func (q *Queries) PrivateReactionSummary(ctx context.Context, arg PrivateReactionSummaryParams) ([]PrivateReactionSummaryRow, error) {
 	rows, err := q.db.Query(ctx, privateReactionSummary, arg.Me, arg.Ids)
 	if err != nil {
@@ -209,9 +220,11 @@ func (q *Queries) PrivateReactionSummary(ctx context.Context, arg PrivateReactio
 		if err := rows.Scan(
 			&i.MessageID,
 			&i.Emoji,
+			&i.Anim,
 			&i.N,
 			&i.Mine,
 			&i.FirstAt,
+			&i.UserIds,
 		); err != nil {
 			return nil, err
 		}
@@ -224,7 +237,7 @@ func (q *Queries) PrivateReactionSummary(ctx context.Context, arg PrivateReactio
 }
 
 const privateReactors = `-- name: PrivateReactors :many
-SELECT r.user_id, u.name, u.display_name, r.emoji, r.created_at FROM message_reactions r
+SELECT r.user_id, u.name, u.display_name, r.emoji, COALESCE(r.anim, '')::text AS anim, r.created_at FROM message_reactions r
 JOIN users u ON u.id = r.user_id
 WHERE r.message_id = $1 ORDER BY r.created_at
 `
@@ -234,6 +247,7 @@ type PrivateReactorsRow struct {
 	Name        string
 	DisplayName string
 	Emoji       string
+	Anim        string
 	CreatedAt   pgtype.Timestamp
 }
 
@@ -251,6 +265,7 @@ func (q *Queries) PrivateReactors(ctx context.Context, messageID uuid.UUID) ([]P
 			&i.Name,
 			&i.DisplayName,
 			&i.Emoji,
+			&i.Anim,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -264,15 +279,16 @@ func (q *Queries) PrivateReactors(ctx context.Context, messageID uuid.UUID) ([]P
 }
 
 const setGroupReaction = `-- name: SetGroupReaction :exec
-WITH t AS (UPDATE GroupMessage SET changed_at = $4::timestamp WHERE id = $1)
-INSERT INTO group_message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)
-ON CONFLICT (message_id, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, created_at = NOW()
+WITH t AS (UPDATE GroupMessage SET changed_at = $5::timestamp WHERE id = $1)
+INSERT INTO group_message_reactions (message_id, user_id, emoji, anim) VALUES ($1, $2, $3, $4)
+ON CONFLICT (message_id, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, anim = EXCLUDED.anim, created_at = NOW()
 `
 
 type SetGroupReactionParams struct {
 	MessageID uuid.UUID
 	UserID    uuid.UUID
 	Emoji     string
+	Anim      pgtype.Text
 	At        pgtype.Timestamp
 }
 
@@ -281,21 +297,23 @@ func (q *Queries) SetGroupReaction(ctx context.Context, arg SetGroupReactionPara
 		arg.MessageID,
 		arg.UserID,
 		arg.Emoji,
+		arg.Anim,
 		arg.At,
 	)
 	return err
 }
 
 const setPrivateReaction = `-- name: SetPrivateReaction :exec
-WITH t AS (UPDATE message SET changed_at = $4::timestamp WHERE id = $1)
-INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3)
-ON CONFLICT (message_id, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, created_at = NOW()
+WITH t AS (UPDATE message SET changed_at = $5::timestamp WHERE id = $1)
+INSERT INTO message_reactions (message_id, user_id, emoji, anim) VALUES ($1, $2, $3, $4)
+ON CONFLICT (message_id, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, anim = EXCLUDED.anim, created_at = NOW()
 `
 
 type SetPrivateReactionParams struct {
 	MessageID uuid.UUID
 	UserID    uuid.UUID
 	Emoji     string
+	Anim      pgtype.Text
 	At        pgtype.Timestamp
 }
 
@@ -305,6 +323,7 @@ func (q *Queries) SetPrivateReaction(ctx context.Context, arg SetPrivateReaction
 		arg.MessageID,
 		arg.UserID,
 		arg.Emoji,
+		arg.Anim,
 		arg.At,
 	)
 	return err

@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"RyanDev-21.com/Chirpy/internal/users"
 	"errors"
 	"fmt"
 	"time"
@@ -27,6 +28,7 @@ var (
 	ErrNotValidTimeFmt     = errors.New("since must be an RFC3339 timestamp")
 	ErrNotValidParentID    = errors.New("parent_id must be the id of a message in the same chat")
 	ErrNotValidStory       = errors.New("story_id must be a live story of the person you're writing to")
+	ErrNotValidAnim        = errors.New("anim must be an animation id from the characters catalog")
 	ErrNotSupportedTypeMsg = errors.New(`type must be "private" or "public"`)
 	ErrEmptyMessage        = errors.New("msg must be 1-500 characters")
 	ErrMessageNotInChat    = errors.New("msg_id is not a message in this chat")
@@ -59,6 +61,9 @@ type InCommingMessage struct {
 	// retries safe: the same id within DedupeWindow returns the first
 	// message instead of sending it twice.
 	ClientMsgID string `json:"client_msg_id,omitempty"`
+	// Anim (optional): a catalog animation played with the sender's
+	// character; msg may then be empty.
+	Anim string `json:"anim,omitempty"`
 	// StoryID (private messages only): this is a reply to the recipient's
 	// story. Kept after the story expires.
 	StoryID string `json:"story_id,omitempty"`
@@ -123,8 +128,12 @@ type ChangesRes struct {
 // whether the caller is one of them.
 type ReactionCount struct {
 	Emoji string `json:"emoji"`
-	Count int    `json:"count"`
-	Me    bool   `json:"me"`
+	// Anim and UserIDs: a pigeon reaction, grouped apart from the plain
+	// emoji; who reacted, so each person's character can play it.
+	Anim    string      `json:"anim,omitempty"`
+	Count   int         `json:"count"`
+	Me      bool        `json:"me"`
+	UserIDs []uuid.UUID `json:"user_ids,omitempty"`
 }
 
 // Reactor is one person's reaction, for GET .../reactions.
@@ -133,6 +142,7 @@ type Reactor struct {
 	Name        string    `json:"name"`
 	DisplayName string    `json:"display_name"`
 	Emoji       string    `json:"emoji"`
+	Anim        string    `json:"anim,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -191,6 +201,8 @@ type Conversation struct {
 	// StreakEndsSoon: it counted yesterday but not yet today.
 	Streak         int  `json:"streak,omitempty"`
 	StreakEndsSoon bool `json:"streak_ends_soon,omitempty"`
+	// the other person's character (private chats only)
+	*users.CharacterInfo
 }
 
 // streakZone: streak days run midnight to midnight Thailand time, the

@@ -1,11 +1,11 @@
 -- name: AddMessagePrivate :exec
-INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, story_id)
-VALUES ($1, $2, $3, $4, $5, $6, @forwarded, @story_id);
+INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, story_id, anim)
+VALUES ($1, $2, $3, $4, $5, $6, @forwarded, @story_id, @anim);
 
 -- name: AddMessagePublic :exec
 -- searchable: groups of up to 50 members are indexed for search
-INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded)
-VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = $3), false), @forwarded);
+INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded, anim)
+VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = $3), false), @forwarded, @anim);
 
 -- name: AddMessagePrivateOnce :execrows
 -- saves the message unless @from_id already used @client_id (0 rows then)
@@ -15,8 +15,8 @@ WITH s AS (
     ON CONFLICT DO NOTHING
     RETURNING msg_id
 )
-INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, client_msg_id, story_id)
-SELECT @id, @content, @parentid, @from_id, @to_id, @created_at, @forwarded, @client_id, @story_id FROM s;
+INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, client_msg_id, story_id, anim)
+SELECT @id, @content, @parentid, @from_id, @to_id, @created_at, @forwarded, @client_id, @story_id, @anim FROM s;
 
 -- name: AddMessagePublicOnce :execrows
 WITH s AS (
@@ -25,9 +25,9 @@ WITH s AS (
     ON CONFLICT DO NOTHING
     RETURNING msg_id
 )
-INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded, client_msg_id)
+INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded, client_msg_id, anim)
 SELECT @id, @content, @group_id, @from_id, @parent_id, @created_at,
-       COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = @group_id), false), @forwarded, @client_id FROM s;
+       COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = @group_id), false), @forwarded, @client_id, @anim FROM s;
 
 -- name: SentMessageID :one
 SELECT msg_id FROM sent_ids WHERE from_id = @from_id AND client_id = @client_id;
@@ -139,6 +139,7 @@ WITH mine AS (
     ORDER BY other_id, created_at DESC, id DESC
 )
 SELECT l.other_id::uuid AS other_id, u.name AS other_name, u.display_name AS other_display, u.avatar_at AS other_avatar_at,
+       u.character AS other_character, u.character_v AS other_character_v,
        l.id AS last_id, l.content AS last_content, l.from_id AS last_from, l.created_at AS last_at,
        (l.deleted_at IS NOT NULL)::bool AS last_deleted,
        (SELECT count(*) FROM message x

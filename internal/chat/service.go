@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"RyanDev-21.com/Chirpy/internal/characters"
 	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
 	"errors"
@@ -55,7 +56,7 @@ type ChatService interface {
 	Conversations(ctx context.Context, me uuid.UUID) ([]Conversation, error)
 	// React sets the caller's single reaction on a message (replacing any
 	// earlier one); Unreact removes it.
-	React(ctx context.Context, me, msgID uuid.UUID, emoji string) error
+	React(ctx context.Context, me, msgID uuid.UUID, emoji, anim string) error
 	Unreact(ctx context.Context, me, msgID uuid.UUID) error
 	Reactors(ctx context.Context, me, msgID uuid.UUID) ([]Reactor, error)
 	// PeerSeen is how far the other person has read the private chat, if
@@ -125,7 +126,12 @@ func (s *chatService) SendMessage(ctx context.Context, from uuid.UUID, in InComm
 
 func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMessage, client uuid.UUID) (uuid.UUID, error) {
 	in.Content = strings.TrimSpace(in.Content)
-	if n := utf8.RuneCountInString(in.Content); (n == 0 && len(in.Media) == 0) || n > maxMessageLen {
+	if in.Anim != "" {
+		if _, ok := characters.Fallback(in.Anim); !ok || in.Forwarded {
+			return uuid.Nil, ErrNotValidAnim
+		}
+	}
+	if n := utf8.RuneCountInString(in.Content); (n == 0 && len(in.Media) == 0 && in.Anim == "") || n > maxMessageLen {
 		return uuid.Nil, ErrEmptyMessage
 	}
 	if len(in.Media) > 0 && s.media == nil {
@@ -247,6 +253,7 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 		CreatedAt: now,
 		Forwarded: in.Forwarded,
 		StoryID:   in.StoryID,
+		Anim:      in.Anim,
 	}
 	if len(attached) > 0 {
 		out.Media = attached
@@ -270,6 +277,9 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 	telemetry.Message(ctx, in.Type, len(attached) > 0)
 	if s.notify != nil {
 		j := push.Job{Kind: push.KindPrivate, To: targets, From: from, MsgID: msgID, Preview: mediaPreview(in.Content, attached)}
+		if fallback, ok := characters.Fallback(in.Anim); ok && (in.Content == "" || in.Content == fallback) {
+			j.Preview = fallback // "👋 waved"
+		}
 		if in.Type == TypePublic {
 			j.Kind, j.Group = push.KindGroup, to
 		}
@@ -712,18 +722,21 @@ func (s *chatService) authorizeMessage(ctx context.Context, me, msgID uuid.UUID,
 	return ref, slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == me }), nil
 }
 
-func (s *chatService) React(ctx context.Context, me, msgID uuid.UUID, emoji string) error {
+func (s *chatService) React(ctx context.Context, me, msgID uuid.UUID, emoji, anim string) error {
 	if err := ValidateEmoji(emoji); err != nil {
 		return err
+	}
+	if _, ok := characters.Fallback(anim); anim != "" && !ok {
+		return ErrNotValidAnim
 	}
 	ref, others, err := s.authorizeMessage(ctx, me, msgID, true)
 	if err != nil {
 		return err
 	}
-	if err := s.repo.SetReaction(ctx, ref.Kind, msgID, me, emoji); err != nil {
+	if err := s.repo.SetReaction(ctx, ref.Kind, msgID, me, emoji, anim); err != nil {
 		return err
 	}
-	s.pushReaction(ctx, ref, withMe(others, me), me, msgID, emoji)
+	s.pushReaction(ctx, ref, withMe(others, me), me, msgID, emoji, anim)
 	telemetry.ChatAction(ctx, "react")
 	// the author hears about reactions to their message (not their own)
 	if s.notify != nil && ref.From != me && ref.From != uuid.Nil {
@@ -883,7 +896,7 @@ func (s *chatService) Unreact(ctx context.Context, me, msgID uuid.UUID) error {
 		return err
 	}
 	if removed {
-		s.pushReaction(ctx, ref, withMe(others, me), me, msgID, "")
+		s.pushReaction(ctx, ref, withMe(others, me), me, msgID, "", "")
 	}
 	return nil
 }
@@ -914,8 +927,8 @@ func (s *chatService) ReadBy(ctx context.Context, me, msgID uuid.UUID) ([]Reader
 }
 
 // pushReaction tells the rest of the chat; emoji "" means removed.
-func (s *chatService) pushReaction(ctx context.Context, ref messageRef, to []uuid.UUID, from, msgID uuid.UUID, emoji string) {
-	ev := ws.OutReactionEvent{MsgID: msgID.String(), FromID: from.String(), Type: ref.Kind, Emoji: emoji}
+func (s *chatService) pushReaction(ctx context.Context, ref messageRef, to []uuid.UUID, from, msgID uuid.UUID, emoji, anim string) {
+	ev := ws.OutReactionEvent{MsgID: msgID.String(), FromID: from.String(), Type: ref.Kind, Emoji: emoji, Anim: anim}
 	if ref.Kind == TypePublic {
 		ev.GroupID = ref.Group.String()
 	}

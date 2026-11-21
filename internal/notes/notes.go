@@ -55,6 +55,7 @@ type Note struct {
 	Text        string    `json:"text"`
 	CreatedAt   time.Time `json:"created_at"`
 	ExpiresAt   time.Time `json:"expires_at"`
+	users.CharacterInfo
 }
 
 // Store is implemented by *database.Queries.
@@ -130,7 +131,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	out := make([]Note, 0, len(rows))
 	for _, x := range rows {
 		out = append(out, Note{UserID: x.UserID, Name: x.Name, DisplayName: users.ShownName(x.Name, x.DisplayName),
-			AvatarURL: users.AvatarURLFrom(x.UserID, x.AvatarAt), Text: x.Text,
+			AvatarURL: users.AvatarURLFrom(x.UserID, x.AvatarAt), Text: x.Text, CharacterInfo: users.CharacterFrom(x.Character, x.CharacterV),
 			CreatedAt: x.CreatedAt.Time.UTC(), ExpiresAt: x.ExpiresAt.Time.UTC()})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"notes": out})

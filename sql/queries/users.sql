@@ -42,7 +42,7 @@ UPDATE users SET bio = @bio, updated_at = NOW() WHERE id = @id RETURNING *;
 
 -- name: GetPublicProfile :one
 -- hidden (no row) when either user blocked the other
-SELECT u.id, u.name, u.display_name, u.bio, u.avatar_at, u.location_id, u.discoverable FROM users u
+SELECT u.id, u.name, u.display_name, u.bio, u.avatar_at, u.location_id, u.discoverable, u.character, u.character_v FROM users u
 WHERE u.id = @id
   AND u.banned_at IS NULL
   AND NOT EXISTS (
@@ -144,7 +144,7 @@ DELETE FROM notes WHERE user_id = @user_id;
 
 -- name: FriendNotes :many
 -- my note and my friends' notes that haven't expired (not suspended users)
-SELECT n.user_id, u.name, u.display_name, u.avatar_at, n.text, n.created_at, n.expires_at
+SELECT n.user_id, u.name, u.display_name, u.avatar_at, u.character, u.character_v, n.text, n.created_at, n.expires_at
 FROM notes n
 JOIN users u ON u.id = n.user_id
 WHERE n.expires_at > @now::timestamp
@@ -161,3 +161,6 @@ DELETE FROM notes WHERE expires_at <= @now::timestamp;
 -- name: UpgradePasswordHash :execrows
 -- same password, newer hash settings; only if it wasn't changed meanwhile
 UPDATE users SET password = @new_hash WHERE id = @id AND password = @old_hash;
+
+-- name: SetCharacter :exec
+UPDATE users SET character = @character::jsonb, character_v = @version, updated_at = NOW() WHERE id = @id;
