@@ -266,6 +266,15 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	sender := o.mailer
 	switch {
 	case sender != nil:
+	case cfg.SESAccessKeyID != "":
+		ses := mail.NewSES(cfg.SESRegion, cfg.SESAccessKeyID, cfg.SESSecretAccessKey, cfg.MailFrom)
+		if cfg.ResendAPIKey != "" {
+			sender = mail.Fallback{Primary: ses, Secondary: mail.NewResend(cfg.ResendAPIKey, cfg.MailFrom), OnFail: func(err error) {
+				logger.Warn("SES failed, sending through Resend", "error", err)
+			}}
+		} else {
+			sender = ses
+		}
 	case cfg.ResendAPIKey != "":
 		sender = mail.NewResend(cfg.ResendAPIKey, cfg.MailFrom)
 	case cfg.IsDev():

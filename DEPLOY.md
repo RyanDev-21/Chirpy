@@ -69,7 +69,7 @@ Render service.
 | `DB_MAX_IDLE_TIME` | `2m` | Close idle connections so Neon can scale to zero. |
 | `TRUSTED_PROXIES` | `2` | Requests pass Cloudflare's edge (Render's CDN) and then Render: two public proxies. Render's internal `10.x` hops are skipped automatically. With `1` the server would see Cloudflare's address for everyone, and all anonymous users would share one rate-limit budget. To check: send a request with a unique `X-Request-Id` and compare its `client_ip` in Render's logs with `curl -4 ifconfig.me`. |
 
-## Email (Resend) and Google sign-in
+## Email (Resend, Amazon SES) and Google sign-in
 
 ### Resend: sending from mail.ponypigeon.com
 1. Resend → **Domains → Add Domain** → `mail.ponypigeon.com`, region closest
@@ -83,8 +83,44 @@ Render service.
 4. Resend → **API Keys → Create** with **Sending access** for that domain
    only. Paste it into Render as `RESEND_API_KEY` (never into git or chat).
 
-Without `RESEND_API_KEY` the server logs an "insecure configuration" warning
-on start and sign-up answers `503` because codes can't be sent.
+Without `RESEND_API_KEY` (or SES below) the server logs an "insecure
+configuration" warning on start and sign-up answers `503` because codes
+can't be sent.
+
+### Amazon SES (main sender; no daily cap)
+Resend's free plan stops at 100 emails a day. SES costs about $0.10 per
+1,000. With both configured, SES sends and Resend is the fallback (if SES
+fails, the same email goes through Resend and the log says so).
+
+1. **AWS account** (needs a card). Turn on MFA for the root user, and don't
+   create access keys for root.
+2. **SES → region Asia Pacific (Singapore) `ap-southeast-1` → Identities →
+   Create identity → Domain** `mail.ponypigeon.com`, with **Easy DKIM**
+   (RSA 2048). Optional but recommended: **Custom MAIL FROM domain**
+   `bounce.mail.ponypigeon.com`.
+3. SES shows DNS records: three DKIM **CNAME**s
+   (`…._domainkey.mail.ponypigeon.com`), and for the MAIL FROM domain an
+   **MX** and a **TXT** (SPF). Add each in **Cloudflare → DNS**, **DNS only**
+   (grey cloud). They don't clash with Resend's records. Wait until SES
+   shows the identity as **Verified**.
+4. **IAM → Users → Create user** `chirpy-ses` (no console access) with an
+   inline policy that only allows sending from that identity:
+
+   ```json
+   {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ses:SendEmail"],
+     "Resource":"arn:aws:ses:ap-southeast-1:<ACCOUNT_ID>:identity/mail.ponypigeon.com"}]}
+   ```
+
+   Then **Security credentials → Create access key** (use case: application
+   outside AWS). Put the two values on the server as `SES_ACCESS_KEY_ID`
+   and `SES_SECRET_ACCESS_KEY` (never in git or chat). `SES_REGION`
+   defaults to `ap-southeast-1`.
+5. **SES → Account dashboard → Request production access**: mail type
+   *Transactional*, website `https://chirpy.ponypigeon.com`, use case
+   "verification and password-reset codes for a chat app, only to people who
+   sign up; bounces and complaints are handled by removing the address".
+   Until it's approved (often about a day), SES only sends to addresses you
+   verified yourself, and the fallback to Resend covers the rest.
 
 ### Google sign-in
 In **Google Cloud Console → APIs & Services**:

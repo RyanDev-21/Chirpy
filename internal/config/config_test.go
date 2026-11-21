@@ -114,6 +114,21 @@ func TestWarnsWithoutEmailProvider(t *testing.T) {
 	}
 }
 
+func TestSESKeysTogether(t *testing.T) {
+	t.Setenv("ENV_FILE", "/dev/null")
+	t.Setenv("DB_URL", "postgres://x")
+	t.Setenv("SECRET", strings.Repeat("s", 32))
+	t.Setenv("SES_ACCESS_KEY_ID", "AKIATEST")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SES_SECRET_ACCESS_KEY") {
+		t.Fatalf("half the SES keys accepted: %v", err)
+	}
+	t.Setenv("SES_SECRET_ACCESS_KEY", "secret")
+	cfg, err := Load()
+	if err != nil || cfg.SESRegion != "ap-southeast-1" {
+		t.Fatalf("%v %+v", err, cfg.SESRegion)
+	}
+}
+
 func TestMediaStorageGB(t *testing.T) {
 	t.Setenv("ENV_FILE", "/dev/null")
 	t.Setenv("DB_URL", "postgres://x")
