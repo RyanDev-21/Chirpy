@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"github.com/alexedwards/argon2id"
 	"testing"
 )
 
@@ -190,4 +191,22 @@ func TestDeleteGoogleOnlyAccount(t *testing.T) {
 	e.expect(e.do("DELETE", "/api/users/me", u.Token, map[string]string{"google_id_token": other}), 401)
 	e.expect(e.do("DELETE", "/api/users/me", u.Token, map[string]string{"google_id_token": e.googleToken("g-del", "del@gmail.com", true)}), 204)
 	e.now(`SELECT count(*)::text FROM user_identities`, "0")
+}
+
+// A password hashed with the old, heavier settings still works, and is
+// re-hashed with the lighter ones at that login.
+func TestOldPasswordHashUpgradedOnLogin(t *testing.T) {
+	e := newEnv(t)
+	u := e.signup("alice")
+	old, err := argon2id.CreateHash(password, argon2id.DefaultParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.Exec(`UPDATE users SET password = $1 WHERE id = $2`, old, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.expect(e.do("POST", "/api/login", "", map[string]string{"email": u.email, "password": password}), 200)
+	e.now(`SELECT (password LIKE '%m=19456,t=2,p=1%')::text FROM users WHERE id = $1`, "true", u.ID)
+	e.expect(e.do("POST", "/api/login", "", map[string]string{"email": u.email, "password": password}), 200)
+	e.expect(e.do("POST", "/api/login", "", map[string]string{"email": u.email, "password": "wrong-password-123"}), 401)
 }

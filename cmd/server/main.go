@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -57,10 +58,29 @@ func main() {
 	}
 }
 
-// version is the deployed commit on Render (RENDER_GIT_COMMIT), else "dev".
+// buildVersion is set at build time: go build -ldflags "-X main.buildVersion=<commit>"
+// (the Dockerfile's VERSION build argument).
+var buildVersion string
+
+// version is the deployed commit: from the build, from Render
+// (RENDER_GIT_COMMIT), from Go's own build info when built from a git
+// checkout, else "dev".
 func version() string {
-	if v := os.Getenv("RENDER_GIT_COMMIT"); len(v) >= 7 {
-		return v[:7]
+	for _, v := range []string{buildVersion, os.Getenv("RENDER_GIT_COMMIT"), vcsRevision()} {
+		if len(v) >= 7 {
+			return v[:7]
+		}
 	}
 	return "dev"
+}
+
+func vcsRevision() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" {
+				return s.Value
+			}
+		}
+	}
+	return ""
 }

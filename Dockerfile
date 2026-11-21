@@ -4,7 +4,9 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/chirpy ./cmd/server
+# VERSION: the git commit, shown in logs and telemetry (docker build --build-arg VERSION=$(git rev-parse HEAD))
+ARG VERSION=""
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=${VERSION}" -o /out/chirpy ./cmd/server
 
 # distroless: no shell, CA certificates included (needed for TLS to
 # Postgres, Redis and Google), runs as an unprivileged user

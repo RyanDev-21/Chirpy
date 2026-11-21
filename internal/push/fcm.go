@@ -2,6 +2,7 @@ package push
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -33,6 +34,8 @@ type Message struct {
 	// can't be delivered in time.
 	DataOnly bool
 	TTL      time.Duration
+	// Channel is the Android notification channel ("" = "messages").
+	Channel string
 }
 
 // Sender delivers notifications.
@@ -125,7 +128,7 @@ func (f *FCM) Send(ctx context.Context, m Message) error {
 		Android: map[string]any{
 			"priority":     "high",
 			"collapse_key": m.Tag,
-			"notification": map[string]string{"tag": m.Tag, "channel_id": "messages"},
+			"notification": map[string]string{"tag": m.Tag, "channel_id": cmp.Or(m.Channel, "messages")},
 		},
 	}})
 }

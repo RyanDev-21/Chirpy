@@ -66,6 +66,66 @@ func (q *Queries) AttachStoryMedia(ctx context.Context, arg AttachStoryMediaPara
 	return result.RowsAffected(), nil
 }
 
+const claimExpiringBigMedia = `-- name: ClaimExpiringBigMedia :many
+UPDATE media SET reminded_at = $1::timestamp
+WHERE id IN (
+    SELECT id FROM media
+    WHERE deleted_at IS NULL AND status = 'ready' AND reminded_at IS NULL AND owner_id IS NOT NULL
+      AND size > $2::bigint AND chat_type IN ('private', 'public')
+      AND expires_at > $1::timestamp AND expires_at <= $3::timestamp
+    ORDER BY expires_at
+    LIMIT 200)
+RETURNING id, owner_id, kind, chat_type, chat_id, message_id, created_at, expires_at
+`
+
+type ClaimExpiringBigMediaParams struct {
+	Now   pgtype.Timestamp
+	Large int64
+	Until pgtype.Timestamp
+}
+
+type ClaimExpiringBigMediaRow struct {
+	ID        uuid.UUID
+	OwnerID   pgtype.UUID
+	Kind      string
+	ChatType  pgtype.Text
+	ChatID    pgtype.UUID
+	MessageID pgtype.UUID
+	CreatedAt pgtype.Timestamp
+	ExpiresAt pgtype.Timestamp
+}
+
+// big files in chats that expire before @until and haven't been reminded
+// about: marked as reminded now, so the reminder goes out once
+func (q *Queries) ClaimExpiringBigMedia(ctx context.Context, arg ClaimExpiringBigMediaParams) ([]ClaimExpiringBigMediaRow, error) {
+	rows, err := q.db.Query(ctx, claimExpiringBigMedia, arg.Now, arg.Large, arg.Until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimExpiringBigMediaRow
+	for rows.Next() {
+		var i ClaimExpiringBigMediaRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Kind,
+			&i.ChatType,
+			&i.ChatID,
+			&i.MessageID,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countMediaDownloads = `-- name: CountMediaDownloads :one
 SELECT count(*)::int FROM media_downloads WHERE media_id = $1
 `
@@ -148,7 +208,7 @@ func (q *Queries) ExpireMediaOfMessage(ctx context.Context, arg ExpireMediaOfMes
 }
 
 const getMedia = `-- name: GetMedia :one
-SELECT id, owner_id, kind, content_type, size, status, chat_type, chat_id, message_id, created_at, expires_at, delivered_at, last_access_at, deleted_at, duration_ms, width, height, has_thumbnail, file_name, waveform FROM media WHERE id = $1
+SELECT id, owner_id, kind, content_type, size, status, chat_type, chat_id, message_id, created_at, expires_at, delivered_at, last_access_at, deleted_at, duration_ms, width, height, has_thumbnail, file_name, waveform, reminded_at FROM media WHERE id = $1
 `
 
 func (q *Queries) GetMedia(ctx context.Context, id uuid.UUID) (Medium, error) {
@@ -175,6 +235,7 @@ func (q *Queries) GetMedia(ctx context.Context, id uuid.UUID) (Medium, error) {
 		&i.HasThumbnail,
 		&i.FileName,
 		&i.Waveform,
+		&i.RemindedAt,
 	)
 	return i, err
 }
@@ -206,6 +267,36 @@ func (q *Queries) GroupMediaVisible(ctx context.Context, arg GroupMediaVisiblePa
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const groupMembersJoinedBy = `-- name: GroupMembersJoinedBy :many
+SELECT member_id FROM member_table WHERE group_id = $1 AND joined_at <= $2::timestamp
+`
+
+type GroupMembersJoinedByParams struct {
+	GroupID uuid.UUID
+	At      pgtype.Timestamp
+}
+
+// members of @group_id who had joined by @at (so they can see a message from then)
+func (q *Queries) GroupMembersJoinedBy(ctx context.Context, arg GroupMembersJoinedByParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, groupMembersJoinedBy, arg.GroupID, arg.At)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var member_id uuid.UUID
+		if err := rows.Scan(&member_id); err != nil {
+			return nil, err
+		}
+		items = append(items, member_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const leastRecentlyUsedMedia = `-- name: LeastRecentlyUsedMedia :many
@@ -281,6 +372,30 @@ func (q *Queries) MediaCreatedSince(ctx context.Context, arg MediaCreatedSincePa
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const mediaDownloaders = `-- name: MediaDownloaders :many
+SELECT media_id, user_id FROM media_downloads WHERE media_id = ANY($1::uuid[])
+`
+
+func (q *Queries) MediaDownloaders(ctx context.Context, ids []uuid.UUID) ([]MediaDownload, error) {
+	rows, err := q.db.Query(ctx, mediaDownloaders, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MediaDownload
+	for rows.Next() {
+		var i MediaDownload
+		if err := rows.Scan(&i.MediaID, &i.UserID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const mediaForMessages = `-- name: MediaForMessages :many
