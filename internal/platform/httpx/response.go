@@ -1,7 +1,9 @@
 package httpx
 
 import (
+	"RyanDev-21.com/Chirpy/internal/platform/secure"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 )
@@ -31,6 +33,12 @@ func Error(w http.ResponseWriter, code int, msg string) {
 // ServerError logs err with the request's id and user, then answers 500
 // without leaking the cause to the client.
 func ServerError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, secure.ErrBusy) { // overloaded, not broken: retry soon
+		slog.WarnContext(r.Context(), "password checks busy", slog.String("route", RoutePattern(r)))
+		w.Header().Set("Retry-After", "5")
+		Error(w, http.StatusServiceUnavailable, secure.ErrBusy.Error())
+		return
+	}
 	slog.ErrorContext(r.Context(), "request failed",
 		slog.String("route", RoutePattern(r)),
 		slog.String("error", err.Error()),

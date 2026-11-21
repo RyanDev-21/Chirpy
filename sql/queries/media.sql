@@ -106,3 +106,10 @@ SELECT media_id, user_id FROM media_downloads WHERE media_id = ANY(@ids::uuid[])
 -- name: GroupMembersJoinedBy :many
 -- members of @group_id who had joined by @at (so they can see a message from then)
 SELECT member_id FROM member_table WHERE group_id = @group_id AND joined_at <= @at::timestamp;
+
+-- name: BlockedWith :many
+-- which of @users blocked @owner or were blocked by them
+SELECT CASE WHEN blocker_id = @owner::uuid THEN blocked_id ELSE blocker_id END::uuid AS user_id
+FROM user_blocks
+WHERE (blocker_id = @owner::uuid AND blocked_id = ANY(@users::uuid[]))
+   OR (blocked_id = @owner::uuid AND blocker_id = ANY(@users::uuid[]));

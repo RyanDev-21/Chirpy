@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -133,5 +134,13 @@ func TestClientIP(t *testing.T) {
 				t.Fatalf("ClientIP = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestServerErrorBusyIs503(t *testing.T) {
+	rec := httptest.NewRecorder()
+	ServerError(rec, httptest.NewRequest("POST", "/api/login", nil), fmt.Errorf("check password: %w", secure.ErrBusy))
+	if rec.Code != 503 || rec.Header().Get("Retry-After") != "5" {
+		t.Fatalf("got %d, Retry-After %q", rec.Code, rec.Header().Get("Retry-After"))
 	}
 }

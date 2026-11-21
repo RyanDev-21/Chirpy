@@ -101,8 +101,8 @@ Test a backup and a restore **before** moving:
    ```bash
    cd ~/chirpy/deploy/vps
    docker compose stop api
-   read -r -s -p "Neon URL: " NEON_URL; echo
-   docker run --rm -e NEON_URL="$NEON_URL" postgres:18 \
+   read -r -s -p "Neon URL: " NEON_URL; echo; export NEON_URL
+   docker run --rm -e NEON_URL postgres:18 \
      sh -c 'pg_dump --format=custom --no-owner --no-privileges "$NEON_URL"' > /tmp/neon.dump
    docker compose exec -T postgres pg_restore -U chirpy -d chirpy --clean --if-exists --no-owner --no-privileges < /tmp/neon.dump
    rm /tmp/neon.dump; unset NEON_URL

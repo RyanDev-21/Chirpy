@@ -35,10 +35,25 @@ var passwordParams = &argon2id.Params{Memory: 19 * 1024, Iterations: 2, Parallel
 // it. Others wait their turn (a hash takes tens of milliseconds).
 var hashing = make(chan struct{}, 2)
 
-func withHashSlot[T any](fn func() T) T {
-	hashing <- struct{}{}
+// hashWait is how long a request waits for a slot before giving up with
+// ErrBusy, so a flood of logins can't make requests pile up forever.
+var hashWait = 10 * time.Second
+
+// ErrBusy: too many password checks at once; answer 503 and let the
+// client retry.
+var ErrBusy = errors.New("too many password checks at once, try again shortly")
+
+func withHashSlot[T any](fn func() T) (T, error) {
+	t := time.NewTimer(hashWait)
+	defer t.Stop()
+	select {
+	case hashing <- struct{}{}:
+	case <-t.C:
+		var zero T
+		return zero, ErrBusy
+	}
 	defer func() { <-hashing }()
-	return fn()
+	return fn(), nil
 }
 
 func init() {
@@ -51,10 +66,13 @@ func HashPassword(password string) (string, error) {
 		h   string
 		err error
 	}
-	r := withHashSlot(func() res {
+	r, err := withHashSlot(func() res {
 		h, err := argon2id.CreateHash(password, passwordParams)
 		return res{h, err}
 	})
+	if err != nil {
+		return "", err
+	}
 	return r.h, r.err
 }
 
@@ -63,10 +81,13 @@ func CheckPassword(password string, hash string) (bool, error) {
 		ok  bool
 		err error
 	}
-	r := withHashSlot(func() res {
+	r, err := withHashSlot(func() res {
 		ok, err := argon2id.ComparePasswordAndHash(password, hash)
 		return res{ok, err}
 	})
+	if err != nil {
+		return false, err
+	}
 	return r.ok, r.err
 }
 
@@ -78,7 +99,7 @@ func NeedsRehash(hash string) bool {
 
 // BurnPasswordCheck spends the same time as a real password check.
 func BurnPasswordCheck(password string) {
-	withHashSlot(func() bool {
+	_, _ = withHashSlot(func() bool {
 		_, _ = argon2id.ComparePasswordAndHash(password, dummyPasswordHash)
 		return true
 	})

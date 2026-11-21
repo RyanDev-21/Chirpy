@@ -9,8 +9,11 @@ BUCKET=${BACKUP_BUCKET:-chirpy-backups}
 ENDPOINT="https://$BACKUP_R2_ACCOUNT_ID.r2.cloudflarestorage.com"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+# keys go through the environment (-e NAME), never on the command line,
+# where any user on the machine could read them with ps
+export AWS_ACCESS_KEY_ID="$BACKUP_R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$BACKUP_R2_SECRET_ACCESS_KEY"
 aws() {
-  docker run --rm -v "$work:/w" -e AWS_ACCESS_KEY_ID="$BACKUP_R2_ACCESS_KEY_ID" -e AWS_SECRET_ACCESS_KEY="$BACKUP_R2_SECRET_ACCESS_KEY" \
+  docker run --rm -v "$work:/w" -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
     -e AWS_DEFAULT_REGION=auto -e AWS_REQUEST_CHECKSUM_CALCULATION=WHEN_REQUIRED -e AWS_RESPONSE_CHECKSUM_VALIDATION=WHEN_REQUIRED \
     amazon/aws-cli:2.22.35 --endpoint-url "$ENDPOINT" --only-show-errors "$@"
 }

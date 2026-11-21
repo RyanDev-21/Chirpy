@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -61,10 +62,17 @@ func (r *Resend) Send(ctx context.Context, m Message) error {
 		// the response body names the problem (bad key, unverified domain);
 		// it never contains the message or the key
 		msg, _ := io.ReadAll(io.LimitReader(res.Body, 512))
-		return fmt.Errorf("resend: status %d: %s", res.StatusCode, bytes.TrimSpace(msg))
+		return fmt.Errorf("resend: status %d: %s", res.StatusCode, redactEmails(string(bytes.TrimSpace(msg))))
 	}
 	return nil
 }
+
+var emailLike = regexp.MustCompile(`[^\s"'<>(),;:]+@[^\s"'<>(),;:]+\.[A-Za-z]{2,}`)
+
+// redactEmails hides addresses in a provider's error text (SES names the
+// recipient when it refuses one): errors are logged, addresses are personal
+// data.
+func redactEmails(s string) string { return emailLike.ReplaceAllString(s, "<email>") }
 
 // Log writes messages to the log instead of sending them. Development only:
 // it prints the codes.

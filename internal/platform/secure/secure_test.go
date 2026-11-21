@@ -164,3 +164,24 @@ func TestHashingIsLimited(t *testing.T) {
 		t.Fatalf("peak %d concurrent hashes, want 2", p)
 	}
 }
+
+// With every slot taken, a password check gives up after hashWait with
+// ErrBusy instead of waiting forever.
+func TestHashingBusy(t *testing.T) {
+	old := hashWait
+	hashWait = 50 * time.Millisecond
+	defer func() { hashWait = old }()
+	hashing <- struct{}{}
+	hashing <- struct{}{}
+	defer func() { <-hashing; <-hashing }()
+	start := time.Now()
+	if _, err := CheckPassword("x", "y"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := HashPassword("x"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("err %v", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("waited %v", d)
+	}
+}
