@@ -1,0 +1,3 @@
+# secrets live next to the compose file; only the examples are committed
+.env
+backup.env

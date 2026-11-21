@@ -139,9 +139,9 @@ func Media(ctx context.Context, event, detail string) {
 func Job(ctx context.Context, topic, result string) { add(ctx, jobs, "topic", topic, "result", result) }
 
 // StorageSizes is reported by the hourly cleanup (reading them more often
-// would keep the free Neon database awake).
-func StorageSizes(neon, r2 int64) {
-	neonBytes.Store(neon)
+// would keep a serverless database awake): the Postgres database and R2.
+func StorageSizes(database, r2 int64) {
+	neonBytes.Store(database)
 	r2Bytes.Store(r2)
 }
 
@@ -163,7 +163,17 @@ func ObserveGauges(ws func() int, db func() DBStats) error {
 		return err
 	}
 	storeG, err := meter.Int64ObservableGauge("chirpy.storage.bytes", metric.WithUnit("By"),
-		metric.WithDescription("bytes used: neon database, r2 media"))
+		metric.WithDescription("bytes used: postgres database, r2 media"))
+	if err != nil {
+		return err
+	}
+	memG, err := meter.Int64ObservableGauge("chirpy.host.memory.available.bytes", metric.WithUnit("By"),
+		metric.WithDescription("memory the machine can still use without swapping"))
+	if err != nil {
+		return err
+	}
+	diskG, err := meter.Int64ObservableGauge("chirpy.host.disk.free.bytes", metric.WithUnit("By"),
+		metric.WithDescription("free space on the server's disk"))
 	if err != nil {
 		return err
 	}
@@ -174,11 +184,17 @@ func ObserveGauges(ws func() int, db func() DBStats) error {
 		o.ObserveInt64(poolG, s.Idle, metric.WithAttributes(attribute.String("state", "idle")))
 		o.ObserveInt64(poolG, s.Max, metric.WithAttributes(attribute.String("state", "max")))
 		if n := neonBytes.Load(); n > 0 {
-			o.ObserveInt64(storeG, n, metric.WithAttributes(attribute.String("store", "neon")))
+			o.ObserveInt64(storeG, n, metric.WithAttributes(attribute.String("store", "postgres")))
 		}
 		o.ObserveInt64(storeG, r2Bytes.Load(), metric.WithAttributes(attribute.String("store", "r2")))
+		if n := hostMemoryAvailable(); n > 0 {
+			o.ObserveInt64(memG, n)
+		}
+		if n := hostDiskFree("/"); n > 0 {
+			o.ObserveInt64(diskG, n)
+		}
 		return nil
-	}, wsG, poolG, storeG)
+	}, wsG, poolG, storeG, memG, diskG)
 	return err
 }
 

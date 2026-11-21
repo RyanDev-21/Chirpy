@@ -1,0 +1,14 @@
+# HTTPS for the API. Caddy gets and renews the certificate itself; the DNS
+# record must point straight at this server (Cloudflare: DNS only, grey
+# cloud) and ports 80 and 443 must be open.
+{$API_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy api:8080 {
+		# WebSockets pass through as is; long-lived connections are fine
+		flush_interval -1
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+}

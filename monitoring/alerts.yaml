@@ -28,11 +28,23 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "95% of requests take longer than 1 s"
-      - alert: ChirpyNeonStorageHigh
-        expr: max(chirpy_storage_bytes{job="chirpy-api",store="neon"}) > 400e6
+      - alert: ChirpyDiskLow
+        expr: min(chirpy_host_disk_free_bytes{job="chirpy-api"}) < 3e9
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "Less than 3 GB free on the server's disk"
+      - alert: ChirpyMemoryLow
+        expr: min(chirpy_host_memory_available_bytes{job="chirpy-api"}) < 100e6
+        for: 10m
         labels: {severity: warning}
         annotations:
-          summary: "Neon database over 400 MB (free plan: 0.5 GB)"
+          summary: "Less than 100 MB of memory available on the server"
+      - alert: ChirpyDatabaseLarge
+        expr: max(chirpy_storage_bytes{job="chirpy-api",store="postgres"}) > 10e9
+        labels: {severity: warning}
+        annotations:
+          summary: "The database is over 10 GB: check the disk size"
       - alert: ChirpyMediaStorageHigh
         expr: max(chirpy_storage_bytes{job="chirpy-api",store="r2"}) > 8.5e9
         labels: {severity: warning}
@@ -56,14 +68,6 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "Background jobs keep failing"
-      - alert: ChirpyRedisBudget
-        # Upstash free plan: 500k commands a month; warn when the last day's
-        # pace would pass 400k in 30 days
-        expr: (sum(increase(chirpy_redis_commands_total{job="chirpy-api"}[24h])) or vector(0)) * 30 > 400000
-        for: 30m
-        labels: {severity: warning}
-        annotations:
-          summary: "Redis on course for over 400k commands this month (Upstash free: 500k)"
       - alert: ChirpyCallHoursHigh
         # Cloudflare TURN free: 1,000 GB a month, about 28,000 relayed call
         # hours; 300 call hours a day is an early warning even if all relay
