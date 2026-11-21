@@ -421,6 +421,121 @@ fail as if your account didn't exist (`404`).
   newest first. `display_name` falls back to `name`; `avatar_url` is `null`
   without a picture.
 
+## Characters and animated messages (proposed, not built yet)
+
+**Status: proposal, 20 November 2026.** Nothing here works yet. Frontend:
+please confirm or comment in `SERVER_STATUS.md`, and send the first catalog
+(the ids below are examples). The server side gets built after the server
+move.
+
+Every user has a low-poly **character**, made right after creating the
+account (first onboarding step). Animated
+messages play an animation **with the sender's character**. The app ships
+all models, textures and animations; the server only stores which pieces
+someone picked (about 200 bytes) and which animation a message plays.
+
+### The catalog (shared by the app and the server)
+
+The list of valid pieces lives on the server, and the app ships the
+matching assets. The frontend owns the content: send new entries, and they
+go into the server's catalog **before** the app version that has them is
+released.
+
+`GET /api/characters/catalog` →
+
+```json
+{"version":1,
+ "bodies":["bird_round","bird_tall"],
+ "slots":{"hair":["tuft_01","tuft_02"],"eyes":["big_01","sleepy_01"],"mouth":["beak_01"],"hat":[]},
+ "palette":["#F2A65A","#5AA9F2","#7BD389","#F25A7B","#FFFFFF","#2B2B2B"],
+ "colors":["body","hair","eyes"],
+ "animations":[{"id":"wave_01","fallback":"👋 waved"},{"id":"dance_01","fallback":"💃 danced"}]}
+```
+
+- `slots`: each optional part, and its choices. A slot can be left empty
+  (`null`).
+- `palette`: colors are picked **by index** into this list, for these
+  `colors` targets.
+- `animations[].fallback`: the text shown in push notifications and by app
+  versions that don't have this animation yet.
+- Cache it by `version`. Ids are never reused or removed: an old id stays
+  valid, so old characters and messages keep working.
+
+### Your character
+
+`PUT /api/users/me/character` with
+
+```json
+{"v":1,"body":"bird_round","parts":{"hair":"tuft_02","eyes":"big_01","mouth":"beak_01","hat":null},
+ "colors":{"body":0,"hair":5,"eyes":4}}
+```
+
+→ `200 {"character":{…},"character_v":"…"}`.
+- `400` for an unknown body or part, a part in the wrong slot, a color index
+  outside `palette`, or an unknown color target.
+- Missing slots and colors mean "none" and "the default (0)".
+- `character_v` changes on every save, so use it to cache the rendered
+  character.
+- 10 changes a minute.
+
+**Where it appears:** `"character":{…}` and `"character_v"` wherever a
+person is shown:
+- `GET /api/users/me` and `GET /api/users/{id}`;
+- friends and requests, and the people in group member lists;
+- private chats in `GET /api/chats`;
+- story and note authors.
+
+It's `null` for accounts that haven't made one yet (older accounts, or
+someone who closed the app during onboarding).
+
+**Onboarding flow** (in the app; the server doesn't force it):
+1. Create the account (email + code, or Google).
+2. Display name.
+3. Character: start from a random one, so "Done" works right away; with a
+   🎲 randomize button. Saving uploads the character and its snapshot as the
+   profile picture.
+4. Into the app.
+
+While `GET /api/users/me` says `character: null`, open step 3 again at
+start. Saving needs a signed-in user, so the character always comes after
+the account. Animated example characters can still be shown on the welcome
+and tour screens before sign-up.
+
+**Profile picture:** after saving, render a snapshot of the character and
+upload it with `PUT /api/users/me/avatar`, unless the user chose a photo.
+Push notifications, the website and older app versions then show the
+character without any 3D.
+
+### Animated messages
+
+`POST /api/chats/message` takes `"anim":"wave_01"` (private chats and groups).
+- `msg` may then be empty; the animation can also come with text.
+- `400` for an id that isn't in the catalog's `animations`.
+- History has `message_info.Msg.anim`, and the `msg` event has `anim`.
+- Play it with the **sender's** character. If this app version doesn't
+  have that animation, show the `fallback` text.
+- Push notifications use the fallback: `Maya: 👋 waved` (groups), `👋 waved`
+  (private).
+- Edits change the text only. Forwarding doesn't copy the animation in v1.
+
+**Performance note:** real-time 3D in a scrolling chat list is heavy on
+cheap Android phones. Consider full 3D in the editor and on profiles, and
+lighter prebuilt animations in chats (for example Rive, or pre-rendered
+sprites coloured at runtime). Test on a low-end phone early.
+
+### Later (not in v1)
+
+User-made animations and effects:
+- Uploaded as **source** and compiled by the server into a sandboxed
+  bytecode. Bytecode compiled on the phone is never accepted.
+- Run with hard limits: an instruction budget per frame, a memory cap, no
+  I/O, and the same result on every phone.
+- No unbounded shader loops.
+- A cap on flashing, for photosensitivity.
+- Reported and moderated like other user content.
+- The catalog's `version` and the `v` in the character are there so this
+  can be added later without breaking v1.
+
 ## Notes
 
 A short text shown to your friends for **24 hours** ("at the gym", "🎂
@@ -1293,8 +1408,23 @@ over the WebSocket (when the app is open, the live events are enough).
 | `friend_request` | Friend request | `bob sent you a friend request` | `from_id` | |
 | `friend_accept` | Friend request accepted | `bob accepted your friend request` | `from_id` | |
 | `reaction` | reactor (`in <group>`) | `reacted ❤️ to your message` | `from_id`, `msg_id`, `group_id`? | one per message |
+| `big_file` | sender name, or the group | `Video from Maya will be deleted in 3 hours` | `from_id`, `msg_id`, `media_id`, `group_id`? | one per file |
 
-Android channel id: `messages`. Tapping should open the chat from `data`.
+**Big files** (over 16 MB, deleted at a fixed time, see Photos, videos and
+files): sending one is an ordinary `private` / `public` push ("🎥 Video").
+- **Reminder** (`big_file`): on the **last day** (about 24 hours before it's
+  deleted), each recipient who hasn't downloaded it yet gets one push on the
+  `big-files` channel: `Video from Maya will be deleted in 23 hours`. Once
+  per file and person; never the sender, nor anyone who downloaded it
+  (`GET /api/media/{id}` counts). Groups over 50 members don't get
+  reminders (downloads aren't tracked there), nor members who joined after
+  it was sent.
+- It follows the chat's setting (`private` / `groups` notifications and
+  chat mutes). Like every push, only phones that aren't connected get it.
+
+Android channel id: `messages`, or `big-files` for the big-file reminder
+above (create it with high importance). Tapping should open the chat from
+`data`.
 
 ### Settings
 
@@ -1595,6 +1725,15 @@ search, view and action is written to an audit log.
   come back; groups don't).
 
 ## Frontend implementation notes
+
+- **Phone storage screen** (app only, nothing on the server): photos,
+  videos and files pile up on the phone, because the phone's copy is the
+  one that lasts. Offer "Manage storage": space used per chat, biggest
+  files first, filters by type (videos, photos, files, voice). Users select
+  and delete **from this phone only**; the messages stay in the chat. If
+  the server still has a file (`expired: false`), it can be downloaded
+  again. If it's expired, warn before deleting: "This can't be downloaded
+  again."
 
 - On `401`, attempt one refresh using the current refresh token, atomically
   replace both tokens, then retry the original request once. If refresh fails,

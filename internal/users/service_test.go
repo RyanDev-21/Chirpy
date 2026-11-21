@@ -37,6 +37,7 @@ func (f *fakeRepo) Create(_ context.Context, in CreateUserInput) (*User, error) 
 	f.users[u.ID], f.hashes[u.ID] = u, in.Password
 	return u, nil
 }
+func (f *fakeRepo) UpgradePasswordHash(context.Context, uuid.UUID, string, string) error { return nil }
 func (f *fakeRepo) GetUserByEmail(context.Context, string) (*User, string, error) {
 	return nil, "", ErrUserNotFound
 }

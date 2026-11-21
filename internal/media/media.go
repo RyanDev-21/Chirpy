@@ -37,11 +37,10 @@ const (
 	maxSmallVideoMs = 3*60_000 + 5_000
 	maxLargeVideoMs = 10*60_000 + 5_000
 
-	// R2's free tier is 10 GB: new uploads stop at 9.5 GB, and the cleanup
-	// deletes least-recently-downloaded files above 9 GB down to 8 GB.
-	uploadCapBytes = 9_500 << 20
-	lruHighBytes   = 9 << 30
-	lruLowBytes    = 8 << 30
+	// DefaultStorageBytes is R2's free 10 GB (MEDIA_STORAGE_GB changes it).
+	// New uploads stop at 95% of the limit, and the cleanup deletes
+	// least-recently-downloaded files above 90% down to 80%.
+	DefaultStorageBytes = 10_000_000_000 // decimal GB, as R2 bills
 
 	maxLifetime   = 7 * 24 * time.Hour
 	largeLifetime = 3 * 24 * time.Hour
@@ -102,10 +101,18 @@ type Service struct {
 	members Members
 	logger  *slog.Logger
 	now     func() time.Time
+	limit   int64 // storage in R2 (bytes)
 }
 
 func NewService(q *database.Queries, store Storage, members Members, logger *slog.Logger) *Service {
-	return &Service{q: q, store: store, members: members, logger: logger, now: func() time.Time { return time.Now().UTC() }}
+	return &Service{q: q, store: store, members: members, logger: logger, now: func() time.Time { return time.Now().UTC() }, limit: DefaultStorageBytes}
+}
+
+// SetStorageLimit sets how much R2 storage media may use (0: the default).
+func (s *Service) SetStorageLimit(bytes int64) {
+	if bytes > 0 {
+		s.limit = bytes
+	}
 }
 
 func key(id uuid.UUID) string { return "m/" + id.String() }
@@ -211,7 +218,7 @@ func (s *Service) NewUpload(ctx context.Context, owner uuid.UUID, req NewUploadR
 	if err != nil {
 		return Upload{}, err
 	}
-	if stored+size > uploadCapBytes {
+	if stored+size > s.limit*95/100 {
 		return Upload{}, ErrStorageFull
 	}
 	id, err := uuid.NewV7()
@@ -318,6 +325,76 @@ func (s *Service) AttachStory(ctx context.Context, owner, id, storyID uuid.UUID,
 		Width: int(m.Width.Int32), Height: int(m.Height.Int32)}, nil
 }
 
+// Reminder: recipients who haven't downloaded a big file yet, shortly
+// before it's deleted.
+type Reminder struct {
+	MediaID uuid.UUID
+	Kind    string
+	Owner   uuid.UUID
+	Group   uuid.UUID // zero for private chats
+	MsgID   uuid.UUID
+	To      []uuid.UUID
+	Left    time.Duration // until it's deleted
+}
+
+// RemindBefore: on the last day before a big file is deleted, recipients
+// who haven't downloaded it are reminded (once).
+const RemindBefore = 24 * time.Hour
+
+// DueReminders claims big files that expire within RemindBefore (each
+// once) and returns who to remind. Run from the hourly cleanup.
+func (s *Service) DueReminders(ctx context.Context) ([]Reminder, error) {
+	now := s.now()
+	rows, err := s.q.ClaimExpiringBigMedia(ctx, database.ClaimExpiringBigMediaParams{Now: ts(now), Until: ts(now.Add(RemindBefore)), Large: LargeBytes})
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	ids := make([]uuid.UUID, len(rows))
+	for i, r := range rows {
+		ids[i] = r.ID
+	}
+	dl, err := s.q.MediaDownloaders(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	got := map[uuid.UUID]map[uuid.UUID]bool{}
+	for _, d := range dl {
+		if got[d.MediaID] == nil {
+			got[d.MediaID] = map[uuid.UUID]bool{}
+		}
+		got[d.MediaID][d.UserID] = true
+	}
+	out := make([]Reminder, 0, len(rows))
+	for _, r := range rows {
+		owner, chat := uuid.UUID(r.OwnerID.Bytes), uuid.UUID(r.ChatID.Bytes)
+		rem := Reminder{MediaID: r.ID, Kind: r.Kind, Owner: owner, MsgID: uuid.UUID(r.MessageID.Bytes), Left: r.ExpiresAt.Time.Sub(now)}
+		var candidates []uuid.UUID
+		if r.ChatType.String == "public" {
+			rem.Group = chat
+			// big groups don't track downloads; members who joined later can't see it
+			members, err := s.q.GroupMembersJoinedBy(ctx, database.GroupMembersJoinedByParams{GroupID: chat, At: r.CreatedAt})
+			if err != nil {
+				return nil, err
+			}
+			if len(members) > trackGroupsUpTo {
+				continue
+			}
+			candidates = members
+		} else {
+			candidates = []uuid.UUID{chat}
+		}
+		for _, u := range candidates {
+			if u != owner && !got[r.ID][u] {
+				rem.To = append(rem.To, u)
+			}
+		}
+		if len(rem.To) > 0 {
+			out = append(out, rem)
+		}
+	}
+	return out, nil
+}
+
 // ForMessages returns the media of a page of messages (or of stories:
 // a story's photo is filed under the story's id).
 func (s *Service) ForMessages(ctx context.Context, msgIDs []uuid.UUID) (map[uuid.UUID][]Attachment, error) {
@@ -407,7 +484,7 @@ func (s *Service) Cleanup(ctx context.Context) (int, error) {
 	}
 	deleted := s.remove(ctx, ids, "expired")
 	stored, err := s.q.MediaStoredBytes(ctx)
-	if err != nil || stored <= lruHighBytes {
+	if err != nil || stored <= s.limit*90/100 {
 		return deleted, err
 	}
 	rows, err := s.q.LeastRecentlyUsedMedia(ctx)
@@ -416,13 +493,13 @@ func (s *Service) Cleanup(ctx context.Context) (int, error) {
 	}
 	var lru []uuid.UUID
 	for _, r := range rows {
-		if stored <= lruLowBytes {
+		if stored <= s.limit*80/100 {
 			break
 		}
 		lru = append(lru, r.ID)
 		stored -= r.Size
 	}
-	s.logger.WarnContext(ctx, "media storage above 9 GB: deleting least recently downloaded files", "files", len(lru))
+	s.logger.WarnContext(ctx, "media storage above 90% of the limit: deleting least recently downloaded files", "files", len(lru))
 	return deleted + s.remove(ctx, lru, "lru"), nil
 }
 
@@ -606,7 +683,7 @@ func (s *Service) Duplicate(ctx context.Context, owner, srcID uuid.UUID) (uuid.U
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if stored+m.Size > uploadCapBytes {
+	if stored+m.Size > s.limit*95/100 {
 		return uuid.Nil, ErrStorageFull
 	}
 	id, err := uuid.NewV7()

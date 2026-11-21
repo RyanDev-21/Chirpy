@@ -60,6 +60,7 @@ type App struct {
 	limMu     sync.Mutex
 	memLimits map[string]ratelimit.Limiter
 	pushSvc   *push.Service
+	notifier  push.Notifier // nil when push is off
 	admin     *admin.Service
 	media     *media.Service
 	hub       *ws.Hub
@@ -237,6 +238,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	a.pushSvc = push.NewService(queries, pushSender, a.hub, pushNames{users: a.users, groups: a.groups}, logger)
 	if pushSender != nil {
 		d := push.NewDispatcher(a.queue, logger)
+		a.notifier = d
 		a.chat.SetNotifier(d)
 		a.friends.SetNotifier(d)
 		a.groups.SetNotifier(d)
@@ -252,6 +254,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		store = media.NewR2(cfg.R2AccountID, cfg.R2Bucket, cfg.R2AccessKeyID, cfg.R2SecretAccessKey)
 	}
 	a.media = media.NewService(queries, store, a.groups, logger)
+	a.media.SetStorageLimit(int64(cfg.MediaStorageGB) * 1_000_000_000)
 	a.groups.OnDelete(a.media.ExpireGroup)
 	if store != nil {
 		a.chat.SetMedia(a.media)
@@ -263,6 +266,15 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	sender := o.mailer
 	switch {
 	case sender != nil:
+	case cfg.SESAccessKeyID != "":
+		ses := mail.NewSES(cfg.SESRegion, cfg.SESAccessKeyID, cfg.SESSecretAccessKey, cfg.MailFrom)
+		if cfg.ResendAPIKey != "" {
+			sender = mail.Fallback{Primary: ses, Secondary: mail.NewResend(cfg.ResendAPIKey, cfg.MailFrom), OnFail: func(err error) {
+				logger.Warn("SES failed, sending through Resend", "error", err)
+			}}
+		} else {
+			sender = ses
+		}
 	case cfg.ResendAPIKey != "":
 		sender = mail.NewResend(cfg.ResendAPIKey, cfg.MailFrom)
 	case cfg.IsDev():

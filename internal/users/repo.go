@@ -15,6 +15,9 @@ import (
 type UserRepo interface {
 	Create(ctx context.Context, input CreateUserInput) (*User, error)
 	GetUserByEmail(ctx context.Context, email string) (*User, string, error)
+	// UpgradePasswordHash swaps oldHash for newHash (same password, newer
+	// settings) unless the password changed meanwhile.
+	UpgradePasswordHash(ctx context.Context, id uuid.UUID, oldHash, newHash string) error
 	GetUserByID(ctx context.Context, id uuid.UUID) (*User, string, error)
 	UpdateUserPassword(ctx context.Context, payload UpdateUserPassword) (*User, error)
 	RevokeAllRefreshTokens(ctx context.Context, userID uuid.UUID) error
@@ -92,6 +95,11 @@ func (r *userRepo) Create(ctx context.Context, input CreateUserInput) (*User, er
 		return nil, err
 	}
 	return toUser(u), nil
+}
+
+func (r *userRepo) UpgradePasswordHash(ctx context.Context, id uuid.UUID, oldHash, newHash string) error {
+	_, err := r.queries.UpgradePasswordHash(ctx, database.UpgradePasswordHashParams{ID: id, OldHash: pgtype.Text{String: oldHash, Valid: true}, NewHash: pgtype.Text{String: newHash, Valid: true}})
+	return err
 }
 
 // GetUserByEmail returns the user and its password hash.

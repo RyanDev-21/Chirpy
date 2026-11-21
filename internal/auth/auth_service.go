@@ -83,6 +83,13 @@ func (s *authService) Login(ctx context.Context, email, password string) (access
 		s.logger.WarnContext(ctx, "login failed", "reason", "wrong_password", "user_id", dbUser.ID)
 		return "", "", nil, ErrInvalidCredentials
 	}
+	if secure.NeedsRehash(hashPassword) { // older, heavier settings: upgrade now we know the password
+		if newHash, err := secure.HashPassword(password); err == nil {
+			if err := s.userRepo.UpgradePasswordHash(ctx, dbUser.ID, hashPassword, newHash); err != nil {
+				s.logger.WarnContext(ctx, "failed to upgrade password hash", "error", err)
+			}
+		}
+	}
 	// only revealed to someone who knows the password
 	if !dbUser.Verified {
 		s.logger.InfoContext(ctx, "login refused", "reason", "email_not_verified", "user_id", dbUser.ID)
