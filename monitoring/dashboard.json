@@ -413,7 +413,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "refId": "A",
-          "expr": "max(chirpy_storage_bytes{job=\"chirpy-api\",store=\"neon\"})",
+          "expr": "max(chirpy_storage_bytes{job=\"chirpy-api\",store=\"postgres\"})",
           "legendFormat": "__auto"
         }
       ],

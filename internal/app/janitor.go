@@ -98,15 +98,15 @@ func (a *App) Cleanup(ctx context.Context) error {
 		a.logger.InfoContext(ctx, "media cleanup", "files_deleted", files)
 	}
 	// storage gauges, read here so monitoring never wakes the database
-	var neon int64
-	if err := a.db.QueryRow(ctx, "SELECT pg_database_size(current_database())").Scan(&neon); err != nil {
+	var dbBytes int64
+	if err := a.db.QueryRow(ctx, "SELECT pg_database_size(current_database())").Scan(&dbBytes); err != nil {
 		a.logger.WarnContext(ctx, "failed to read database size", "error", err)
 	}
 	r2, err := q.MediaStoredBytes(ctx)
 	if err != nil {
 		a.logger.WarnContext(ctx, "failed to read media size", "error", err)
 	}
-	telemetry.StorageSizes(neon, r2)
+	telemetry.StorageSizes(dbBytes, r2)
 	if tokens > 0 || codes > 0 {
 		a.logger.InfoContext(ctx, "cleanup", "refresh_tokens", tokens, "email_codes", codes)
 	}
