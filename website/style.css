@@ -119,3 +119,25 @@ code { overflow-wrap: anywhere; }
   .statement { font-size: 19px; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .pill { transition: none; } }
+
+/* ---------- pigeons ---------- */
+.pigeon { display: block; overflow: visible; }
+.pigeon .head { transform-box: fill-box; transform-origin: 30% 90%; }
+.pigeon .wing { transform-box: fill-box; transform-origin: 100% 85%; }
+.avatar-pigeon { background: var(--soft); overflow: hidden; }
+.pigeon-avatar { width: 34px; height: 34px; transform: translateY(2px); }
+.msg.anim { display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 6px; color: var(--gray); font-size: 13px; }
+.pigeon-wave { width: 58px; height: 58px; }
+.pigeon-wave .wing { animation: wave 1.6s ease-in-out infinite; }
+.pigeon-wave .head { animation: bob 1.6s ease-in-out infinite; }
+.msg { position: relative; }
+.react { position: absolute; right: 8px; bottom: -14px; display: flex; align-items: center; gap: 2px; padding: 1px 6px 1px 5px;
+  border: 2px solid var(--bg); border-radius: 12px; background: var(--receiver); color: var(--fg); font-size: 12px; }
+.pigeon-tiny { width: 18px; height: 18px; }
+.msg.out:has(.react) { margin-bottom: 18px; }
+.pigeon-row { display: flex; justify-content: flex-start; margin: -6px 0 6px; }
+.pigeon-hero { width: 84px; height: 84px; }
+.pigeon-hero .head { animation: bob 2.4s ease-in-out infinite; }
+@keyframes bob { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(-9deg) translateY(1px); } 40% { transform: rotate(4deg); } }
+@keyframes wave { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-38deg); } 50% { transform: rotate(-8deg); } 75% { transform: rotate(-34deg); } }
+@media (prefers-reduced-motion: reduce) { .pigeon .head, .pigeon .wing { animation: none !important; } }
