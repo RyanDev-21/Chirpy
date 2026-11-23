@@ -55,6 +55,9 @@ type Job struct {
 	Preview string    `json:"preview,omitempty"` // message text, or the emoji for reactions
 	CallID  uuid.UUID `json:"call_id,omitempty"`
 	// MediaID and Left (seconds until deletion) are set for KindBigFile.
+	// StoryID / Note: the message replies to the recipient's story / note.
+	StoryID   string    `json:"story_id,omitempty"`
+	Note      bool      `json:"note,omitempty"`
 	MediaID   uuid.UUID `json:"media_id,omitempty"`
 	MediaKind string    `json:"media_kind,omitempty"`
 	Left      int       `json:"left,omitempty"`
@@ -193,6 +196,12 @@ func (s *Service) render(ctx context.Context, j Job) (Message, error) {
 	m := Message{Data: map[string]string{"type": j.Kind, "from_id": j.From.String()}}
 	if j.MsgID != uuid.Nil {
 		m.Data["msg_id"] = j.MsgID.String()
+	}
+	if j.StoryID != "" {
+		m.Data["story_id"] = j.StoryID
+	}
+	if j.Note {
+		m.Data["note"] = "true"
 	}
 	group := ""
 	if j.Group != uuid.Nil {

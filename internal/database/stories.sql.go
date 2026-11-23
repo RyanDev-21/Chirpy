@@ -293,10 +293,16 @@ func (q *Queries) StoryOwnedBy(ctx context.Context, arg StoryOwnedByParams) (boo
 }
 
 const storyViewers = `-- name: StoryViewers :many
-SELECT u.id, u.name, u.display_name, u.avatar_at, v.viewed_at
+SELECT u.id, u.name, u.display_name, u.avatar_at, v.viewed_at,
+       COALESCE(r.content, '')::text AS reply_text, COALESCE(r.anim, '')::text AS reply_anim
 FROM story_views v
 JOIN stories s ON s.id = v.story_id
 JOIN users u ON u.id = v.viewer_id
+LEFT JOIN LATERAL (
+    SELECT m.content, m.anim FROM message m
+    WHERE m.story_id = v.story_id AND m.from_id = v.viewer_id AND m.to_id = s.user_id AND m.deleted_at IS NULL
+    ORDER BY m.created_at DESC LIMIT 1
+) r ON true
 WHERE v.story_id = $1 AND s.user_id = $2::uuid
 ORDER BY v.viewed_at DESC
 `
@@ -312,8 +318,12 @@ type StoryViewersRow struct {
 	DisplayName string
 	AvatarAt    pgtype.Timestamp
 	ViewedAt    pgtype.Timestamp
+	ReplyText   string
+	ReplyAnim   string
 }
 
+// each viewer, and their latest reply to this story (the app shows it as a
+// reaction when it's one emoji or an animation)
 func (q *Queries) StoryViewers(ctx context.Context, arg StoryViewersParams) ([]StoryViewersRow, error) {
 	rows, err := q.db.Query(ctx, storyViewers, arg.StoryID, arg.Owner)
 	if err != nil {
@@ -329,6 +339,8 @@ func (q *Queries) StoryViewers(ctx context.Context, arg StoryViewersParams) ([]S
 			&i.DisplayName,
 			&i.AvatarAt,
 			&i.ViewedAt,
+			&i.ReplyText,
+			&i.ReplyAnim,
 		); err != nil {
 			return nil, err
 		}

@@ -150,6 +150,7 @@ type Message struct {
 	ClientMsgID pgtype.UUID
 	StoryID     pgtype.UUID
 	Anim        pgtype.Text
+	NoteText    pgtype.Text
 }
 
 type MessageReaction struct {

@@ -567,8 +567,23 @@ today!"). One note per person; a new one replaces the old.
   expired; not from suspended accounts. Strangers never see your note, and
   blocking someone (which ends the friendship) hides it from them.
 
-Refetch on app start and when the friends screen opens; there's no
-WebSocket event for notes in v1.
+Refetch on app start and when the friends screen opens. Online friends also
+get a **`Note`** WebSocket event when you set or clear yours:
+`{"user_id","text","expires_at"}`, with `text: ""` and `expires_at: null`
+when it was removed.
+
+**Replying to a note:** send a private message to its owner with
+`"reply_to_note": true` (`POST /api/chats/message`).
+- The server copies their **current note text** into the message, so nobody
+  can fake what the note said. `note_text` sent by a client is ignored.
+- `400` if they have no note right now, in groups, or together with
+  `story_id`.
+- History has `message_info.Msg.note_text`, and the `msg` event has
+  `note_text`. It stays after the note expires.
+- Works with any message: text, a single emoji (a reaction), or `anim` with
+  an empty `msg` (a pigeon reaction).
+- Push: `replied to your note: <text>`, `reacted ❤️ to your note`, or
+  `reacted to your note with their pigeon`, with `data.note = "true"`.
 
 ## Stories
 
@@ -607,8 +622,12 @@ enough; repeats are fine). Your own views aren't counted. `404` for stories
 you can't see.
 
 **Who saw it** (yours only): `GET /api/stories/{id}/viewers` →
-`200 {"viewers":[{"user_id","name","display_name","avatar_url","viewed_at"}]}`,
+`200 {"viewers":[{"user_id","name","display_name","avatar_url","viewed_at","reaction":{"emoji":"🤨","anim":"sus_01"}}]}`,
 newest first. Viewers never see each other.
+- `reaction` is the viewer's latest reply to this story, when it's a single
+  emoji (`{"emoji":"😂"}`) or a pigeon animation with no text
+  (`{"emoji","anim"}`, the emoji from the animation's fallback).
+- It's left out when they didn't reply, or wrote something.
 
 **Delete early:** `DELETE /api/stories/{id}` → `204` (yours only, else
 `404`). The photo is removed too.
@@ -619,6 +638,13 @@ person you're writing to (`400` otherwise). The message keeps `story_id` in
 history (`message_info.Msg.story_id`) and in the `msg` event, so show
 "replied to your story". After 24 hours the story itself is gone; show
 "story unavailable".
+- Push: `replied to your story: <text>`, `reacted ❤️ to your story` (a
+  single emoji), or `reacted to your story with their pigeon` (an `anim` with
+  no text), with `data.story_id`. It's still `data.type: "private"`, so
+  tapping opens the chat.
+
+**Later:** video stories, up to 60 s (the phone trims to 15, 30, 45 or 60),
+with `duration_ms` and a still. Not in v1.
 
 **Mute someone's stories:** `PUT /api/stories/mutes/{user_id}` → `204`,
 `DELETE` the same → `204`, `GET /api/stories/mutes` →
@@ -1695,6 +1721,7 @@ upgrade (no or bad token) returns `401` JSON instead of switching protocols.
 | `AcceptFri` | `{"req_id":"request-uuid","from_id":"uuid"}` |
 | `DenyFri` | `{"req_id":"request-uuid","from_id":"uuid"}` |
 | `RemoveFri` | `{"from_id":"uuid"}`: that user removed you as a friend |
+| `Note` | `{"user_id","text","expires_at"}`: a friend set or cleared their note (`text: ""`, `expires_at: null` when cleared) |
 | `Reaction` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","emoji":"❤️"}`: `emoji` is `""` when the reaction was removed; `group_id` only for group messages; `anim` for a pigeon reaction |
 | `MsgEdited` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","msg":"new text","edited_at":"…"}`; `group_id` only for group messages |
 | `MsgDeleted` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","by_id":"uuid"}`: show the placeholder and drop its reactions. `from_id` is the sender; `by_id` is present when a group's admin or a moderator removed it |

@@ -141,6 +141,20 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 	if err != nil || to == from {
 		return uuid.Nil, ErrNotValidToID
 	}
+	in.NoteText = "" // only the server sets it, from the note itself
+	if in.ReplyToNote {
+		if in.Type != TypePrivate || in.Forwarded || in.StoryID != "" {
+			return uuid.Nil, ErrNoNote
+		}
+		text, ok, err := s.repo.LiveNoteText(ctx, to, time.Now())
+		if err != nil {
+			return uuid.Nil, err
+		}
+		if !ok {
+			return uuid.Nil, ErrNoNote
+		}
+		in.NoteText = text
+	}
 	if in.StoryID != "" {
 		storyID, err := uuid.Parse(in.StoryID)
 		if err != nil || in.Type != TypePrivate || in.Forwarded {
@@ -254,6 +268,7 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 		Forwarded: in.Forwarded,
 		StoryID:   in.StoryID,
 		Anim:      in.Anim,
+		NoteText:  in.NoteText,
 	}
 	if len(attached) > 0 {
 		out.Media = attached
@@ -279,6 +294,12 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 		j := push.Job{Kind: push.KindPrivate, To: targets, From: from, MsgID: msgID, Preview: mediaPreview(in.Content, attached)}
 		if fallback, ok := characters.Fallback(in.Anim); ok && (in.Content == "" || in.Content == fallback) {
 			j.Preview = fallback // "👋 waved"
+		}
+		switch {
+		case in.StoryID != "":
+			j.Preview, j.StoryID = replyPreview("story", in, attached), in.StoryID
+		case in.NoteText != "":
+			j.Preview, j.Note = replyPreview("note", in, attached), true
 		}
 		if in.Type == TypePublic {
 			j.Kind, j.Group = push.KindGroup, to
@@ -850,6 +871,19 @@ func (s *chatService) Forward(ctx context.Context, me, msgID uuid.UUID, to []For
 }
 
 // mediaPreview is the push text for a message: its text, or what it carries.
+// replyPreview is the push text for a reply to someone's story or note:
+// "reacted with their pigeon" (an animation and no other text), "reacted
+// ❤️" (one emoji), or "replied: <text>".
+func replyPreview(what string, in InCommingMessage, att []media.Attachment) string {
+	if fallback, ok := characters.Fallback(in.Anim); ok && (in.Content == "" || in.Content == fallback) {
+		return "reacted to your " + what + " with their pigeon"
+	}
+	if len(att) == 0 && ValidateEmoji(in.Content) == nil {
+		return "reacted " + in.Content + " to your " + what
+	}
+	return "replied to your " + what + ": " + mediaPreview(in.Content, att)
+}
+
 func mediaPreview(text string, att []media.Attachment) string {
 	if text != "" || len(att) == 0 {
 		return text
