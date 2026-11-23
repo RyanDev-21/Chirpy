@@ -66,8 +66,15 @@ type Store interface {
 }
 
 type Handler struct {
-	db  Store
-	now func() time.Time
+	db       Store
+	now      func() time.Time
+	announce func(ctx context.Context, user uuid.UUID, text string, expires *time.Time)
+}
+
+// OnChange registers who tells online friends about a new or removed note
+// (the Note WebSocket event).
+func (h *Handler) OnChange(fn func(ctx context.Context, user uuid.UUID, text string, expires *time.Time)) {
+	h.announce = fn
 }
 
 func NewHandler(db Store) *Handler { return &Handler{db: db, now: time.Now} }
@@ -99,7 +106,11 @@ func (h *Handler) Set(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"text": n.Text, "created_at": n.CreatedAt.Time.UTC(), "expires_at": n.ExpiresAt.Time.UTC()})
+	exp := n.ExpiresAt.Time.UTC()
+	if h.announce != nil {
+		h.announce(r.Context(), me, n.Text, &exp)
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"text": n.Text, "created_at": n.CreatedAt.Time.UTC(), "expires_at": exp})
 }
 
 // Delete handles DELETE /api/users/me/note.
@@ -112,6 +123,9 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.DeleteNote(r.Context(), me); err != nil {
 		httpx.ServerError(w, r, err)
 		return
+	}
+	if h.announce != nil {
+		h.announce(r.Context(), me, "", nil)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

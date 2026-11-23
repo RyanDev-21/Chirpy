@@ -34,8 +34,8 @@ func (q *Queries) AddLastSeenMessage(ctx context.Context, arg AddLastSeenMessage
 }
 
 const addMessagePrivate = `-- name: AddMessagePrivate :exec
-INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, story_id, anim)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, story_id, anim, note_text)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 `
 
 type AddMessagePrivateParams struct {
@@ -48,6 +48,7 @@ type AddMessagePrivateParams struct {
 	Forwarded bool
 	StoryID   pgtype.UUID
 	Anim      pgtype.Text
+	NoteText  pgtype.Text
 }
 
 func (q *Queries) AddMessagePrivate(ctx context.Context, arg AddMessagePrivateParams) error {
@@ -61,6 +62,7 @@ func (q *Queries) AddMessagePrivate(ctx context.Context, arg AddMessagePrivatePa
 		arg.Forwarded,
 		arg.StoryID,
 		arg.Anim,
+		arg.NoteText,
 	)
 	return err
 }
@@ -72,8 +74,8 @@ WITH s AS (
     ON CONFLICT DO NOTHING
     RETURNING msg_id
 )
-INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, client_msg_id, story_id, anim)
-SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10 FROM s
+INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, client_msg_id, story_id, anim, note_text)
+SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 FROM s
 `
 
 type AddMessagePrivateOnceParams struct {
@@ -87,6 +89,7 @@ type AddMessagePrivateOnceParams struct {
 	ClientID  pgtype.UUID
 	StoryID   pgtype.UUID
 	Anim      pgtype.Text
+	NoteText  pgtype.Text
 }
 
 // saves the message unless @from_id already used @client_id (0 rows then)
@@ -102,6 +105,7 @@ func (q *Queries) AddMessagePrivateOnce(ctx context.Context, arg AddMessagePriva
 		arg.ClientID,
 		arg.StoryID,
 		arg.Anim,
+		arg.NoteText,
 	)
 	if err != nil {
 		return 0, err
@@ -394,7 +398,7 @@ func (q *Queries) GetGroupMessagesSince(ctx context.Context, arg GetGroupMessage
 }
 
 const getPrivateMessagesBefore = `-- name: GetPrivateMessagesBefore :many
-SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at, client_msg_id, story_id, anim FROM message
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at, client_msg_id, story_id, anim, note_text FROM message
 WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
   AND (created_at, id) < ($3::timestamp, $4::uuid)
 ORDER BY created_at DESC, id DESC
@@ -439,6 +443,7 @@ func (q *Queries) GetPrivateMessagesBefore(ctx context.Context, arg GetPrivateMe
 			&i.ClientMsgID,
 			&i.StoryID,
 			&i.Anim,
+			&i.NoteText,
 		); err != nil {
 			return nil, err
 		}
@@ -451,7 +456,7 @@ func (q *Queries) GetPrivateMessagesBefore(ctx context.Context, arg GetPrivateMe
 }
 
 const getPrivateMessagesSince = `-- name: GetPrivateMessagesSince :many
-SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at, client_msg_id, story_id, anim FROM message
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at, client_msg_id, story_id, anim, note_text FROM message
 WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
   AND created_at > $3
 ORDER BY created_at ASC
@@ -493,6 +498,7 @@ func (q *Queries) GetPrivateMessagesSince(ctx context.Context, arg GetPrivateMes
 			&i.ClientMsgID,
 			&i.StoryID,
 			&i.Anim,
+			&i.NoteText,
 		); err != nil {
 			return nil, err
 		}
@@ -554,7 +560,7 @@ func (q *Queries) GetRecentGroupMessages(ctx context.Context, arg GetRecentGroup
 }
 
 const getRecentPrivateMessages = `-- name: GetRecentPrivateMessages :many
-SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at, client_msg_id, story_id, anim FROM message
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at, client_msg_id, story_id, anim, note_text FROM message
 WHERE ((from_id = $1 AND to_id = $2) OR (from_id = $2 AND to_id = $1))
 ORDER BY created_at DESC
 LIMIT $3
@@ -589,6 +595,7 @@ func (q *Queries) GetRecentPrivateMessages(ctx context.Context, arg GetRecentPri
 			&i.ClientMsgID,
 			&i.StoryID,
 			&i.Anim,
+			&i.NoteText,
 		); err != nil {
 			return nil, err
 		}
@@ -940,6 +947,23 @@ func (q *Queries) ListPrivateConversations(ctx context.Context, arg ListPrivateC
 	return items, nil
 }
 
+const liveNoteText = `-- name: LiveNoteText :one
+SELECT text FROM notes WHERE user_id = $1 AND expires_at > $2::timestamp
+`
+
+type LiveNoteTextParams struct {
+	UserID uuid.UUID
+	Now    pgtype.Timestamp
+}
+
+// for a reply to someone's note: its text, if it hasn't expired
+func (q *Queries) LiveNoteText(ctx context.Context, arg LiveNoteTextParams) (string, error) {
+	row := q.db.QueryRow(ctx, liveNoteText, arg.UserID, arg.Now)
+	var text string
+	err := row.Scan(&text)
+	return text, err
+}
+
 const markGroupRead = `-- name: MarkGroupRead :execrows
 INSERT INTO group_reads (group_id, user_id, message_id)
 VALUES ($1, $2, $3)
@@ -981,7 +1005,7 @@ func (q *Queries) PeerSeenMessage(ctx context.Context, arg PeerSeenMessageParams
 }
 
 const privateChangesSince = `-- name: PrivateChangesSince :many
-SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at, client_msg_id, story_id, anim FROM message
+SELECT id, content, parentid, from_id, to_id, deleted_at, created_at, edited_at, forwarded, changed_at, client_msg_id, story_id, anim, note_text FROM message
 WHERE changed_at > $1::timestamp AND (from_id = $2::uuid OR to_id = $2::uuid)
 ORDER BY changed_at ASC, id ASC
 LIMIT $3
@@ -1017,6 +1041,7 @@ func (q *Queries) PrivateChangesSince(ctx context.Context, arg PrivateChangesSin
 			&i.ClientMsgID,
 			&i.StoryID,
 			&i.Anim,
+			&i.NoteText,
 		); err != nil {
 			return nil, err
 		}

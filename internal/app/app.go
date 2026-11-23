@@ -315,7 +315,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		reports:  reports.NewHandler(reports.NewService(db, logger)),
 		media:    media.NewHandler(a.media),
 		presence: presence.NewHandler(presenceSvc),
-		notes:    notes.NewHandler(queries),
+		notes:    a.notesHandler(queries),
 		stories:  stories.NewHandler(queries, a.media),
 		calls:    calls.NewHandler(calls.NewTURN(cfg.TURNKeyID, cfg.TURNToken), queries, logger),
 		search:   search.NewHandler(search.NewService(queries, chatRepo)),
@@ -414,4 +414,26 @@ func tlsConfig() *tls.Config {
 			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
 		},
 	}
+}
+
+// notesHandler serves notes and tells online friends about changes (the
+// Note event; offline phones refetch on start).
+func (a *App) notesHandler(q *database.Queries) *notes.Handler {
+	h := notes.NewHandler(q)
+	h.OnChange(func(ctx context.Context, user uuid.UUID, text string, expires *time.Time) {
+		snap, err := a.friends.Relationships(ctx, user)
+		if err != nil {
+			a.logger.WarnContext(ctx, "failed to announce note", "error", err)
+			return
+		}
+		ids := make([]uuid.UUID, 0, len(snap.Friends))
+		for _, f := range snap.Friends {
+			ids = append(ids, f.UserID)
+		}
+		ev := ws.Event{Event: "Note", Payload: map[string]any{"user_id": user.String(), "text": text, "expires_at": expires}}
+		if err := a.hub.WriteToUsers(ids, ev); err != nil {
+			a.logger.WarnContext(ctx, "failed to announce note", "error", err)
+		}
+	})
+	return h
 }

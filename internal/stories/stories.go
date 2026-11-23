@@ -5,9 +5,12 @@
 package stories
 
 import (
+	"RyanDev-21.com/Chirpy/internal/characters"
+	"RyanDev-21.com/Chirpy/internal/chat"
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"RyanDev-21.com/Chirpy/internal/database"
@@ -272,13 +275,32 @@ func (h *Handler) Viewers(w http.ResponseWriter, r *http.Request) {
 		DisplayName string    `json:"display_name"`
 		AvatarURL   *string   `json:"avatar_url"`
 		ViewedAt    time.Time `json:"viewed_at"`
+		Reaction    *Reaction `json:"reaction,omitempty"`
 	}
 	out := make([]viewer, 0, len(rows))
 	for _, v := range rows {
 		out = append(out, viewer{UserID: v.ID, Name: v.Name, DisplayName: users.ShownName(v.Name, v.DisplayName),
-			AvatarURL: users.AvatarURLFrom(v.ID, v.AvatarAt), ViewedAt: v.ViewedAt.Time.UTC()})
+			AvatarURL: users.AvatarURLFrom(v.ID, v.AvatarAt), ViewedAt: v.ViewedAt.Time.UTC(), Reaction: reactionOf(v.ReplyText, v.ReplyAnim)})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"viewers": out})
+}
+
+// Reaction is a viewer's reaction to a story: their latest reply to it,
+// when that reply was one emoji or a pigeon animation.
+type Reaction struct {
+	Emoji string `json:"emoji"`
+	Anim  string `json:"anim,omitempty"`
+}
+
+func reactionOf(text, anim string) *Reaction {
+	if fallback, ok := characters.Fallback(anim); ok && (text == "" || text == fallback) {
+		emoji, _, _ := strings.Cut(fallback, " ") // "🤨 side-eyed" -> 🤨
+		return &Reaction{Emoji: emoji, Anim: anim}
+	}
+	if text != "" && chat.ValidateEmoji(text) == nil {
+		return &Reaction{Emoji: text}
+	}
+	return nil // no reply, or a written one
 }
 
 // Delete handles DELETE /api/stories/{story_id} (the poster only).
