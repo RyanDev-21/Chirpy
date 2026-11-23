@@ -218,3 +218,47 @@ func TestAnimatedMessagesAndPigeonReactions(t *testing.T) {
 		}
 	}
 }
+
+// High five and handshake: catalog animations, with their own push wording.
+func TestTwoPigeonMoments(t *testing.T) {
+	e := newEnv(t)
+	alice, bob, carol := e.signup("alice"), e.signup("bobby"), e.signup("carol")
+	e.befriend(alice, bob)
+	g := e.adminGroup("crew", alice, bob, carol)
+	e.device(bob, "tok-bob")
+	e.device(alice, "tok-alice")
+	e.device(carol, "tok-carol")
+	msg := func(from user, to, kind string, body map[string]any) string {
+		t.Helper()
+		body["to_id"], body["type"] = to, kind
+		var m struct {
+			MsgID string `json:"msg_id"`
+		}
+		e.expect(e.do("POST", "/api/chats/message", from.Token, body), 200).json(t, &m)
+		return m.MsgID
+	}
+	invite := msg(alice, bob.ID, "private", map[string]any{"anim": "highfive_ask_01", "msg": ""})
+	msg(alice, bob.ID, "private", map[string]any{"anim": "highfive_ask_01", "msg": "great work today"})
+	got := e.waitPush("tok-bob", 2)
+	if got[0].Body != "alice wants a high five" || got[1].Body != "alice wants a high five: great work today" {
+		t.Fatalf("invites: %q / %q", got[0].Body, got[1].Body)
+	}
+	msg(bob, alice.ID, "private", map[string]any{"anim": "highfive_01", "msg": "", "parent_id": invite})
+	if m := e.waitPush("tok-alice", 1)[0]; m.Body != "bobby high-fived you back" || m.Data["type"] != "private" {
+		t.Fatalf("answer %+v", m)
+	}
+	// as reactions, on the same message
+	e.expect(e.do("PUT", "/api/chat/messages/"+invite+"/reaction", bob.Token, map[string]string{"emoji": "💀", "anim": "hanging_01"}), 204)
+	if m := e.waitPush("tok-alice", 2)[1]; m.Body != "bobby left you hanging" || m.Data["type"] != "reaction" {
+		t.Fatalf("reaction %+v", m)
+	}
+	// groups: the title is the group
+	msg(alice, g, "public", map[string]any{"anim": "handshake_ask_01", "msg": ""})
+	if m := e.waitPush("tok-carol", 1)[0]; m.Title != "crew" || m.Body != "alice wants to shake on it" {
+		t.Fatalf("group %+v", m)
+	}
+	// every new id is accepted (the server refused them before)
+	for _, id := range []string{"handshake_01"} {
+		msg(bob, alice.ID, "private", map[string]any{"anim": id, "msg": ""})
+	}
+}

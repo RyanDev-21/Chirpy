@@ -1124,11 +1124,23 @@ character can play it:
 The `Reaction` WebSocket event also carries `anim` when set. Push stays
 `reacted 🤨 to your message`.
 
-**Two-pigeon reactions** (✋ high five, 🤝 handshake) work with the same rules
-once their animations are in the catalog: one person reacts with the
-invite's `anim` (waiting), the other reacting with the same `anim` accepts,
-and `hanging_01` means "left hanging". The app works it out from the two
-reactions.
+**Two-pigeon moments** (✋ high five, 🤝 handshake), as messages or reactions,
+with no extra endpoints:
+
+| `anim` | Fallback | Used as |
+|---|---|---|
+| `highfive_ask_01` | ✋ wants a high five | the invite: a message (own text optional) or a reaction (emoji ✋) |
+| `handshake_ask_01` | 🤝 wants to shake on it | the same, for 🤝 |
+| `highfive_01` | ✋ high-fived you | accepting: a reply to the invite (`parent_id`), or a reaction on the same message |
+| `handshake_01` | 🤝 shook on it | the same, for 🤝 |
+| `hanging_01` | 💀 left you hanging | declining (reaction emoji 💀) |
+
+- The app pairs an answer with its invite; the server doesn't check the
+  pairing. It's still one reaction per person.
+- **Push** reads as a sentence about the sender: `Maya wants a high five`,
+  `Maya wants a high five: <their text>`, `Maya high-fived you back`,
+  `Maya shook on it`, `Maya left you hanging`.
+- `data.type` stays `private` / `public` / `reaction`.
 
 `emoji` must be exactly one emoji: skin tones (👍🏽), combined emojis (👩‍💻),
 flags (🇹🇭) and keycaps (1️⃣) are fine; text or two emojis are `400`. You can
