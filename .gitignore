@@ -12,3 +12,5 @@ consistency_log.txt
 /bin/
 coverage.out
 bench/results-*.md
+
+chirpy-firebase-account-key.json
