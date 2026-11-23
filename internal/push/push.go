@@ -5,6 +5,7 @@
 package push
 
 import (
+	"RyanDev-21.com/Chirpy/internal/characters"
 	"RyanDev-21.com/Chirpy/internal/platform/telemetry"
 	"context"
 	"errors"
@@ -55,6 +56,9 @@ type Job struct {
 	Preview string    `json:"preview,omitempty"` // message text, or the emoji for reactions
 	CallID  uuid.UUID `json:"call_id,omitempty"`
 	// MediaID and Left (seconds until deletion) are set for KindBigFile.
+	// Anim: the message or reaction plays this animation (two-pigeon moments
+	// get their own wording).
+	Anim string `json:"anim,omitempty"`
 	// StoryID / Note: the message replies to the recipient's story / note.
 	StoryID   string    `json:"story_id,omitempty"`
 	Note      bool      `json:"note,omitempty"`
@@ -240,6 +244,16 @@ func (s *Service) render(ctx context.Context, j Job) (Message, error) {
 			m.Title = from + " in " + group
 		}
 	}
+	// two-pigeon moments read as a sentence about the sender: "Maya wants a
+	// high five" (any text sent with the invite follows it)
+	if phrase, ok := twoPigeon[j.Anim]; ok && j.StoryID == "" && !j.Note &&
+		(j.Kind == KindPrivate || j.Kind == KindGroup || j.Kind == KindReaction) {
+		body := from + " " + phrase
+		if fallback, _ := characters.Fallback(j.Anim); j.Kind != KindReaction && j.Preview != "" && j.Preview != fallback {
+			body += ": " + j.Preview
+		}
+		m.Body = body
+	}
 	return m, nil
 }
 
@@ -266,6 +280,16 @@ func hoursLeft(secs int) string {
 		return "1 hour"
 	}
 	return fmt.Sprintf("%d hours", h)
+}
+
+// twoPigeon: push wording for the two-pigeon animations, after the sender's
+// name.
+var twoPigeon = map[string]string{
+	"highfive_ask_01":  "wants a high five",
+	"handshake_ask_01": "wants to shake on it",
+	"highfive_01":      "high-fived you back",
+	"handshake_01":     "shook on it",
+	"hanging_01":       "left you hanging",
 }
 
 // --- settings ---

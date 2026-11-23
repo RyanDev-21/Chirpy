@@ -291,7 +291,7 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 	}
 	telemetry.Message(ctx, in.Type, len(attached) > 0)
 	if s.notify != nil {
-		j := push.Job{Kind: push.KindPrivate, To: targets, From: from, MsgID: msgID, Preview: mediaPreview(in.Content, attached)}
+		j := push.Job{Kind: push.KindPrivate, To: targets, From: from, MsgID: msgID, Preview: mediaPreview(in.Content, attached), Anim: in.Anim}
 		if fallback, ok := characters.Fallback(in.Anim); ok && (in.Content == "" || in.Content == fallback) {
 			j.Preview = fallback // "👋 waved"
 		}
@@ -761,7 +761,7 @@ func (s *chatService) React(ctx context.Context, me, msgID uuid.UUID, emoji, ani
 	telemetry.ChatAction(ctx, "react")
 	// the author hears about reactions to their message (not their own)
 	if s.notify != nil && ref.From != me && ref.From != uuid.Nil {
-		j := push.Job{Kind: push.KindReaction, To: []uuid.UUID{ref.From}, From: me, MsgID: msgID, Preview: emoji}
+		j := push.Job{Kind: push.KindReaction, To: []uuid.UUID{ref.From}, From: me, MsgID: msgID, Preview: emoji, Anim: anim}
 		if ref.Kind == TypePublic {
 			j.Group = ref.Group
 		}

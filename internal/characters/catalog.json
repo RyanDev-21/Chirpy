@@ -8,4 +8,7 @@
   {"id":"fart_01","fallback":"💨 farted"},{"id":"think_01","fallback":"🤔 thought about it"},{"id":"kiss_01","fallback":"😘 sent a kiss"},
   {"id":"rose_01","fallback":"🌹 gave you a rose"},{"id":"inlove_01","fallback":"😍 fell in love"},{"id":"cry_01","fallback":"😭 cried"},
   {"id":"laugh_01","fallback":"🤣 laughed"},{"id":"rage_01","fallback":"😤 raged"},{"id":"party_01","fallback":"🎉 celebrated"},
-  {"id":"night_01","fallback":"😴 said good night"},{"id":"sus_01","fallback":"🤨 side-eyed"}]}
+  {"id":"night_01","fallback":"😴 said good night"},{"id":"sus_01","fallback":"🤨 side-eyed"},
+  {"id":"highfive_ask_01","fallback":"✋ wants a high five"},{"id":"handshake_ask_01","fallback":"🤝 wants to shake on it"},
+  {"id":"highfive_01","fallback":"✋ high-fived you"},{"id":"handshake_01","fallback":"🤝 shook on it"},
+  {"id":"hanging_01","fallback":"💀 left you hanging"}]}
