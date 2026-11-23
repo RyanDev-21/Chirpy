@@ -41,10 +41,18 @@ INSERT INTO story_views (story_id, viewer_id, viewed_at) VALUES (@story_id, @vie
 ON CONFLICT DO NOTHING;
 
 -- name: StoryViewers :many
-SELECT u.id, u.name, u.display_name, u.avatar_at, v.viewed_at
+-- each viewer, and their latest reply to this story (the app shows it as a
+-- reaction when it's one emoji or an animation)
+SELECT u.id, u.name, u.display_name, u.avatar_at, v.viewed_at,
+       COALESCE(r.content, '')::text AS reply_text, COALESCE(r.anim, '')::text AS reply_anim
 FROM story_views v
 JOIN stories s ON s.id = v.story_id
 JOIN users u ON u.id = v.viewer_id
+LEFT JOIN LATERAL (
+    SELECT m.content, m.anim FROM message m
+    WHERE m.story_id = v.story_id AND m.from_id = v.viewer_id AND m.to_id = s.user_id AND m.deleted_at IS NULL
+    ORDER BY m.created_at DESC LIMIT 1
+) r ON true
 WHERE v.story_id = @story_id AND s.user_id = @owner::uuid
 ORDER BY v.viewed_at DESC;
 

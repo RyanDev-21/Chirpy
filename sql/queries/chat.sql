@@ -1,6 +1,6 @@
 -- name: AddMessagePrivate :exec
-INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, story_id, anim)
-VALUES ($1, $2, $3, $4, $5, $6, @forwarded, @story_id, @anim);
+INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, story_id, anim, note_text)
+VALUES ($1, $2, $3, $4, $5, $6, @forwarded, @story_id, @anim, @note_text);
 
 -- name: AddMessagePublic :exec
 -- searchable: groups of up to 50 members are indexed for search
@@ -15,8 +15,8 @@ WITH s AS (
     ON CONFLICT DO NOTHING
     RETURNING msg_id
 )
-INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, client_msg_id, story_id, anim)
-SELECT @id, @content, @parentid, @from_id, @to_id, @created_at, @forwarded, @client_id, @story_id, @anim FROM s;
+INSERT INTO message(id, content, parentId, from_id, to_id, created_at, forwarded, client_msg_id, story_id, anim, note_text)
+SELECT @id, @content, @parentid, @from_id, @to_id, @created_at, @forwarded, @client_id, @story_id, @anim, @note_text FROM s;
 
 -- name: AddMessagePublicOnce :execrows
 WITH s AS (
@@ -308,3 +308,7 @@ ON CONFLICT (user_lo, user_hi) DO UPDATE SET
         WHEN (CASE WHEN @from_id::uuid = streaks.user_lo THEN sqlc.arg(day)::date ELSE streaks.lo_day END) = sqlc.arg(day)::date
          AND (CASE WHEN @from_id::uuid = streaks.user_hi THEN sqlc.arg(day)::date ELSE streaks.hi_day END) = sqlc.arg(day)::date
         THEN sqlc.arg(day)::date ELSE streaks.done_day END;
+
+-- name: LiveNoteText :one
+-- for a reply to someone's note: its text, if it hasn't expired
+SELECT text FROM notes WHERE user_id = @user_id AND expires_at > @now::timestamp;

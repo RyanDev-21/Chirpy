@@ -161,6 +161,8 @@ type OutGoingMessage struct {
 	Forwarded bool `json:"forwarded,omitempty"`
 	// Anim: an animation played with the sender's character.
 	Anim string `json:"anim,omitempty"`
+	// NoteText: this answers the recipient's note, which said this.
+	NoteText string `json:"note_text,omitempty"`
 	// StoryID: a reply to the recipient's story.
 	StoryID string `json:"story_id,omitempty"`
 	// ClientMsgID: only in the copy sent to the sender's own devices.
