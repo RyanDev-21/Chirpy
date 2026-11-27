@@ -628,6 +628,17 @@ then `PUT` it), then `POST /api/stories` `{"media_id":"…"}` →
   - At most 3; anything out of range or malformed is `400`.
   - The pigeon drawn is the poster's **current** character (`character` on
     the friend's entry; your own for `mine`).
+- **Mention stickers** (optional, up to 10 people):
+  `{"type":"mention","user_id":"friend-uuid","x","y","size","rotation"}`
+  (same ranges).
+  - **Friends only**; anyone else, or yourself, is `400`.
+  - The people mentioned get a push, "Maya mentioned you in their story"
+    (`data.type: "story_mention"`, `data.story_id`), and online ones a
+    `StoryMention` event (`{"story_id","from_id"}`) for the app's Activity.
+  - On read, mention stickers also carry the person's `name` and
+    `display_name`. They may not be the viewer's friend.
+  - Mentioning someone lets them **repost** the story (below). Say so in the
+    app when mentioning ("Maya can share this to her story").
 - `503` when photos are off on the server.
 
 **List:** `GET /api/stories` →
@@ -663,7 +674,21 @@ newest first. Viewers never see each other.
 - It's left out when they didn't reply, or wrote something.
 
 **Delete early:** `DELETE /api/stories/{id}` → `204` (yours only, else
-`404`). The photo is removed too.
+`404`). The photo is removed too, and so are reposts of it.
+
+**Repost** (like Instagram): someone mentioned in a live story can share it
+to their own stories. `POST /api/stories/{id}/repost` → `201` with the new
+story.
+- It carries `"repost_of":{"story_id","user_id","name","display_name"}`.
+  Show "from @maya". It's in `GET /api/stories` too.
+- It's shown to the **reposter's** friends, with its own copy of the
+  photo (counted in the daily upload quota). The original's pigeon stickers
+  aren't carried over.
+- It **ends when the original ends**, deleted early or expired.
+- `404`: not mentioned, the story is gone, or it's a repost itself.
+  `409`: already reposted. `429`: 30 live stories or the upload quota.
+- The original poster gets a push, "Bob shared your story to their story"
+  (`data.type: "story_repost"`).
 
 **Reply:** send a normal private message to the poster with
 `"story_id":"…"` (`POST /api/chats/message`). It must be a live story of the
@@ -1527,6 +1552,8 @@ over the WebSocket (when the app is open, the live events are enough).
 | `friend_request` | Friend request | `bob sent you a friend request` | `from_id` | |
 | `friend_accept` | Friend request accepted | `bob accepted your friend request` | `from_id` | |
 | `reaction` | reactor (`in <group>`) | `reacted ❤️ to your message` | `from_id`, `msg_id`, `group_id`? | one per message |
+| `story_mention` | poster's name | `mentioned you in their story` | `from_id`, `story_id` | one per story |
+| `story_repost` | reposter's name | `shared your story to their story` | `from_id`, `story_id` | one per story |
 | `mention` | group name | `Maya mentioned you: …` / `Maya mentioned everyone: …` | `from_id`, `group_id`, `msg_id` | one per group |
 | `big_file` | sender name, or the group | `Video from Maya will be deleted in 3 hours` | `from_id`, `msg_id`, `media_id`, `group_id`? | one per file |
 
@@ -1784,6 +1811,7 @@ upgrade (no or bad token) returns `401` JSON instead of switching protocols.
 | `AcceptFri` | `{"req_id":"request-uuid","from_id":"uuid"}` |
 | `DenyFri` | `{"req_id":"request-uuid","from_id":"uuid"}` |
 | `RemoveFri` | `{"from_id":"uuid"}`: that user removed you as a friend |
+| `StoryMention` | `{"story_id","from_id"}`: a friend mentioned you in their story (also a push when offline) |
 | `Note` | `{"user_id","text","expires_at"}`: a friend set or cleared their note (`text: ""`, `expires_at: null` when cleared) |
 | `Reaction` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","emoji":"❤️"}`: `emoji` is `""` when the reaction was removed; `group_id` only for group messages; `anim` for a pigeon reaction |
 | `MsgEdited` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","msg":"new text","edited_at":"…"}`; `group_id` only for group messages |

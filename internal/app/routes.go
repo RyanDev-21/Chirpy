@@ -141,6 +141,7 @@ func (a *App) Router() http.Handler {
 				r.With(limit(limitAccount)).Put("/mutes/{user_id}", a.handlers.stories.Mute)
 				r.With(limit(limitAccount)).Delete("/mutes/{user_id}", a.handlers.stories.Unmute)
 				r.Post("/{story_id}/view", a.handlers.stories.View)
+				r.With(limit(limitStory)).Post("/{story_id}/repost", a.handlers.stories.Repost)
 				r.Get("/{story_id}/viewers", a.handlers.stories.Viewers)
 				r.Delete("/{story_id}", a.handlers.stories.Delete)
 			})

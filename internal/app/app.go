@@ -316,7 +316,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 		media:    media.NewHandler(a.media),
 		presence: presence.NewHandler(presenceSvc),
 		notes:    a.notesHandler(queries),
-		stories:  stories.NewHandler(queries, a.media),
+		stories:  a.storiesHandler(queries),
 		calls:    calls.NewHandler(calls.NewTURN(cfg.TURNKeyID, cfg.TURNToken), queries, logger),
 		search:   search.NewHandler(search.NewService(queries, chatRepo)),
 	}
@@ -433,6 +433,27 @@ func (a *App) notesHandler(q *database.Queries) *notes.Handler {
 		ev := ws.Event{Event: "Note", Payload: map[string]any{"user_id": user.String(), "text": text, "expires_at": expires}}
 		if err := a.hub.WriteToUsers(ids, ev); err != nil {
 			a.logger.WarnContext(ctx, "failed to announce note", "error", err)
+		}
+	})
+	return h
+}
+
+// storiesHandler serves stories and tells people about mentions (push and
+// a StoryMention event, for the app's Activity) and reposts (push).
+func (a *App) storiesHandler(q *database.Queries) *stories.Handler {
+	h := stories.NewHandler(q, a.media)
+	h.OnMention(func(ctx context.Context, story, from uuid.UUID, to []uuid.UUID) {
+		ev := ws.Event{Event: "StoryMention", Payload: map[string]string{"story_id": story.String(), "from_id": from.String()}}
+		if err := a.hub.WriteToUsers(to, ev); err != nil {
+			a.logger.WarnContext(ctx, "failed to announce story mention", "error", err)
+		}
+		if a.notifier != nil {
+			a.notifier.Notify(ctx, push.Job{Kind: push.KindStoryMention, To: to, From: from, StoryID: story.String()})
+		}
+	})
+	h.OnRepost(func(ctx context.Context, story, from, to uuid.UUID) {
+		if a.notifier != nil {
+			a.notifier.Notify(ctx, push.Job{Kind: push.KindStoryRepost, To: []uuid.UUID{to}, From: from, StoryID: story.String()})
 		}
 	})
 	return h

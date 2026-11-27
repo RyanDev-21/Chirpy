@@ -7,10 +7,13 @@ package stories
 import (
 	"RyanDev-21.com/Chirpy/internal/characters"
 	"RyanDev-21.com/Chirpy/internal/chat"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/jackc/pgx/v5/pgconn"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,7 +33,7 @@ const (
 )
 
 var (
-	ErrBadStickers = errors.New(`stickers: at most 3, each {"type":"pigeon","anim":<a one-pigeon catalog animation>,"x":0-1,"y":0-1,"size":0.1-0.8,"rotation":-180-180}`)
+	ErrBadStickers = errors.New(`stickers: at most 3 {"type":"pigeon","anim":<a one-pigeon catalog animation>} and 10 {"type":"mention","user_id":<a friend>}, each with "x":0-1,"y":0-1,"size":0.1-0.8,"rotation":-180-180`)
 	ErrTooMany     = errors.New("at most 30 stories at a time")
 	ErrNotFound    = errors.New("story not found")
 )
@@ -49,6 +52,10 @@ type Store interface {
 	MuteStories(ctx context.Context, arg database.MuteStoriesParams) error
 	UnmuteStories(ctx context.Context, arg database.UnmuteStoriesParams) error
 	StoryMutes(ctx context.Context, userID uuid.UUID) ([]database.StoryMutesRow, error)
+	FriendsAmong(ctx context.Context, arg database.FriendsAmongParams) ([]uuid.UUID, error)
+	AddStoryMention(ctx context.Context, arg database.AddStoryMentionParams) error
+	UserNames(ctx context.Context, ids []uuid.UUID) ([]database.UserNamesRow, error)
+	RepostSource(ctx context.Context, arg database.RepostSourceParams) (database.RepostSourceRow, error)
 }
 
 // Media is implemented by *media.Service.
@@ -56,13 +63,25 @@ type Media interface {
 	AttachStory(ctx context.Context, owner, id, storyID uuid.UUID, expires time.Time) (media.Attachment, error)
 	ForMessages(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID][]media.Attachment, error)
 	ExpireMessage(ctx context.Context, id uuid.UUID) error
+	Duplicate(ctx context.Context, owner, srcID uuid.UUID) (uuid.UUID, error)
 }
 
 type Handler struct {
 	db    Store
 	media Media
 	now   func() time.Time
+	// told about mentions (to the people mentioned) and reposts (to the
+	// original poster): push and live events, wired by the app
+	mentioned func(ctx context.Context, story, from uuid.UUID, to []uuid.UUID)
+	reposted  func(ctx context.Context, story, from, to uuid.UUID)
 }
+
+// OnMention and OnRepost register who tells people about mentions and
+// reposts.
+func (h *Handler) OnMention(fn func(ctx context.Context, story, from uuid.UUID, to []uuid.UUID)) {
+	h.mentioned = fn
+}
+func (h *Handler) OnRepost(fn func(ctx context.Context, story, from, to uuid.UUID)) { h.reposted = fn }
 
 func NewHandler(db Store, m Media) *Handler {
 	return &Handler{db: db, media: m, now: func() time.Time { return time.Now().UTC() }}
@@ -78,7 +97,10 @@ type Story struct {
 	Media     *media.Attachment `json:"media"`          // null if the photo is gone already
 	Seen      *bool             `json:"seen,omitempty"` // friends' stories: have I seen it
 	Stickers  json.RawMessage   `json:"stickers,omitempty"`
-	Views     *int              `json:"views,omitempty"` // my stories: how many saw it
+	// RepostOf: this story is someone's story shared by a friend they
+	// mentioned ("from @maya").
+	RepostOf *Origin `json:"repost_of,omitempty"`
+	Views    *int    `json:"views,omitempty"` // my stories: how many saw it
 }
 
 // Person is a friend with live stories.
@@ -132,10 +154,23 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "media_id is required")
 		return
 	}
-	stickers, err := stickersJSON(b.Stickers)
+	stickers, mentions, err := stickersJSON(b.Stickers)
 	if err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if len(mentions) > 0 { // friends only (not yourself)
+		friends, err := h.db.FriendsAmong(r.Context(), database.FriendsAmongParams{Me: uid, Ids: mentions})
+		if err != nil {
+			httpx.ServerError(w, r, err)
+			return
+		}
+		for _, m := range mentions {
+			if !slices.Contains(friends, m) {
+				httpx.Error(w, http.StatusBadRequest, ErrBadStickers.Error())
+				return
+			}
+		}
 	}
 	now := h.now()
 	n, err := h.db.CountActiveStories(r.Context(), database.CountActiveStoriesParams{UserID: uid, Now: ts(now)})
@@ -166,6 +201,15 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			httpx.ServerError(w, r, err)
 		}
 		return
+	}
+	for _, m := range mentions {
+		if err := h.db.AddStoryMention(r.Context(), database.AddStoryMentionParams{StoryID: id, UserID: m}); err != nil {
+			httpx.ServerError(w, r, err)
+			return
+		}
+	}
+	if len(mentions) > 0 && h.mentioned != nil {
+		h.mentioned(r.Context(), id, uid, mentions)
 	}
 	zero := 0
 	httpx.JSON(w, http.StatusCreated, Story{ID: id, CreatedAt: now, ExpiresAt: expires, Media: &a, Views: &zero, Stickers: stickers})
@@ -204,7 +248,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	my := make([]Story, 0, len(mine))
 	for _, s := range mine {
 		views := int(s.Views)
-		my = append(my, Story{ID: s.ID, CreatedAt: s.CreatedAt.Time.UTC(), ExpiresAt: s.ExpiresAt.Time.UTC(), Media: photos[s.ID], Views: &views, Stickers: s.Stickers})
+		my = append(my, Story{ID: s.ID, CreatedAt: s.CreatedAt.Time.UTC(), ExpiresAt: s.ExpiresAt.Time.UTC(), Media: photos[s.ID], Views: &views, Stickers: s.Stickers,
+			RepostOf: origin(s.RepostOf, s.OrigUserID, s.OrigName, s.OrigDisplay)})
 	}
 	people := []Person{}
 	latest := map[uuid.UUID]time.Time{}
@@ -215,11 +260,16 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		p := &people[len(people)-1]
 		seen := s.Seen
-		p.Stories = append(p.Stories, Story{ID: s.ID, CreatedAt: s.CreatedAt.Time.UTC(), ExpiresAt: s.ExpiresAt.Time.UTC(), Media: photos[s.ID], Seen: &seen, Stickers: s.Stickers})
+		p.Stories = append(p.Stories, Story{ID: s.ID, CreatedAt: s.CreatedAt.Time.UTC(), ExpiresAt: s.ExpiresAt.Time.UTC(), Media: photos[s.ID], Seen: &seen, Stickers: s.Stickers,
+			RepostOf: origin(s.RepostOf, s.OrigUserID, s.OrigName, s.OrigDisplay)})
 		p.AllSeen = p.AllSeen && seen
 		latest[s.UserID] = s.CreatedAt.Time
 	}
 	sortPeople(people, latest)
+	if err := h.nameMentions(r.Context(), my, people); err != nil {
+		httpx.ServerError(w, r, err)
+		return
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"mine": my, "friends": people})
 }
 
@@ -397,34 +447,214 @@ func (h *Handler) Mutes(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"muted": out})
 }
 
-// MaxStickers is how many stickers one story may carry.
-const MaxStickers = 3
+// MaxStickers is how many pigeon stickers one story may carry, and
+// MaxMentions how many friends it may mention.
+const (
+	MaxStickers = 3
+	MaxMentions = 10
+)
 
-// Sticker is something drawn over a story's photo that the app animates
-// (so it can't be flattened into the JPEG). v1: the poster's pigeon playing
-// a one-pigeon catalog animation. Positions are fractions of the 9:16 photo.
+// Sticker is something drawn over a story's photo, kept as data (not
+// flattened into the JPEG). Positions are fractions of the 9:16 photo.
+//   - "pigeon": the poster's pigeon playing a one-pigeon catalog animation;
+//   - "mention": a friend (user_id); they're told, and may repost it.
 type Sticker struct {
-	Type     string  `json:"type"`
-	Anim     string  `json:"anim"`
-	X        float64 `json:"x"`
-	Y        float64 `json:"y"`
-	Size     float64 `json:"size"`
-	Rotation float64 `json:"rotation"`
+	Type     string     `json:"type"`
+	Anim     string     `json:"anim,omitempty"`
+	UserID   *uuid.UUID `json:"user_id,omitempty"`
+	X        float64    `json:"x"`
+	Y        float64    `json:"y"`
+	Size     float64    `json:"size"`
+	Rotation float64    `json:"rotation"`
+	// Name and DisplayName are filled in on read, for mentions.
+	Name        string `json:"name,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
 }
 
-// stickersJSON checks the stickers and returns them as stored (nil: none).
-func stickersJSON(list []Sticker) ([]byte, error) {
+// stickersJSON checks the stickers and returns them as stored (nil: none)
+// and the friends mentioned (each once).
+func stickersJSON(list []Sticker) ([]byte, []uuid.UUID, error) {
 	if len(list) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
-	if len(list) > MaxStickers {
-		return nil, ErrBadStickers
-	}
-	for _, s := range list {
-		if s.Type != "pigeon" || !characters.Solo(s.Anim) ||
-			s.X < 0 || s.X > 1 || s.Y < 0 || s.Y > 1 || s.Size < 0.1 || s.Size > 0.8 || s.Rotation < -180 || s.Rotation > 180 {
-			return nil, ErrBadStickers
+	pigeons := 0
+	var mentions []uuid.UUID
+	for i := range list {
+		s := &list[i]
+		s.Name, s.DisplayName = "", ""
+		if s.X < 0 || s.X > 1 || s.Y < 0 || s.Y > 1 || s.Size < 0.1 || s.Size > 0.8 || s.Rotation < -180 || s.Rotation > 180 {
+			return nil, nil, ErrBadStickers
+		}
+		switch s.Type {
+		case "pigeon":
+			if !characters.Solo(s.Anim) || s.UserID != nil {
+				return nil, nil, ErrBadStickers
+			}
+			pigeons++
+		case "mention":
+			if s.UserID == nil || *s.UserID == uuid.Nil || s.Anim != "" {
+				return nil, nil, ErrBadStickers
+			}
+			if !slices.Contains(mentions, *s.UserID) {
+				mentions = append(mentions, *s.UserID)
+			}
+		default:
+			return nil, nil, ErrBadStickers
 		}
 	}
-	return json.Marshal(list)
+	if pigeons > MaxStickers || len(mentions) > MaxMentions {
+		return nil, nil, ErrBadStickers
+	}
+	b, err := json.Marshal(list)
+	return b, mentions, err
+}
+
+// Origin is the story a repost shares, and who posted it.
+type Origin struct {
+	StoryID     uuid.UUID `json:"story_id"`
+	UserID      uuid.UUID `json:"user_id"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"display_name"`
+}
+
+func origin(story, user pgtype.UUID, name, display string) *Origin {
+	if !story.Valid || !user.Valid {
+		return nil
+	}
+	return &Origin{StoryID: story.Bytes, UserID: user.Bytes, Name: name, DisplayName: users.ShownName(name, display)}
+}
+
+// nameMentions fills in the names of the people mention stickers point at
+// (they may not be the viewer's friends).
+func (h *Handler) nameMentions(ctx context.Context, mine []Story, people []Person) error {
+	var all []*Story
+	for i := range mine {
+		all = append(all, &mine[i])
+	}
+	for p := range people {
+		for i := range people[p].Stories {
+			all = append(all, &people[p].Stories[i])
+		}
+	}
+	var ids []uuid.UUID
+	parsed := map[*Story][]Sticker{}
+	for _, st := range all {
+		if len(st.Stickers) == 0 || !bytes.Contains(st.Stickers, []byte(`"mention"`)) {
+			continue
+		}
+		var list []Sticker
+		if json.Unmarshal(st.Stickers, &list) != nil {
+			continue
+		}
+		parsed[st] = list
+		for _, s := range list {
+			if s.UserID != nil && !slices.Contains(ids, *s.UserID) {
+				ids = append(ids, *s.UserID)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.db.UserNames(ctx, ids)
+	if err != nil {
+		return err
+	}
+	names := map[uuid.UUID]database.UserNamesRow{}
+	for _, r := range rows {
+		names[r.ID] = r
+	}
+	for st, list := range parsed {
+		for i := range list {
+			if list[i].UserID == nil {
+				continue
+			}
+			if n, ok := names[*list[i].UserID]; ok {
+				list[i].Name, list[i].DisplayName = n.Name, users.ShownName(n.Name, n.DisplayName)
+			}
+		}
+		if b, err := json.Marshal(list); err == nil {
+			st.Stickers = b
+		}
+	}
+	return nil
+}
+
+// Repost handles POST /api/stories/{story_id}/repost: someone mentioned in
+// a live story shares it to their own (once). It gets its own copy of the
+// photo, shows where it's from, and ends with the original.
+func (h *Handler) Repost(w http.ResponseWriter, r *http.Request) {
+	uid, ok := me(w, r)
+	if !ok {
+		return
+	}
+	id, err := httpx.PathUUID(r, "story_id")
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid story id")
+		return
+	}
+	now := h.now()
+	src, err := h.db.RepostSource(r.Context(), database.RepostSourceParams{ID: id, Me: uid, Now: ts(now)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		httpx.Error(w, http.StatusNotFound, "only a live story that mentions you can be reposted")
+		return
+	}
+	if err != nil {
+		httpx.ServerError(w, r, err)
+		return
+	}
+	n, err := h.db.CountActiveStories(r.Context(), database.CountActiveStoriesParams{UserID: uid, Now: ts(now)})
+	if err != nil {
+		httpx.ServerError(w, r, err)
+		return
+	}
+	if n >= MaxActive {
+		httpx.Error(w, http.StatusTooManyRequests, ErrTooMany.Error())
+		return
+	}
+	copyID, err := h.media.Duplicate(r.Context(), uid, src.MediaID)
+	if err != nil {
+		switch {
+		case errors.Is(err, media.ErrDailyQuota):
+			httpx.Error(w, http.StatusTooManyRequests, err.Error())
+		case errors.Is(err, media.ErrStorageFull):
+			httpx.Error(w, http.StatusInsufficientStorage, err.Error())
+		case errors.Is(err, media.ErrForwardExpired), errors.Is(err, media.ErrNotFound):
+			httpx.Error(w, http.StatusNotFound, "the photo is gone")
+		case errors.Is(err, media.ErrDisabled):
+			httpx.Error(w, http.StatusServiceUnavailable, "photos are not available")
+		default:
+			httpx.ServerError(w, r, err)
+		}
+		return
+	}
+	newID, _ := uuid.NewV7()
+	expires := src.ExpiresAt.Time.UTC() // ends with the original
+	err = h.db.CreateStory(r.Context(), database.CreateStoryParams{ID: newID, UserID: uid, Now: ts(now), ExpiresAt: ts(expires),
+		RepostOf: pgtype.UUID{Bytes: id, Valid: true}})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		httpx.Error(w, http.StatusConflict, "you already reposted this story")
+		return
+	}
+	if err != nil {
+		httpx.ServerError(w, r, err)
+		return
+	}
+	a, err := h.media.AttachStory(r.Context(), uid, copyID, newID, expires)
+	if err != nil {
+		_, _ = h.db.DeleteStory(r.Context(), database.DeleteStoryParams{ID: newID, Owner: uid})
+		httpx.ServerError(w, r, err)
+		return
+	}
+	if h.reposted != nil {
+		h.reposted(r.Context(), id, uid, src.UserID)
+	}
+	zero := 0
+	names, _ := h.db.UserNames(r.Context(), []uuid.UUID{src.UserID})
+	o := &Origin{StoryID: id, UserID: src.UserID}
+	if len(names) == 1 {
+		o.Name, o.DisplayName = names[0].Name, users.ShownName(names[0].Name, names[0].DisplayName)
+	}
+	httpx.JSON(w, http.StatusCreated, Story{ID: newID, CreatedAt: now, ExpiresAt: expires, Media: &a, Views: &zero, RepostOf: o})
 }

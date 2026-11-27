@@ -12,6 +12,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addStoryMention = `-- name: AddStoryMention :exec
+INSERT INTO story_mentions (story_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING
+`
+
+type AddStoryMentionParams struct {
+	StoryID uuid.UUID
+	UserID  uuid.UUID
+}
+
+func (q *Queries) AddStoryMention(ctx context.Context, arg AddStoryMentionParams) error {
+	_, err := q.db.Exec(ctx, addStoryMention, arg.StoryID, arg.UserID)
+	return err
+}
+
 const addStoryView = `-- name: AddStoryView :exec
 INSERT INTO story_views (story_id, viewer_id, viewed_at) VALUES ($1, $2, $3::timestamp)
 ON CONFLICT DO NOTHING
@@ -45,7 +59,7 @@ func (q *Queries) CountActiveStories(ctx context.Context, arg CountActiveStories
 }
 
 const createStory = `-- name: CreateStory :exec
-INSERT INTO stories (id, user_id, created_at, expires_at, stickers) VALUES ($1, $2, $3::timestamp, $4::timestamp, $5)
+INSERT INTO stories (id, user_id, created_at, expires_at, stickers, repost_of) VALUES ($1, $2, $3::timestamp, $4::timestamp, $5, $6)
 `
 
 type CreateStoryParams struct {
@@ -54,6 +68,7 @@ type CreateStoryParams struct {
 	Now       pgtype.Timestamp
 	ExpiresAt pgtype.Timestamp
 	Stickers  []byte
+	RepostOf  pgtype.UUID
 }
 
 func (q *Queries) CreateStory(ctx context.Context, arg CreateStoryParams) error {
@@ -63,6 +78,7 @@ func (q *Queries) CreateStory(ctx context.Context, arg CreateStoryParams) error 
 		arg.Now,
 		arg.ExpiresAt,
 		arg.Stickers,
+		arg.RepostOf,
 	)
 	return err
 }
@@ -98,9 +114,12 @@ func (q *Queries) DeleteStory(ctx context.Context, arg DeleteStoryParams) (int64
 
 const friendStories = `-- name: FriendStories :many
 SELECT s.id, s.user_id, u.name, u.display_name, u.avatar_at, u.character, u.character_v, s.created_at, s.expires_at, s.stickers,
-       EXISTS (SELECT 1 FROM story_views v WHERE v.story_id = s.id AND v.viewer_id = $1::uuid)::bool AS seen
+       EXISTS (SELECT 1 FROM story_views v WHERE v.story_id = s.id AND v.viewer_id = $1::uuid)::bool AS seen,
+       s.repost_of, ou.id AS orig_user_id, COALESCE(ou.name, '')::text AS orig_name, COALESCE(ou.display_name, '')::text AS orig_display
 FROM stories s
 JOIN users u ON u.id = s.user_id
+LEFT JOIN stories os ON os.id = s.repost_of
+LEFT JOIN users ou ON ou.id = os.user_id
 WHERE s.expires_at > $2::timestamp
   AND u.banned_at IS NULL
   AND s.user_id IN (
@@ -128,6 +147,10 @@ type FriendStoriesRow struct {
 	ExpiresAt   pgtype.Timestamp
 	Stickers    []byte
 	Seen        bool
+	RepostOf    pgtype.UUID
+	OrigUserID  pgtype.UUID
+	OrigName    string
+	OrigDisplay string
 }
 
 // my friends' live stories (not muted by me, not from suspended accounts),
@@ -153,10 +176,47 @@ func (q *Queries) FriendStories(ctx context.Context, arg FriendStoriesParams) ([
 			&i.ExpiresAt,
 			&i.Stickers,
 			&i.Seen,
+			&i.RepostOf,
+			&i.OrigUserID,
+			&i.OrigName,
+			&i.OrigDisplay,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const friendsAmong = `-- name: FriendsAmong :many
+SELECT CASE WHEN r.user_id = $1::uuid THEN r.otherUser_id ELSE r.user_id END::uuid AS id
+FROM user_relationships r
+WHERE r.status = 'confirm'
+  AND ((r.user_id = $1::uuid AND r.otherUser_id = ANY($2::uuid[])) OR (r.otherUser_id = $1::uuid AND r.user_id = ANY($2::uuid[])))
+`
+
+type FriendsAmongParams struct {
+	Me  uuid.UUID
+	Ids []uuid.UUID
+}
+
+// which of @ids are @me's friends
+func (q *Queries) FriendsAmong(ctx context.Context, arg FriendsAmongParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, friendsAmong, arg.Me, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -198,8 +258,11 @@ func (q *Queries) MuteStories(ctx context.Context, arg MuteStoriesParams) error 
 }
 
 const myStories = `-- name: MyStories :many
-SELECT s.id, s.created_at, s.expires_at, s.stickers, (SELECT count(*) FROM story_views v WHERE v.story_id = s.id)::int AS views
+SELECT s.id, s.created_at, s.expires_at, s.stickers, (SELECT count(*) FROM story_views v WHERE v.story_id = s.id)::int AS views,
+       s.repost_of, ou.id AS orig_user_id, COALESCE(ou.name, '')::text AS orig_name, COALESCE(ou.display_name, '')::text AS orig_display
 FROM stories s
+LEFT JOIN stories os ON os.id = s.repost_of
+LEFT JOIN users ou ON ou.id = os.user_id
 WHERE s.user_id = $1::uuid AND s.expires_at > $2::timestamp
 ORDER BY s.created_at, s.id
 `
@@ -210,11 +273,15 @@ type MyStoriesParams struct {
 }
 
 type MyStoriesRow struct {
-	ID        uuid.UUID
-	CreatedAt pgtype.Timestamp
-	ExpiresAt pgtype.Timestamp
-	Stickers  []byte
-	Views     int32
+	ID          uuid.UUID
+	CreatedAt   pgtype.Timestamp
+	ExpiresAt   pgtype.Timestamp
+	Stickers    []byte
+	Views       int32
+	RepostOf    pgtype.UUID
+	OrigUserID  pgtype.UUID
+	OrigName    string
+	OrigDisplay string
 }
 
 func (q *Queries) MyStories(ctx context.Context, arg MyStoriesParams) ([]MyStoriesRow, error) {
@@ -232,6 +299,10 @@ func (q *Queries) MyStories(ctx context.Context, arg MyStoriesParams) ([]MyStori
 			&i.ExpiresAt,
 			&i.Stickers,
 			&i.Views,
+			&i.RepostOf,
+			&i.OrigUserID,
+			&i.OrigName,
+			&i.OrigDisplay,
 		); err != nil {
 			return nil, err
 		}
@@ -241,6 +312,40 @@ func (q *Queries) MyStories(ctx context.Context, arg MyStoriesParams) ([]MyStori
 		return nil, err
 	}
 	return items, nil
+}
+
+const repostSource = `-- name: RepostSource :one
+SELECT s.id, s.user_id, s.expires_at, m.id AS media_id
+FROM stories s
+JOIN story_mentions sm ON sm.story_id = s.id AND sm.user_id = $1::uuid
+JOIN media m ON m.message_id = s.id AND m.chat_type = 'story' AND m.deleted_at IS NULL
+WHERE s.id = $2 AND s.repost_of IS NULL AND s.expires_at > $3::timestamp
+`
+
+type RepostSourceParams struct {
+	Me  uuid.UUID
+	ID  uuid.UUID
+	Now pgtype.Timestamp
+}
+
+type RepostSourceRow struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	ExpiresAt pgtype.Timestamp
+	MediaID   uuid.UUID
+}
+
+// a live original story that mentions @me, and its photo
+func (q *Queries) RepostSource(ctx context.Context, arg RepostSourceParams) (RepostSourceRow, error) {
+	row := q.db.QueryRow(ctx, repostSource, arg.Me, arg.ID, arg.Now)
+	var i RepostSourceRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ExpiresAt,
+		&i.MediaID,
+	)
+	return i, err
 }
 
 const storyMutes = `-- name: StoryMutes :many
@@ -370,6 +475,36 @@ type UnmuteStoriesParams struct {
 func (q *Queries) UnmuteStories(ctx context.Context, arg UnmuteStoriesParams) error {
 	_, err := q.db.Exec(ctx, unmuteStories, arg.UserID, arg.MutedID)
 	return err
+}
+
+const userNames = `-- name: UserNames :many
+SELECT id, name, display_name FROM users WHERE id = ANY($1::uuid[])
+`
+
+type UserNamesRow struct {
+	ID          uuid.UUID
+	Name        string
+	DisplayName string
+}
+
+func (q *Queries) UserNames(ctx context.Context, ids []uuid.UUID) ([]UserNamesRow, error) {
+	rows, err := q.db.Query(ctx, userNames, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserNamesRow
+	for rows.Next() {
+		var i UserNamesRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.DisplayName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const visibleStoryOwner = `-- name: VisibleStoryOwner :one
