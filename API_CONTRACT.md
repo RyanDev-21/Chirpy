@@ -617,6 +617,17 @@ then `PUT` it), then `POST /api/stories` `{"media_id":"…"}` →
 - The photo must be your own upload, not used yet, and an image (`400`
   otherwise). It counts toward the daily upload quota.
 - At most 30 live stories (`429`), and 30 posts per hour.
+- **Pigeon stickers** (optional): `"stickers":[{"type":"pigeon","anim":"wave_01","x":0.5,"y":0.62,"size":0.42,"rotation":-8}]`.
+  The app plays these over the photo, so they aren't flattened into the JPEG.
+  - `type`: `"pigeon"` only for now; anything else is `400`.
+  - `anim`: a catalog animation one pigeon plays alone. The two-pigeon ids
+    (`*_ask_01`, `highfive_01`, `handshake_01`, `hanging_01`) are `400`.
+  - `x`, `y`: the centre, as fractions of the 9:16 photo (0–1). `size`: its
+    width as a fraction of the photo's width (0.1–0.8). `rotation`: degrees
+    (−180 to 180).
+  - At most 3; anything out of range or malformed is `400`.
+  - The pigeon drawn is the poster's **current** character (`character` on
+    the friend's entry; your own for `mine`).
 - `503` when photos are off on the server.
 
 **List:** `GET /api/stories` →
@@ -628,6 +639,8 @@ then `PUT` it), then `POST /api/stories` `{"media_id":"…"}` →
 ```
 
 - `mine`: your live stories, oldest first, with how many friends saw each.
+- Every story carries `stickers` as posted, or leaves it out when there are
+  none.
 - `friends`: people with something you haven't seen first, then by their
   newest story. Each person's stories are oldest first. Muted people and
   suspended accounts are left out.
@@ -663,7 +676,8 @@ history (`message_info.Msg.story_id`) and in the `msg` event, so show
   no text), with `data.story_id`. It's still `data.type: "private"`, so
   tapping opens the chat.
 
-**Later:** video stories, up to 60 s (the phone trims to 15, 30, 45 or 60),
+**Later:** `"type":"emoji"` stickers kept as data (so they can animate).
+Video stories, up to 60 s (the phone trims to 15, 30, 45 or 60),
 with `duration_ms` and a still. Not in v1.
 
 **Mute someone's stories:** `PUT /api/stories/mutes/{user_id}` → `204`,
