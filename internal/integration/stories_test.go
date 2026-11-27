@@ -197,3 +197,100 @@ func TestStoryStickers(t *testing.T) {
 		t.Fatalf("bob sees %+v", st)
 	}
 }
+
+// Mentioning friends in a story, and the mentioned sharing it to their own.
+func TestStoryMentionsAndReposts(t *testing.T) {
+	e := newEnv(t)
+	alice, bob, carol, dave := e.signup("alice"), e.signup("bobby"), e.signup("carol"), e.signup("david")
+	e.befriend(alice, bob)
+	e.befriend(alice, carol)
+	e.befriend(bob, dave) // dave isn't alice's friend
+	e.device(carol, "tok-carol")
+	e.device(alice, "tok-alice")
+	bobWS := e.dial(bob.Token)
+
+	mention := func(u user) map[string]any {
+		return map[string]any{"type": "mention", "user_id": u.ID, "x": 0.4, "y": 0.2, "size": 0.3, "rotation": 0}
+	}
+	post := func(stickers []map[string]any, want int) string {
+		t.Helper()
+		var s struct {
+			ID string `json:"id"`
+		}
+		r := e.expect(e.do("POST", "/api/stories", alice.Token, map[string]any{"media_id": e.uploadFile(alice, "image", "image/jpeg", []byte("beach")), "stickers": stickers}), want)
+		if want == 201 {
+			r.json(t, &s)
+		}
+		return s.ID
+	}
+	post([]map[string]any{mention(dave)}, 400) // not her friend
+	story := post([]map[string]any{mention(bob), mention(carol), {"type": "pigeon", "anim": "wave_01", "x": 0.5, "y": 0.7, "size": 0.4, "rotation": 0}}, 201)
+
+	// bob (online) gets the live event, carol (offline) the push
+	if _, p := nextOf(t, bobWS, "StoryMention"); p["story_id"] != story || p["from_id"] != alice.ID {
+		t.Fatalf("event %v", p)
+	}
+	if m := e.waitPush("tok-carol", 1)[0]; m.Body != "mentioned you in their story" || m.Title != "alice" || m.Data["story_id"] != story {
+		t.Fatalf("push %+v", m)
+	}
+	// viewers see who was mentioned, by name
+	var feed struct {
+		Friends []struct {
+			UserID  string `json:"user_id"`
+			Stories []struct {
+				ID       string `json:"id"`
+				Stickers []struct {
+					Type   string `json:"type"`
+					UserID string `json:"user_id"`
+					Name   string `json:"name"`
+				} `json:"stickers"`
+				RepostOf *struct {
+					StoryID string `json:"story_id"`
+					UserID  string `json:"user_id"`
+					Name    string `json:"name"`
+				} `json:"repost_of"`
+			} `json:"stories"`
+		} `json:"friends"`
+	}
+	e.expect(e.do("GET", "/api/stories", carol.Token, nil), 200).json(t, &feed)
+	if st := feed.Friends[0].Stories[0]; len(st.Stickers) != 3 || st.Stickers[0].Name != "bobby" || st.Stickers[1].Name != "carol" || st.Stickers[2].Name != "" {
+		t.Fatalf("stickers %+v", st.Stickers)
+	}
+
+	// only someone mentioned can repost, once
+	e.expect(e.do("POST", "/api/stories/"+story+"/repost", dave.Token, nil), 404)
+	var rp struct {
+		ID       string `json:"id"`
+		RepostOf struct {
+			Name string `json:"name"`
+		} `json:"repost_of"`
+		Media struct {
+			ID string `json:"id"`
+		} `json:"media"`
+	}
+	e.expect(e.do("POST", "/api/stories/"+story+"/repost", bob.Token, nil), 201).json(t, &rp)
+	if rp.RepostOf.Name != "alice" || rp.Media.ID == "" {
+		t.Fatalf("repost %+v", rp)
+	}
+	e.expect(e.do("POST", "/api/stories/"+story+"/repost", bob.Token, nil), 409)
+	e.expect(e.do("POST", "/api/stories/"+rp.ID+"/repost", carol.Token, nil), 404) // not a repost of a repost
+	if m := e.waitPush("tok-alice", 1)[0]; m.Body != "shared your story to their story" || m.Title != "bobby" {
+		t.Fatalf("repost push %+v", m)
+	}
+	// bob's friends (dave, not alice's) see it "from alice", with its own photo
+	feed.Friends = nil
+	e.expect(e.do("GET", "/api/stories", dave.Token, nil), 200).json(t, &feed)
+	if len(feed.Friends) != 1 || feed.Friends[0].UserID != bob.ID || feed.Friends[0].Stories[0].RepostOf == nil || feed.Friends[0].Stories[0].RepostOf.UserID != alice.ID {
+		t.Fatalf("dave sees %+v", feed.Friends)
+	}
+	e.expect(e.do("GET", "/api/media/"+rp.Media.ID, dave.Token, nil), 200)
+
+	// alice deletes hers: the repost goes too
+	e.expect(e.do("DELETE", "/api/stories/"+story, alice.Token, nil), 204)
+	feed.Friends = nil
+	e.expect(e.do("GET", "/api/stories", dave.Token, nil), 200).json(t, &feed)
+	if len(feed.Friends) != 0 {
+		t.Fatalf("repost outlived the original: %+v", feed.Friends)
+	}
+	e.expect(e.do("GET", "/api/media/"+rp.Media.ID, dave.Token, nil), 404)
+}

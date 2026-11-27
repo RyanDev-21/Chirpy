@@ -37,6 +37,8 @@ const (
 	KindMissedCall    = "missed_call"    // a call I didn't answer
 	KindBigFile       = "big_file"       // a big file sent to me is deleted soon and I haven't downloaded it
 	KindMention       = "mention"        // a group message mentions me (or @everyone)
+	KindStoryMention  = "story_mention"  // a friend mentioned me in their story
+	KindStoryRepost   = "story_repost"   // someone I mentioned shared my story
 )
 
 // ChannelBigFiles is the Android channel for big-file reminders (the app
@@ -132,7 +134,7 @@ func NewService(q *database.Queries, send Sender, online Presence, names Names, 
 // prefKind is the preference that controls a kind.
 func prefKind(kind string) string {
 	switch kind {
-	case KindFriendRequest, KindFriendAccept:
+	case KindFriendRequest, KindFriendAccept, KindStoryMention, KindStoryRepost:
 		return "friends"
 	case KindReaction:
 		return "reactions"
@@ -229,6 +231,10 @@ func (s *Service) render(ctx context.Context, j Job) (Message, error) {
 		m.Title, m.Body, m.Tag = from, j.Preview, "dm:"+j.From.String()
 	case KindGroup:
 		m.Title, m.Body, m.Tag = group, from+": "+j.Preview, "group:"+j.Group.String()
+	case KindStoryMention:
+		m.Title, m.Body, m.Tag = from, "mentioned you in their story", "story:"+j.StoryID
+	case KindStoryRepost:
+		m.Title, m.Body, m.Tag = from, "shared your story to their story", "story:"+j.StoryID
 	case KindMention:
 		m.Title, m.Tag = group, "group:"+j.Group.String()
 		m.Body = from + " mentioned you: " + j.Preview
