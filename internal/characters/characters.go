@@ -66,6 +66,16 @@ func Fallback(id string) (string, bool) {
 	return "", false
 }
 
+// twoPigeon animations need a second person (an invite and its answer), so
+// they can't be used on their own, e.g. as a story sticker.
+var twoPigeon = map[string]bool{"highfive_ask_01": true, "handshake_ask_01": true, "highfive_01": true, "handshake_01": true, "hanging_01": true}
+
+// Solo reports whether id is a catalog animation one pigeon plays alone.
+func Solo(id string) bool {
+	_, ok := Fallback(id)
+	return ok && !twoPigeon[id]
+}
+
 // Spec is a character: the body, a choice (or none) per slot, and a palette
 // index per colour target.
 type Spec struct {

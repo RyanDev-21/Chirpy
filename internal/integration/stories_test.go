@@ -156,3 +156,44 @@ func TestStories(t *testing.T) {
 	}
 	e.expect(e.do("POST", "/api/stories", carol.Token, map[string]string{"media_id": e.uploadFile(carol, "image", "image/jpeg", []byte("y"))}), 429)
 }
+
+// Pigeon stickers are stored with the story and come back to friends.
+func TestStoryStickers(t *testing.T) {
+	e := newEnv(t)
+	alice, bob := e.signup("alice"), e.signup("bobby")
+	e.befriend(alice, bob)
+	post := func(stickers any, want int) {
+		t.Helper()
+		body := map[string]any{"media_id": e.uploadFile(alice, "image", "image/jpeg", []byte("photo")), "stickers": stickers}
+		e.expect(e.do("POST", "/api/stories", alice.Token, body), want)
+	}
+	post([]map[string]any{{"type": "pigeon", "anim": "wave_01", "x": 0.5, "y": 0.62, "size": 0.42, "rotation": -8}}, 201)
+	post([]map[string]any{{"type": "pigeon", "anim": "highfive_ask_01", "x": 0.5, "y": 0.5, "size": 0.3}}, 400)
+	post([]map[string]any{{"type": "pigeon", "anim": "wave_01", "x": 2, "y": 0.5, "size": 0.3}}, 400)
+	post("not a list", 400)
+	post([]any{}, 201) // none: like before
+
+	var feed struct {
+		Mine []struct {
+			Stickers []map[string]any `json:"stickers"`
+		} `json:"mine"`
+		Friends []struct {
+			Stories []struct {
+				Stickers []struct {
+					Type string  `json:"type"`
+					Anim string  `json:"anim"`
+					Y    float64 `json:"y"`
+				} `json:"stickers"`
+			} `json:"stories"`
+		} `json:"friends"`
+	}
+	e.expect(e.do("GET", "/api/stories", alice.Token, nil), 200).json(t, &feed)
+	if len(feed.Mine) != 2 || len(feed.Mine[0].Stickers) != 1 || feed.Mine[1].Stickers != nil {
+		t.Fatalf("mine %+v", feed.Mine)
+	}
+	e.expect(e.do("GET", "/api/stories", bob.Token, nil), 200).json(t, &feed)
+	st := feed.Friends[0].Stories
+	if len(st) != 2 || len(st[0].Stickers) != 1 || st[0].Stickers[0].Anim != "wave_01" || st[0].Stickers[0].Y != 0.62 || st[1].Stickers != nil {
+		t.Fatalf("bob sees %+v", st)
+	}
+}

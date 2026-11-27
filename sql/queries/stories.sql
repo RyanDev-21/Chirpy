@@ -1,11 +1,11 @@
 -- name: CreateStory :exec
-INSERT INTO stories (id, user_id, created_at, expires_at) VALUES (@id, @user_id, @now::timestamp, @expires_at::timestamp);
+INSERT INTO stories (id, user_id, created_at, expires_at, stickers) VALUES (@id, @user_id, @now::timestamp, @expires_at::timestamp, @stickers);
 
 -- name: CountActiveStories :one
 SELECT count(*)::int FROM stories WHERE user_id = @user_id AND expires_at > @now::timestamp;
 
 -- name: MyStories :many
-SELECT s.id, s.created_at, s.expires_at, (SELECT count(*) FROM story_views v WHERE v.story_id = s.id)::int AS views
+SELECT s.id, s.created_at, s.expires_at, s.stickers, (SELECT count(*) FROM story_views v WHERE v.story_id = s.id)::int AS views
 FROM stories s
 WHERE s.user_id = @me::uuid AND s.expires_at > @now::timestamp
 ORDER BY s.created_at, s.id;
@@ -13,7 +13,7 @@ ORDER BY s.created_at, s.id;
 -- name: FriendStories :many
 -- my friends' live stories (not muted by me, not from suspended accounts),
 -- oldest first per person, and whether I've seen each
-SELECT s.id, s.user_id, u.name, u.display_name, u.avatar_at, u.character, u.character_v, s.created_at, s.expires_at,
+SELECT s.id, s.user_id, u.name, u.display_name, u.avatar_at, u.character, u.character_v, s.created_at, s.expires_at, s.stickers,
        EXISTS (SELECT 1 FROM story_views v WHERE v.story_id = s.id AND v.viewer_id = @me::uuid)::bool AS seen
 FROM stories s
 JOIN users u ON u.id = s.user_id
