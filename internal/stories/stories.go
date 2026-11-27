@@ -8,6 +8,7 @@ import (
 	"RyanDev-21.com/Chirpy/internal/characters"
 	"RyanDev-21.com/Chirpy/internal/chat"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -29,8 +30,9 @@ const (
 )
 
 var (
-	ErrTooMany  = errors.New("at most 30 stories at a time")
-	ErrNotFound = errors.New("story not found")
+	ErrBadStickers = errors.New(`stickers: at most 3, each {"type":"pigeon","anim":<a one-pigeon catalog animation>,"x":0-1,"y":0-1,"size":0.1-0.8,"rotation":-180-180}`)
+	ErrTooMany     = errors.New("at most 30 stories at a time")
+	ErrNotFound    = errors.New("story not found")
 )
 
 // Store is implemented by *database.Queries.
@@ -73,8 +75,9 @@ type Story struct {
 	ID        uuid.UUID         `json:"id"`
 	CreatedAt time.Time         `json:"created_at"`
 	ExpiresAt time.Time         `json:"expires_at"`
-	Media     *media.Attachment `json:"media"`           // null if the photo is gone already
-	Seen      *bool             `json:"seen,omitempty"`  // friends' stories: have I seen it
+	Media     *media.Attachment `json:"media"`          // null if the photo is gone already
+	Seen      *bool             `json:"seen,omitempty"` // friends' stories: have I seen it
+	Stickers  json.RawMessage   `json:"stickers,omitempty"`
 	Views     *int              `json:"views,omitempty"` // my stories: how many saw it
 }
 
@@ -122,10 +125,16 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b struct {
-		MediaID uuid.UUID `json:"media_id"`
+		MediaID  uuid.UUID `json:"media_id"`
+		Stickers []Sticker `json:"stickers"`
 	}
 	if err := httpx.Decode(w, r, &b); err != nil || b.MediaID == uuid.Nil {
 		httpx.Error(w, http.StatusBadRequest, "media_id is required")
+		return
+	}
+	stickers, err := stickersJSON(b.Stickers)
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	now := h.now()
@@ -141,7 +150,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	id, _ := uuid.NewV7()
 	expires := now.Add(Lifetime)
 	// the story row first: the photo's access check looks for it
-	if err := h.db.CreateStory(r.Context(), database.CreateStoryParams{ID: id, UserID: uid, Now: ts(now), ExpiresAt: ts(expires)}); err != nil {
+	if err := h.db.CreateStory(r.Context(), database.CreateStoryParams{ID: id, UserID: uid, Now: ts(now), ExpiresAt: ts(expires), Stickers: stickers}); err != nil {
 		httpx.ServerError(w, r, err)
 		return
 	}
@@ -159,7 +168,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	zero := 0
-	httpx.JSON(w, http.StatusCreated, Story{ID: id, CreatedAt: now, ExpiresAt: expires, Media: &a, Views: &zero})
+	httpx.JSON(w, http.StatusCreated, Story{ID: id, CreatedAt: now, ExpiresAt: expires, Media: &a, Views: &zero, Stickers: stickers})
 }
 
 // List handles GET /api/stories: my live stories, and my friends' (people
@@ -195,7 +204,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	my := make([]Story, 0, len(mine))
 	for _, s := range mine {
 		views := int(s.Views)
-		my = append(my, Story{ID: s.ID, CreatedAt: s.CreatedAt.Time.UTC(), ExpiresAt: s.ExpiresAt.Time.UTC(), Media: photos[s.ID], Views: &views})
+		my = append(my, Story{ID: s.ID, CreatedAt: s.CreatedAt.Time.UTC(), ExpiresAt: s.ExpiresAt.Time.UTC(), Media: photos[s.ID], Views: &views, Stickers: s.Stickers})
 	}
 	people := []Person{}
 	latest := map[uuid.UUID]time.Time{}
@@ -206,7 +215,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		p := &people[len(people)-1]
 		seen := s.Seen
-		p.Stories = append(p.Stories, Story{ID: s.ID, CreatedAt: s.CreatedAt.Time.UTC(), ExpiresAt: s.ExpiresAt.Time.UTC(), Media: photos[s.ID], Seen: &seen})
+		p.Stories = append(p.Stories, Story{ID: s.ID, CreatedAt: s.CreatedAt.Time.UTC(), ExpiresAt: s.ExpiresAt.Time.UTC(), Media: photos[s.ID], Seen: &seen, Stickers: s.Stickers})
 		p.AllSeen = p.AllSeen && seen
 		latest[s.UserID] = s.CreatedAt.Time
 	}
@@ -386,4 +395,36 @@ func (h *Handler) Mutes(w http.ResponseWriter, r *http.Request) {
 		out = append(out, muted{UserID: m.ID, Name: m.Name, DisplayName: users.ShownName(m.Name, m.DisplayName), AvatarURL: users.AvatarURLFrom(m.ID, m.AvatarAt)})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"muted": out})
+}
+
+// MaxStickers is how many stickers one story may carry.
+const MaxStickers = 3
+
+// Sticker is something drawn over a story's photo that the app animates
+// (so it can't be flattened into the JPEG). v1: the poster's pigeon playing
+// a one-pigeon catalog animation. Positions are fractions of the 9:16 photo.
+type Sticker struct {
+	Type     string  `json:"type"`
+	Anim     string  `json:"anim"`
+	X        float64 `json:"x"`
+	Y        float64 `json:"y"`
+	Size     float64 `json:"size"`
+	Rotation float64 `json:"rotation"`
+}
+
+// stickersJSON checks the stickers and returns them as stored (nil: none).
+func stickersJSON(list []Sticker) ([]byte, error) {
+	if len(list) == 0 {
+		return nil, nil
+	}
+	if len(list) > MaxStickers {
+		return nil, ErrBadStickers
+	}
+	for _, s := range list {
+		if s.Type != "pigeon" || !characters.Solo(s.Anim) ||
+			s.X < 0 || s.X > 1 || s.Y < 0 || s.Y > 1 || s.Size < 0.1 || s.Size > 0.8 || s.Rotation < -180 || s.Rotation > 180 {
+			return nil, ErrBadStickers
+		}
+	}
+	return json.Marshal(list)
 }

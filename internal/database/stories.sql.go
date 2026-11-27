@@ -45,7 +45,7 @@ func (q *Queries) CountActiveStories(ctx context.Context, arg CountActiveStories
 }
 
 const createStory = `-- name: CreateStory :exec
-INSERT INTO stories (id, user_id, created_at, expires_at) VALUES ($1, $2, $3::timestamp, $4::timestamp)
+INSERT INTO stories (id, user_id, created_at, expires_at, stickers) VALUES ($1, $2, $3::timestamp, $4::timestamp, $5)
 `
 
 type CreateStoryParams struct {
@@ -53,6 +53,7 @@ type CreateStoryParams struct {
 	UserID    uuid.UUID
 	Now       pgtype.Timestamp
 	ExpiresAt pgtype.Timestamp
+	Stickers  []byte
 }
 
 func (q *Queries) CreateStory(ctx context.Context, arg CreateStoryParams) error {
@@ -61,6 +62,7 @@ func (q *Queries) CreateStory(ctx context.Context, arg CreateStoryParams) error 
 		arg.UserID,
 		arg.Now,
 		arg.ExpiresAt,
+		arg.Stickers,
 	)
 	return err
 }
@@ -95,7 +97,7 @@ func (q *Queries) DeleteStory(ctx context.Context, arg DeleteStoryParams) (int64
 }
 
 const friendStories = `-- name: FriendStories :many
-SELECT s.id, s.user_id, u.name, u.display_name, u.avatar_at, u.character, u.character_v, s.created_at, s.expires_at,
+SELECT s.id, s.user_id, u.name, u.display_name, u.avatar_at, u.character, u.character_v, s.created_at, s.expires_at, s.stickers,
        EXISTS (SELECT 1 FROM story_views v WHERE v.story_id = s.id AND v.viewer_id = $1::uuid)::bool AS seen
 FROM stories s
 JOIN users u ON u.id = s.user_id
@@ -124,6 +126,7 @@ type FriendStoriesRow struct {
 	CharacterV  pgtype.Text
 	CreatedAt   pgtype.Timestamp
 	ExpiresAt   pgtype.Timestamp
+	Stickers    []byte
 	Seen        bool
 }
 
@@ -148,6 +151,7 @@ func (q *Queries) FriendStories(ctx context.Context, arg FriendStoriesParams) ([
 			&i.CharacterV,
 			&i.CreatedAt,
 			&i.ExpiresAt,
+			&i.Stickers,
 			&i.Seen,
 		); err != nil {
 			return nil, err
@@ -194,7 +198,7 @@ func (q *Queries) MuteStories(ctx context.Context, arg MuteStoriesParams) error 
 }
 
 const myStories = `-- name: MyStories :many
-SELECT s.id, s.created_at, s.expires_at, (SELECT count(*) FROM story_views v WHERE v.story_id = s.id)::int AS views
+SELECT s.id, s.created_at, s.expires_at, s.stickers, (SELECT count(*) FROM story_views v WHERE v.story_id = s.id)::int AS views
 FROM stories s
 WHERE s.user_id = $1::uuid AND s.expires_at > $2::timestamp
 ORDER BY s.created_at, s.id
@@ -209,6 +213,7 @@ type MyStoriesRow struct {
 	ID        uuid.UUID
 	CreatedAt pgtype.Timestamp
 	ExpiresAt pgtype.Timestamp
+	Stickers  []byte
 	Views     int32
 }
 
@@ -225,6 +230,7 @@ func (q *Queries) MyStories(ctx context.Context, arg MyStoriesParams) ([]MyStori
 			&i.ID,
 			&i.CreatedAt,
 			&i.ExpiresAt,
+			&i.Stickers,
 			&i.Views,
 		); err != nil {
 			return nil, err
