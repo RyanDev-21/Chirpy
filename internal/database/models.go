@@ -227,6 +227,7 @@ type Story struct {
 	UserID    uuid.UUID
 	CreatedAt pgtype.Timestamp
 	ExpiresAt pgtype.Timestamp
+	Stickers  []byte
 }
 
 type StoryMute struct {
