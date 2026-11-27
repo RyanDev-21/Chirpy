@@ -3,6 +3,7 @@ package ws
 import (
 	"encoding/json"
 	"errors"
+	"github.com/google/uuid"
 	"time"
 )
 
@@ -159,6 +160,9 @@ type OutGoingMessage struct {
 	Media any `json:"media,omitempty"`
 	// Forwarded: label it "Forwarded" (the original sender isn't shown).
 	Forwarded bool `json:"forwarded,omitempty"`
+	// Mentions / MentionAll: who a group message mentions (@everyone).
+	Mentions   []uuid.UUID `json:"mentions,omitempty"`
+	MentionAll bool        `json:"mention_all,omitempty"`
 	// Anim: an animation played with the sender's character.
 	Anim string `json:"anim,omitempty"`
 	// NoteText: this answers the recipient's note, which said this.

@@ -4,8 +4,8 @@ VALUES ($1, $2, $3, $4, $5, $6, @forwarded, @story_id, @anim, @note_text);
 
 -- name: AddMessagePublic :exec
 -- searchable: groups of up to 50 members are indexed for search
-INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded, anim)
-VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = $3), false), @forwarded, @anim);
+INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded, anim, mentions, mention_all)
+VALUES ($1, $2, $3, $4, $5, $6, COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = $3), false), @forwarded, @anim, @mentions, @mention_all);
 
 -- name: AddMessagePrivateOnce :execrows
 -- saves the message unless @from_id already used @client_id (0 rows then)
@@ -25,9 +25,9 @@ WITH s AS (
     ON CONFLICT DO NOTHING
     RETURNING msg_id
 )
-INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded, client_msg_id, anim)
+INSERT INTO GroupMessage(id, content, group_id, from_id, parent_id, created_at, searchable, forwarded, client_msg_id, anim, mentions, mention_all)
 SELECT @id, @content, @group_id, @from_id, @parent_id, @created_at,
-       COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = @group_id), false), @forwarded, @client_id, @anim FROM s;
+       COALESCE((SELECT c.current_member <= 50 FROM chat_groups c WHERE c.id = @group_id), false), @forwarded, @client_id, @anim, @mentions, @mention_all FROM s;
 
 -- name: SentMessageID :one
 SELECT msg_id FROM sent_ids WHERE from_id = @from_id AND client_id = @client_id;
@@ -167,6 +167,7 @@ SELECT g.id AS group_id, g.name AS group_name, g.avatar_at AS group_avatar_at,
        COALESCE(lm.id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS last_id, lm.content AS last_content, lm.from_id AS last_from, lm.created_at AS last_at,
        COALESCE(lm.deleted_at IS NOT NULL, false)::bool AS last_deleted,
        COALESCE(su.name, '')::text AS last_from_name, COALESCE(su.display_name, '')::text AS last_from_display,
+       COALESCE(sn.nickname, '')::text AS last_from_nickname,
        (SELECT count(*) FROM GroupMessage x
         WHERE x.group_id = g.id AND x.deleted_at IS NULL
           AND (x.from_id IS NULL OR x.from_id <> @me::uuid)
@@ -183,6 +184,7 @@ LEFT JOIN LATERAL (
     ORDER BY gm.created_at DESC, gm.id DESC LIMIT 1
 ) lm ON true
 LEFT JOIN users su ON su.id = lm.from_id
+LEFT JOIN member_table sn ON sn.group_id = g.id AND sn.member_id = lm.from_id
 WHERE m.member_id = @me::uuid
 ORDER BY lm.created_at DESC NULLS LAST, lower(g.name);
 
@@ -312,3 +314,7 @@ ON CONFLICT (user_lo, user_hi) DO UPDATE SET
 -- name: LiveNoteText :one
 -- for a reply to someone's note: its text, if it hasn't expired
 SELECT text FROM notes WHERE user_id = @user_id AND expires_at > @now::timestamp;
+
+-- name: SenderInGroup :one
+-- the sender's role and nickname in a group (for @everyone and push names)
+SELECT role, COALESCE(nickname, '')::text AS nickname FROM member_table WHERE group_id = @group_id AND member_id = @member_id;

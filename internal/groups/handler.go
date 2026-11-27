@@ -386,6 +386,31 @@ func (h *GroupHandler) SetRole(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// SetNickname handles PUT /api/chats/groups/{group_id}/nickname
+// {"nickname":"Big Bro"} (null clears it).
+func (h *GroupHandler) SetNickname(w http.ResponseWriter, r *http.Request) {
+	groupID, me, ok := groupAction(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Nickname *string `json:"nickname"`
+	}
+	if err := httpx.Decode(w, r, &req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, ErrBadNickname.Error())
+		return
+	}
+	if err := h.groupService.SetNickname(r.Context(), groupID, me, req.Nickname); err != nil {
+		if errors.Is(err, ErrBadNickname) {
+			httpx.Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeGroupError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // JoinPublic handles POST /api/chats/groups/{group_id}/join (public groups).
 func (h *GroupHandler) JoinPublic(w http.ResponseWriter, r *http.Request) {
 	groupID, me, ok := groupAction(w, r)

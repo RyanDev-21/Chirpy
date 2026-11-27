@@ -22,22 +22,24 @@ WHERE d.user_id = ANY(@users::uuid[])
         WHEN 'public' THEN COALESCE(p.groups, true)
         WHEN 'friends' THEN COALESCE(p.friends, true)
         WHEN 'reactions' THEN COALESCE(p.reactions, true)
+        WHEN 'mentions' THEN COALESCE(p.mentions, true)
         WHEN 'calls' THEN true -- calls always ring (mute the person to stop it)
         ELSE false END
-  AND NOT EXISTS (
+  -- a mention gets through a muted chat (switch "mentions" off to stop it)
+  AND (@kind::text = 'mentions' OR NOT EXISTS (
       SELECT 1 FROM chat_mutes m
       WHERE m.user_id = d.user_id AND m.chat_type = @chat_type::text AND m.chat_id = @chat_id::uuid
         AND (m.until IS NULL OR m.until > @now::timestamp)
-  );
+  ));
 
 -- name: GetNotificationPrefs :one
-SELECT private, groups, friends, reactions FROM notification_prefs WHERE user_id = $1;
+SELECT private, groups, friends, reactions, mentions FROM notification_prefs WHERE user_id = $1;
 
 -- name: SetNotificationPrefs :exec
-INSERT INTO notification_prefs (user_id, private, groups, friends, reactions)
-VALUES (@user_id, @private, @groups, @friends, @reactions)
+INSERT INTO notification_prefs (user_id, private, groups, friends, reactions, mentions)
+VALUES (@user_id, @private, @groups, @friends, @reactions, @mentions)
 ON CONFLICT (user_id) DO UPDATE SET private = EXCLUDED.private, groups = EXCLUDED.groups,
-    friends = EXCLUDED.friends, reactions = EXCLUDED.reactions;
+    friends = EXCLUDED.friends, reactions = EXCLUDED.reactions, mentions = EXCLUDED.mentions;
 
 -- name: SetMute :exec
 INSERT INTO chat_mutes (user_id, chat_type, chat_id, until) VALUES (@user_id, @chat_type, @chat_id, sqlc.narg(until))

@@ -36,6 +36,7 @@ const (
 	KindCall          = "call"           // incoming call: data-only, rings the phone
 	KindMissedCall    = "missed_call"    // a call I didn't answer
 	KindBigFile       = "big_file"       // a big file sent to me is deleted soon and I haven't downloaded it
+	KindMention       = "mention"        // a group message mentions me (or @everyone)
 )
 
 // ChannelBigFiles is the Android channel for big-file reminders (the app
@@ -56,6 +57,10 @@ type Job struct {
 	Preview string    `json:"preview,omitempty"` // message text, or the emoji for reactions
 	CallID  uuid.UUID `json:"call_id,omitempty"`
 	// MediaID and Left (seconds until deletion) are set for KindBigFile.
+	// FromName, if set, is the sender's name in this group (their nickname).
+	FromName string `json:"from_name,omitempty"`
+	// MentionAll: a KindMention for @everyone.
+	MentionAll bool `json:"mention_all,omitempty"`
 	// Anim: the message or reaction plays this animation (two-pigeon moments
 	// get their own wording).
 	Anim string `json:"anim,omitempty"`
@@ -131,6 +136,8 @@ func prefKind(kind string) string {
 		return "friends"
 	case KindReaction:
 		return "reactions"
+	case KindMention:
+		return "mentions"
 	case KindGroupAdded:
 		return KindGroup
 	case KindCall, KindMissedCall:
@@ -197,6 +204,9 @@ func (s *Service) render(ctx context.Context, j Job) (Message, error) {
 	if err != nil {
 		return Message{}, err
 	}
+	if j.FromName != "" {
+		from = j.FromName
+	}
 	m := Message{Data: map[string]string{"type": j.Kind, "from_id": j.From.String()}}
 	if j.MsgID != uuid.Nil {
 		m.Data["msg_id"] = j.MsgID.String()
@@ -219,6 +229,12 @@ func (s *Service) render(ctx context.Context, j Job) (Message, error) {
 		m.Title, m.Body, m.Tag = from, j.Preview, "dm:"+j.From.String()
 	case KindGroup:
 		m.Title, m.Body, m.Tag = group, from+": "+j.Preview, "group:"+j.Group.String()
+	case KindMention:
+		m.Title, m.Tag = group, "group:"+j.Group.String()
+		m.Body = from + " mentioned you: " + j.Preview
+		if j.MentionAll {
+			m.Body = from + " mentioned everyone: " + j.Preview
+		}
 	case KindBigFile:
 		m.Title, m.Body, m.Tag = from, kindWord(j.MediaKind)+" from "+from+" will be deleted in "+hoursLeft(j.Left), "bigfile:"+j.MediaID.String()
 		if group != "" {
@@ -300,19 +316,29 @@ type Prefs struct {
 	Groups    bool `json:"groups"`
 	Friends   bool `json:"friends"`
 	Reactions bool `json:"reactions"`
+	// Mentions: being mentioned in a group (also when the group is muted).
+	// Apps that don't send it keep it on.
+	Mentions *bool `json:"mentions,omitempty"`
 }
 
 func (s *Service) Prefs(ctx context.Context, user uuid.UUID) (Prefs, error) {
 	p, err := s.q.GetNotificationPrefs(ctx, user)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Prefs{true, true, true, true}, nil
+		on := true
+		return Prefs{true, true, true, true, &on}, nil
 	}
-	return Prefs{p.Private, p.Groups, p.Friends, p.Reactions}, err
+	return Prefs{p.Private, p.Groups, p.Friends, p.Reactions, &p.Mentions}, err
 }
 
 func (s *Service) SetPrefs(ctx context.Context, user uuid.UUID, p Prefs) error {
+	mentions := true
+	if p.Mentions != nil {
+		mentions = *p.Mentions
+	} else if cur, err := s.Prefs(ctx, user); err == nil && cur.Mentions != nil {
+		mentions = *cur.Mentions // an older app left it out: keep what it was
+	}
 	return s.q.SetNotificationPrefs(ctx, database.SetNotificationPrefsParams{
-		UserID: user, Private: p.Private, Groups: p.Groups, Friends: p.Friends, Reactions: p.Reactions,
+		UserID: user, Private: p.Private, Groups: p.Groups, Friends: p.Friends, Reactions: p.Reactions, Mentions: mentions,
 	})
 }
 

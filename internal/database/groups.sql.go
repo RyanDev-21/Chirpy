@@ -254,7 +254,7 @@ func (q *Queries) GroupAvatarForMember(ctx context.Context, arg GroupAvatarForMe
 }
 
 const listGroupMembers = `-- name: ListGroupMembers :many
-SELECT m.member_id, u.name, u.display_name, u.avatar_at, u.character, u.character_v, m.role, m.permissions
+SELECT m.member_id, u.name, u.display_name, u.avatar_at, u.character, u.character_v, m.role, m.permissions, m.nickname
 FROM member_table m
 JOIN users u ON u.id = m.member_id
 WHERE m.group_id = $1
@@ -270,6 +270,7 @@ type ListGroupMembersRow struct {
 	CharacterV  pgtype.Text
 	Role        string
 	Permissions []string
+	Nickname    pgtype.Text
 }
 
 func (q *Queries) ListGroupMembers(ctx context.Context, groupID uuid.UUID) ([]ListGroupMembersRow, error) {
@@ -290,6 +291,7 @@ func (q *Queries) ListGroupMembers(ctx context.Context, groupID uuid.UUID) ([]Li
 			&i.CharacterV,
 			&i.Role,
 			&i.Permissions,
+			&i.Nickname,
 		); err != nil {
 			return nil, err
 		}
@@ -497,6 +499,25 @@ type SetGroupMemberCountParams struct {
 func (q *Queries) SetGroupMemberCount(ctx context.Context, arg SetGroupMemberCountParams) error {
 	_, err := q.db.Exec(ctx, setGroupMemberCount, arg.ID, arg.CurrentMember)
 	return err
+}
+
+const setGroupNickname = `-- name: SetGroupNickname :execrows
+UPDATE member_table SET nickname = $1 WHERE group_id = $2 AND member_id = $3
+`
+
+type SetGroupNicknameParams struct {
+	Nickname pgtype.Text
+	GroupID  uuid.UUID
+	MemberID uuid.UUID
+}
+
+// a member's own nickname in the group (NULL clears it)
+func (q *Queries) SetGroupNickname(ctx context.Context, arg SetGroupNicknameParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setGroupNickname, arg.Nickname, arg.GroupID, arg.MemberID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setInviteCode = `-- name: SetInviteCode :exec

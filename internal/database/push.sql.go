@@ -60,7 +60,7 @@ func (q *Queries) DeleteUserDevices(ctx context.Context, userID uuid.UUID) error
 }
 
 const getNotificationPrefs = `-- name: GetNotificationPrefs :one
-SELECT private, groups, friends, reactions FROM notification_prefs WHERE user_id = $1
+SELECT private, groups, friends, reactions, mentions FROM notification_prefs WHERE user_id = $1
 `
 
 type GetNotificationPrefsRow struct {
@@ -68,6 +68,7 @@ type GetNotificationPrefsRow struct {
 	Groups    bool
 	Friends   bool
 	Reactions bool
+	Mentions  bool
 }
 
 func (q *Queries) GetNotificationPrefs(ctx context.Context, userID uuid.UUID) (GetNotificationPrefsRow, error) {
@@ -78,6 +79,7 @@ func (q *Queries) GetNotificationPrefs(ctx context.Context, userID uuid.UUID) (G
 		&i.Groups,
 		&i.Friends,
 		&i.Reactions,
+		&i.Mentions,
 	)
 	return i, err
 }
@@ -128,13 +130,15 @@ WHERE d.user_id = ANY($1::uuid[])
         WHEN 'public' THEN COALESCE(p.groups, true)
         WHEN 'friends' THEN COALESCE(p.friends, true)
         WHEN 'reactions' THEN COALESCE(p.reactions, true)
+        WHEN 'mentions' THEN COALESCE(p.mentions, true)
         WHEN 'calls' THEN true -- calls always ring (mute the person to stop it)
         ELSE false END
-  AND NOT EXISTS (
+  -- a mention gets through a muted chat (switch "mentions" off to stop it)
+  AND ($2::text = 'mentions' OR NOT EXISTS (
       SELECT 1 FROM chat_mutes m
       WHERE m.user_id = d.user_id AND m.chat_type = $3::text AND m.chat_id = $4::uuid
         AND (m.until IS NULL OR m.until > $5::timestamp)
-  )
+  ))
 `
 
 type PushTargetsParams struct {
@@ -201,10 +205,10 @@ func (q *Queries) SetMute(ctx context.Context, arg SetMuteParams) error {
 }
 
 const setNotificationPrefs = `-- name: SetNotificationPrefs :exec
-INSERT INTO notification_prefs (user_id, private, groups, friends, reactions)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO notification_prefs (user_id, private, groups, friends, reactions, mentions)
+VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (user_id) DO UPDATE SET private = EXCLUDED.private, groups = EXCLUDED.groups,
-    friends = EXCLUDED.friends, reactions = EXCLUDED.reactions
+    friends = EXCLUDED.friends, reactions = EXCLUDED.reactions, mentions = EXCLUDED.mentions
 `
 
 type SetNotificationPrefsParams struct {
@@ -213,6 +217,7 @@ type SetNotificationPrefsParams struct {
 	Groups    bool
 	Friends   bool
 	Reactions bool
+	Mentions  bool
 }
 
 func (q *Queries) SetNotificationPrefs(ctx context.Context, arg SetNotificationPrefsParams) error {
@@ -222,6 +227,7 @@ func (q *Queries) SetNotificationPrefs(ctx context.Context, arg SetNotificationP
 		arg.Groups,
 		arg.Friends,
 		arg.Reactions,
+		arg.Mentions,
 	)
 	return err
 }

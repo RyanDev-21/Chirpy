@@ -199,6 +199,7 @@ func (a *App) Router() http.Handler {
 				r.With(limit(limitGroupAdmin)).Delete("/{group_id}/members/{user_id}", a.handlers.groups.KickMember)
 				r.With(limit(limitGroupAdmin)).Put("/{group_id}/admin", a.handlers.groups.TransferAdmin)
 				r.With(limit(limitGroupAdmin)).Put("/{group_id}/members/{user_id}/role", a.handlers.groups.SetRole)
+				r.With(limit(limitGroupAdmin)).Put("/{group_id}/nickname", a.handlers.groups.SetNickname)
 				r.With(limit(limitGroupAdmin)).Post("/{group_id}/members", a.handlers.groups.AddMember)
 				r.With(limit(limitAvatar)).Put("/{group_id}/avatar", a.handlers.groups.UploadAvatar)
 				r.With(limit(limitAvatar)).Delete("/{group_id}/avatar", a.handlers.groups.DeleteAvatar)

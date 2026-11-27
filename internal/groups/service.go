@@ -2,6 +2,7 @@ package groups
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"strings"
@@ -47,6 +48,8 @@ type GroupService interface {
 	Update(ctx context.Context, groupID, actor uuid.UUID, req updateGroupRequest) (GroupPreview, error)
 	TransferAdmin(ctx context.Context, groupID, admin, target uuid.UUID) error
 	SetRole(ctx context.Context, groupID, admin, target uuid.UUID, req roleRequest) error
+	// SetNickname sets the caller's own nickname in the group (nil clears).
+	SetNickname(ctx context.Context, groupID, me uuid.UUID, nickname *string) error
 	Delete(ctx context.Context, groupID, admin uuid.UUID) error
 	// OnDelete registers cleanup to run after a group is deleted.
 	OnDelete(fn func(ctx context.Context, groupID uuid.UUID))
@@ -351,6 +354,30 @@ func (s *groupService) SetRole(ctx context.Context, groupID, admin, target uuid.
 	}
 	s.invalidate(ctx, groupID)
 	s.pushMembers(ctx, groupID, admin, "role", target)
+	return nil
+}
+
+// MaxNickname is the longest nickname, in characters.
+const MaxNickname = 32
+
+var ErrBadNickname = errors.New("nickname must be 1-32 characters without line breaks or invisible characters, or null")
+
+func (s *groupService) SetNickname(ctx context.Context, groupID, me uuid.UUID, nickname *string) error {
+	if nickname != nil {
+		n := strings.TrimSpace(*nickname)
+		if utf8.RuneCountInString(n) > MaxNickname || users.ValidateDisplayName(n) != nil {
+			return ErrBadNickname
+		}
+		nickname = &n
+	}
+	ok, err := s.repo.SetNickname(ctx, groupID, me, nickname)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotMember
+	}
+	s.pushMembers(ctx, groupID, me, "nickname", me)
 	return nil
 }
 
