@@ -177,6 +177,7 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 	}
 
 	var targets []uuid.UUID
+	var senderNick string // the sender's nickname in the group, for push
 	switch in.Type {
 	case TypePrivate:
 		ok, err := s.friends.AreFriends(ctx, from, to)
@@ -196,8 +197,24 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 			return uuid.Nil, ErrNotAuthorized
 		}
 		targets = slices.DeleteFunc(members, func(id uuid.UUID) bool { return id == from })
+		if mentions, err := checkMentions(in.Mentions, members); err != nil {
+			return uuid.Nil, err
+		} else {
+			in.Mentions = mentions
+		}
+		role, nick, err := s.repo.SenderInGroup(ctx, to, from)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		if in.MentionAll && role != "admin" {
+			return uuid.Nil, ErrBadMentions
+		}
+		senderNick = nick
 	default:
 		return uuid.Nil, ErrNotSupportedTypeMsg
+	}
+	if in.Type != TypePublic && (len(in.Mentions) > 0 || in.MentionAll) {
+		return uuid.Nil, ErrBadMentions
 	}
 
 	msgID, err := uuid.NewV7()
@@ -259,16 +276,18 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 		}
 	}
 	out := ws.OutGoingMessage{
-		ID:        msgID.String(),
-		Content:   in.Content,
-		ParentID:  in.ParendID,
-		FromID:    from.String(),
-		Type:      in.Type,
-		CreatedAt: now,
-		Forwarded: in.Forwarded,
-		StoryID:   in.StoryID,
-		Anim:      in.Anim,
-		NoteText:  in.NoteText,
+		ID:         msgID.String(),
+		Content:    in.Content,
+		ParentID:   in.ParendID,
+		FromID:     from.String(),
+		Type:       in.Type,
+		CreatedAt:  now,
+		Forwarded:  in.Forwarded,
+		StoryID:    in.StoryID,
+		Anim:       in.Anim,
+		NoteText:   in.NoteText,
+		Mentions:   in.Mentions,
+		MentionAll: in.MentionAll,
 	}
 	if len(attached) > 0 {
 		out.Media = attached
@@ -302,7 +321,19 @@ func (s *chatService) send(ctx context.Context, from uuid.UUID, in InCommingMess
 			j.Preview, j.Note = replyPreview("note", in, attached), true
 		}
 		if in.Type == TypePublic {
-			j.Kind, j.Group = push.KindGroup, to
+			j.Kind, j.Group, j.FromName = push.KindGroup, to, senderNick
+			// people mentioned get a mention instead (it gets through a
+			// muted group; their "mentions" setting decides)
+			mentioned := in.Mentions
+			if in.MentionAll {
+				mentioned = targets
+			}
+			if len(mentioned) > 0 {
+				m := j
+				m.Kind, m.To, m.MentionAll = push.KindMention, mentioned, in.MentionAll
+				s.notify.Notify(ctx, m)
+				j.To = slices.DeleteFunc(slices.Clone(targets), func(id uuid.UUID) bool { return slices.Contains(mentioned, id) })
+			}
 		}
 		s.notify.Notify(ctx, j)
 	}
@@ -871,6 +902,30 @@ func (s *chatService) Forward(ctx context.Context, me, msgID uuid.UUID, to []For
 }
 
 // mediaPreview is the push text for a message: its text, or what it carries.
+// MaxMentions is how many people one message may mention.
+const MaxMentions = 50
+
+// checkMentions keeps each mentioned member once; anyone not in the group,
+// or too many, is an error.
+func checkMentions(ids, members []uuid.UUID) ([]uuid.UUID, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if !slices.Contains(members, id) {
+			return nil, ErrBadMentions
+		}
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	if len(out) > MaxMentions {
+		return nil, ErrBadMentions
+	}
+	return out, nil
+}
+
 // replyPreview is the push text for a reply to someone's story or note:
 // "reacted with their pigeon" (an animation and no other text), "reacted
 // ❤️" (one emoji), or "replied: <text>".

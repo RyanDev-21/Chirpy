@@ -48,6 +48,9 @@ func (f *fakeRepo) AddOnce(ctx context.Context, _ string, m MessageMetaDataRes, 
 	f.history = append(f.history, m)
 	return true, nil
 }
+func (f *fakeRepo) SenderInGroup(context.Context, uuid.UUID, uuid.UUID) (string, string, error) {
+	return "member", "", nil
+}
 func (f *fakeRepo) LiveNoteText(context.Context, uuid.UUID, time.Time) (string, bool, error) {
 	return "", false, nil
 }

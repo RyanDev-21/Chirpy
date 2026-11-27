@@ -22,6 +22,9 @@ type fakeRepo struct {
 	updated [][2]*string
 }
 
+func (f *fakeRepo) SetNickname(context.Context, uuid.UUID, uuid.UUID, *string) (bool, error) {
+	return true, nil
+}
 func (f *fakeRepo) ByInviteCode(_ context.Context, code string) (GroupPreview, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

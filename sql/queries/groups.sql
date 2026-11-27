@@ -41,7 +41,7 @@ WHERE m.member_id = $1
 ORDER BY lower(g.name);
 
 -- name: ListGroupMembers :many
-SELECT m.member_id, u.name, u.display_name, u.avatar_at, u.character, u.character_v, m.role, m.permissions
+SELECT m.member_id, u.name, u.display_name, u.avatar_at, u.character, u.character_v, m.role, m.permissions, m.nickname
 FROM member_table m
 JOIN users u ON u.id = m.member_id
 WHERE m.group_id = $1
@@ -109,3 +109,7 @@ FROM chat_groups g
 WHERE g.visibility = 'public' AND lower(g.name) LIKE '%' || @q::text || '%' ESCAPE '\'
 ORDER BY (lower(g.name) LIKE @q::text || '%' ESCAPE '\') DESC, g.current_member DESC, g.id
 LIMIT 20;
+
+-- name: SetGroupNickname :execrows
+-- a member's own nickname in the group (NULL clears it)
+UPDATE member_table SET nickname = @nickname WHERE group_id = @group_id AND member_id = @member_id;

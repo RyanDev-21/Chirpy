@@ -87,7 +87,7 @@ func (h *Handler) GetPrefs(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, p)
 }
 
-// SetPrefs handles PUT /api/users/me/notifications with all four switches.
+// SetPrefs handles PUT /api/users/me/notifications with the switches (mentions optional).
 func (h *Handler) SetPrefs(w http.ResponseWriter, r *http.Request) {
 	me, ok := h.user(w, r)
 	if !ok {
@@ -102,7 +102,12 @@ func (h *Handler) SetPrefs(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, p)
+	saved, err := h.svc.Prefs(r.Context(), me)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, saved)
 }
 
 // ListMutes handles GET /api/mutes.

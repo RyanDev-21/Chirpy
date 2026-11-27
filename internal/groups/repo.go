@@ -79,6 +79,9 @@ type GroupRepo interface {
 	TransferAdmin(ctx context.Context, groupID, admin, target uuid.UUID) error
 	// SetRole (admin only) makes target a moderator with perms, or a member.
 	SetRole(ctx context.Context, groupID, admin, target uuid.UUID, role string, perms []string) error
+	// SetNickname sets (or with nil clears) a member's own nickname; false
+	// if they aren't a member.
+	SetNickname(ctx context.Context, groupID, member uuid.UUID, nickname *string) (bool, error)
 	// Delete removes the group with its messages; returns who was in it.
 	Delete(ctx context.Context, groupID, admin uuid.UUID) ([]uuid.UUID, error)
 	// AddMember adds target directly (ErrAlreadyMember, ErrGroupFull).
@@ -326,6 +329,22 @@ func nonNil(s []string) []string {
 	return s
 }
 
+func textPtr(t pgtype.Text) *string {
+	if !t.Valid {
+		return nil
+	}
+	return &t.String
+}
+
+func (r *groupRepo) SetNickname(ctx context.Context, groupID, member uuid.UUID, nickname *string) (bool, error) {
+	n := pgtype.Text{}
+	if nickname != nil {
+		n = pgtype.Text{String: *nickname, Valid: true}
+	}
+	rows, err := r.q.SetGroupNickname(ctx, database.SetGroupNicknameParams{GroupID: groupID, MemberID: member, Nickname: n})
+	return rows > 0, err
+}
+
 func (r *groupRepo) Detail(ctx context.Context, groupID, viewer uuid.UUID) (GroupDetail, error) {
 	g, err := r.q.GetGroupInfoByID(ctx, groupID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -343,7 +362,7 @@ func (r *groupRepo) Detail(ctx context.Context, groupID, viewer uuid.UUID) (Grou
 	for _, m := range rows {
 		members = append(members, GroupMember{UserID: m.MemberID, Name: m.Name, DisplayName: users.ShownName(m.Name, m.DisplayName),
 			Role: m.Role, Permissions: nonNil(m.Permissions), AvatarURL: users.AvatarURLFrom(m.MemberID, m.AvatarAt),
-			CharacterInfo: users.CharacterFrom(m.Character, m.CharacterV)})
+			CharacterInfo: users.CharacterFrom(m.Character, m.CharacterV), Nickname: textPtr(m.Nickname)})
 		if m.MemberID == viewer {
 			d.IsMember = true
 		}

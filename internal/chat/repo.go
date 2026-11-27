@@ -25,6 +25,8 @@ type ChatRepo interface {
 	AddOnce(ctx context.Context, kind string, m MessageMetaDataRes, client uuid.UUID) (bool, error)
 	// LiveStoryOwner is who posted a story that hasn't expired (false if none).
 	LiveStoryOwner(ctx context.Context, storyID uuid.UUID, now time.Time) (uuid.UUID, bool, error)
+	// SenderInGroup is a member's role and nickname ("" for none).
+	SenderInGroup(ctx context.Context, groupID, member uuid.UUID) (role, nickname string, err error)
 	// LiveNoteText is user's note if they have one right now (false if not).
 	LiveNoteText(ctx context.Context, user uuid.UUID, now time.Time) (string, bool, error)
 	// SentID is the message a sender's client id was used for (7 days).
@@ -117,6 +119,11 @@ func ptr[T any](v T) *T { return &v }
 // pgOptText is NULL for "".
 func pgOptText(s string) pgtype.Text { return pgtype.Text{String: s, Valid: s != ""} }
 
+func (r *chatRepo) SenderInGroup(ctx context.Context, groupID, member uuid.UUID) (string, string, error) {
+	row, err := r.q.SenderInGroup(ctx, database.SenderInGroupParams{GroupID: groupID, MemberID: member})
+	return row.Role, row.Nickname, err
+}
+
 func (r *chatRepo) LiveNoteText(ctx context.Context, user uuid.UUID, now time.Time) (string, bool, error) {
 	text, err := r.q.LiveNoteText(ctx, database.LiveNoteTextParams{UserID: user, Now: pgTime(now.UTC())})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -171,14 +178,16 @@ func (r *chatRepo) AddPrivate(ctx context.Context, m MessageMetaDataRes) error {
 
 func (r *chatRepo) AddPublic(ctx context.Context, m MessageMetaDataRes) error {
 	return r.q.AddMessagePublic(ctx, database.AddMessagePublicParams{
-		ID:        m.ID,
-		Content:   pgText(m.MsgInfo.Msg.Content),
-		GroupID:   pgOptUUID(m.MsgInfo.Msg.ToID),
-		FromID:    pgUUID(m.MsgInfo.FromID),
-		ParentID:  pgOptUUID(m.MsgInfo.Msg.ParendID),
-		CreatedAt: pgTime(m.CreatedAt),
-		Forwarded: m.Forwarded,
-		Anim:      pgOptText(m.MsgInfo.Msg.Anim),
+		ID:         m.ID,
+		Content:    pgText(m.MsgInfo.Msg.Content),
+		GroupID:    pgOptUUID(m.MsgInfo.Msg.ToID),
+		FromID:     pgUUID(m.MsgInfo.FromID),
+		ParentID:   pgOptUUID(m.MsgInfo.Msg.ParendID),
+		CreatedAt:  pgTime(m.CreatedAt),
+		Forwarded:  m.Forwarded,
+		Anim:       pgOptText(m.MsgInfo.Msg.Anim),
+		Mentions:   m.MsgInfo.Msg.Mentions,
+		MentionAll: m.MsgInfo.Msg.MentionAll,
 	})
 }
 
@@ -196,6 +205,7 @@ func (r *chatRepo) AddOnce(ctx context.Context, kind string, m MessageMetaDataRe
 			FromID: pgUUID(m.MsgInfo.FromID), ClientID: pgUUID(client), ID: m.ID, CreatedAt: pgTime(m.CreatedAt),
 			Content: pgText(m.MsgInfo.Msg.Content), GroupID: pgOptUUID(m.MsgInfo.Msg.ToID),
 			ParentID: pgOptUUID(m.MsgInfo.Msg.ParendID), Forwarded: m.Forwarded, Anim: pgOptText(m.MsgInfo.Msg.Anim),
+			Mentions: m.MsgInfo.Msg.Mentions, MentionAll: m.MsgInfo.Msg.MentionAll,
 		})
 	}
 	return n > 0, err
@@ -271,11 +281,13 @@ func fromPublic(rows []database.Groupmessage) []MessageMetaDataRes {
 				FromID:    uuid.UUID(m.FromID.Bytes),
 				CreatedAt: created,
 				Msg: InCommingMessage{
-					Content:  m.Content.String,
-					ParendID: optString(m.ParentID),
-					ToID:     optString(m.GroupID),
-					Type:     TypePublic,
-					Anim:     m.Anim.String,
+					Content:    m.Content.String,
+					ParendID:   optString(m.ParentID),
+					ToID:       optString(m.GroupID),
+					Type:       TypePublic,
+					Anim:       m.Anim.String,
+					Mentions:   m.Mentions,
+					MentionAll: m.MentionAll,
 				},
 			},
 		})
@@ -398,9 +410,12 @@ func (r *chatRepo) GroupReadBy(ctx context.Context, ref messageRef, msgID uuid.U
 }
 
 // groupLast adds the sender's display name to a group's last message.
-func groupLast(m *LastMessage, name, display string) *LastMessage {
+func groupLast(m *LastMessage, name, display, nickname string) *LastMessage {
 	if m != nil && name != "" {
 		m.FromName = users.ShownName(name, display)
+		if nickname != "" {
+			m.FromName = nickname // what they call themself in this group
+		}
 	}
 	return m
 }
@@ -431,7 +446,7 @@ func (r *chatRepo) Conversations(ctx context.Context, me uuid.UUID) ([]Conversat
 	}
 	for _, g := range grp {
 		out = append(out, Conversation{Type: TypePublic, ID: g.GroupID, Name: g.GroupName, DisplayName: g.GroupName, AvatarURL: groups.AvatarURL(g.GroupID, g.GroupAvatarAt),
-			LastMessage: groupLast(lastMessage(g.LastID, g.LastContent, g.LastFrom, g.LastAt, g.LastDeleted), g.LastFromName, g.LastFromDisplay), Unread: int(g.Unread)})
+			LastMessage: groupLast(lastMessage(g.LastID, g.LastContent, g.LastFrom, g.LastAt, g.LastDeleted), g.LastFromName, g.LastFromDisplay, g.LastFromNickname), Unread: int(g.Unread)})
 	}
 	slices.SortStableFunc(out, func(a, b Conversation) int {
 		switch {

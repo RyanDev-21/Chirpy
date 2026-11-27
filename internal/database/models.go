@@ -97,6 +97,8 @@ type Groupmessage struct {
 	ChangedAt   pgtype.Timestamp
 	ClientMsgID pgtype.UUID
 	Anim        pgtype.Text
+	Mentions    []uuid.UUID
+	MentionAll  bool
 }
 
 type MediaDownload struct {
@@ -134,6 +136,7 @@ type MemberTable struct {
 	JoinedAt    pgtype.Timestamp
 	Role        string
 	Permissions []string
+	Nickname    pgtype.Text
 }
 
 type Message struct {
@@ -174,6 +177,7 @@ type NotificationPref struct {
 	Groups    bool
 	Friends   bool
 	Reactions bool
+	Mentions  bool
 }
 
 type RefreshToken struct {

@@ -152,6 +152,9 @@ type GroupMember struct {
 	Role        string    `json:"role"`
 	Permissions []string  `json:"permissions"` // moderators only (else empty)
 	AvatarURL   *string   `json:"avatar_url"`
+	// Nickname is what this member calls themself in this group (null:
+	// their display name). Only they can set it.
+	Nickname *string `json:"nickname"`
 	users.CharacterInfo
 }
 

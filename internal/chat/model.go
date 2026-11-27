@@ -29,6 +29,7 @@ var (
 	ErrNotValidParentID    = errors.New("parent_id must be the id of a message in the same chat")
 	ErrNotValidStory       = errors.New("story_id must be a live story of the person you're writing to")
 	ErrNotValidAnim        = errors.New("anim must be an animation id from the characters catalog")
+	ErrBadMentions         = errors.New("mentions: group messages only, at most 50 members of the group; mention_all (@everyone) is for the group's admin")
 	ErrNoNote              = errors.New("reply_to_note: they have no note right now (private chats only, not with story_id)")
 	ErrNotSupportedTypeMsg = errors.New(`type must be "private" or "public"`)
 	ErrEmptyMessage        = errors.New("msg must be 1-500 characters")
@@ -62,6 +63,11 @@ type InCommingMessage struct {
 	// retries safe: the same id within DedupeWindow returns the first
 	// message instead of sending it twice.
 	ClientMsgID string `json:"client_msg_id,omitempty"`
+	// Mentions (groups only): members this message mentions (@nickname or
+	// @username in the text; the ids are what count). MentionAll is
+	// @everyone (admins only).
+	Mentions   []uuid.UUID `json:"mentions,omitempty"`
+	MentionAll bool        `json:"mention_all,omitempty"`
 	// Anim (optional): a catalog animation played with the sender's
 	// character; msg may then be empty.
 	Anim string `json:"anim,omitempty"`

@@ -502,6 +502,26 @@ with `PUT /api/users/me/avatar` as a normal picture, unless the user chose a
 photo (the app remembers that). Push notifications, the website and older
 apps show the snapshot.
 
+### Mentions (groups)
+
+A group message can mention members: `"mentions":["user-uuid", …]`, and an
+admin can mention everyone with `"mention_all": true` (@everyone).
+- The text shows the mention as typed ("@Big Bro", "@bobby"). The ids are
+  what count, so renaming someone never breaks it.
+- In the text box, suggest members by nickname, display name or username
+  after `@`.
+- `400` for someone who isn't a member, more than 50 people,
+  `mention_all` from anyone but the admin, or mentions in a private chat.
+  Repeated ids are kept once.
+- History has `message_info.Msg.mentions` / `mention_all`, and the `msg`
+  event has `mentions` / `mention_all`. Highlight the message for the
+  people mentioned.
+- **Push:** the people mentioned get a `mention` push, titled with the group:
+  `Maya mentioned you: <text>` (`Maya mentioned everyone: …` for
+  @everyone). It **gets through a muted group**. Their **Mentions**
+  notification setting turns it off. Everyone else gets the usual group
+  push.
+
 ### Animated messages
 
 `POST /api/chats/message` takes `"anim":"wave_01"` (private chats and groups).
@@ -862,7 +882,7 @@ unless you're a moderator): use them to show or hide the management actions.
 {"id":"group-uuid","name":"devs","description":"Team chat","max_members":20,
  "member_count":3,"visibility":"private","is_member":true,
  "avatar_url":"/api/chats/groups/group-uuid/avatar?v=1762300000000",
- "members":[{"user_id":"uuid","name":"alice","display_name":"Alice","role":"admin","permissions":[],"avatar_url":null}]}
+ "members":[{"user_id":"uuid","name":"alice","display_name":"Alice","nickname":"Big Sis","role":"admin","permissions":[],"avatar_url":null}]}
 ```
 
 `members` (members only) lists the admin first, then moderators, then
@@ -960,6 +980,20 @@ group with everything in it.
   `DELETE /api/chat/messages/{msg_id}` as for your own. The admin may delete
   anyone's; a moderator with `delete_messages` only ordinary members'.
   `MsgDeleted` then carries `by_id`.
+
+**Nicknames:** each member can set **their own** nickname for one group
+(nobody else can set it):
+- `PUT /api/chats/groups/{group_id}/nickname` with `{"nickname":"Big Bro"}`,
+  or `{"nickname":null}` to clear it → `204`.
+- 1–32 characters (trimmed), emoji fine; line breaks and invisible
+  characters are `400`. Not a member: `400`.
+- It's `nickname` in the member list (`null` when unset).
+- Show it in that group instead of the display name, with @username still on
+  the profile.
+- It's the sender's name in the group's chat-list preview
+  (`last_message.from_name`) and in group pushes ("Big Bro: …").
+- Other members get `GroupUpdated` with `change: "nickname"` and the
+  `user_id`.
 
 Members are told over the WebSocket: `GroupUpdated` for changes (refetch
 the group), `GroupRemoved` for whoever was removed (or everyone, when the
@@ -1479,6 +1513,7 @@ over the WebSocket (when the app is open, the live events are enough).
 | `friend_request` | Friend request | `bob sent you a friend request` | `from_id` | |
 | `friend_accept` | Friend request accepted | `bob accepted your friend request` | `from_id` | |
 | `reaction` | reactor (`in <group>`) | `reacted ❤️ to your message` | `from_id`, `msg_id`, `group_id`? | one per message |
+| `mention` | group name | `Maya mentioned you: …` / `Maya mentioned everyone: …` | `from_id`, `group_id`, `msg_id` | one per group |
 | `big_file` | sender name, or the group | `Video from Maya will be deleted in 3 hours` | `from_id`, `msg_id`, `media_id`, `group_id`? | one per file |
 
 **Big files** (over 16 MB, deleted at a fixed time, see Photos, videos and
@@ -1500,8 +1535,10 @@ above (create it with high importance). Tapping should open the chat from
 ### Settings
 
 - `GET /api/users/me/notifications` →
-  `{"private":true,"groups":true,"friends":true,"reactions":true}` (all on by
-  default); `PUT` the same object to change them → `200`.
+  `{"private":true,"groups":true,"friends":true,"reactions":true,"mentions":true}` (all on by
+  default); `PUT` the same object to change them → `200`, with the saved
+  settings. `mentions` (being mentioned in a group, even a muted one) is
+  optional in a `PUT`: leaving it out keeps it as it was.
 - Mute a chat: `PUT /api/mutes` with
   `{"type":"private","id":"<other user>"}` or `{"type":"public","id":"<group>"}`,
   plus `"until":"<RFC3339>"` for a timed mute (8 hours, a week…) or nothing to
@@ -1737,7 +1774,7 @@ upgrade (no or bad token) returns `401` JSON instead of switching protocols.
 | `Reaction` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","emoji":"❤️"}`: `emoji` is `""` when the reaction was removed; `group_id` only for group messages; `anim` for a pigeon reaction |
 | `MsgEdited` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","msg":"new text","edited_at":"…"}`; `group_id` only for group messages |
 | `MsgDeleted` | `{"msg_id":"…","from_id":"uuid","type":"private|public","group_id":"…","by_id":"uuid"}`: show the placeholder and drop its reactions. `from_id` is the sender; `by_id` is present when a group's admin or a moderator removed it |
-| `GroupUpdated` | `{"group_id":"…","change":"info|admin|role|members|joined","user_id":"…"}`: `info` = name, description, picture or visibility changed; `admin` = `user_id` is the new admin; `role` = `user_id` became a moderator or member, or got different permissions; `members` = `user_id` left or was removed; `joined` = `user_id` joined or was added. Refetch the group |
+| `GroupUpdated` | `{"group_id":"…","change":"info|admin|role|members|joined|nickname","user_id":"…"}`: `info` = name, description, picture or visibility changed; `admin` = `user_id` is the new admin; `role` = `user_id` became a moderator or member, or got different permissions; `members` = `user_id` left or was removed; `joined` = `user_id` joined or was added; `nickname` = `user_id` changed their nickname. Refetch the group |
 | `GroupRemoved` | `{"group_id":"…","reason":"kicked|deleted"}`: you are no longer in that group; drop it from the list |
 | `GroupAdded` | `{"group_id":"…","by_id":"uuid"}`: `by_id` (the admin or a moderator) added you to a group; refetch the group list |
 | `GroupRead` | `{"group_id":"…","user_id":"uuid","msg_id":"…"}`: `user_id` has read the group up to `msg_id` (and everything before it). Groups of up to 50 only |
